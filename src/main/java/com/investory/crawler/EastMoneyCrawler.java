@@ -118,6 +118,51 @@ public class EastMoneyCrawler {
         return http.send(req, HttpResponse.BodyHandlers.ofString()).body();
     }
 
+    // ── Full stock list ─────────────────────────────────────────────────────────
+
+    /** Fetch all A-share stocks from East Money and insert into DB. Returns count. */
+    public int fetchAllStocks() {
+        int total = 0;
+        int page = 1;
+        while (true) {
+            String url = "https://push2.eastmoney.com/api/qt/clist/get"
+                    + "?pn=" + page + "&pz=2000"
+                    + "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"
+                    + "&fields=f2,f12,f14"
+                    + "&po=1&np=1&fltt=2&invt=2";
+            try {
+                String body = get(url);
+                JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+                JsonObject data = root.getAsJsonObject("data");
+                if (data == null) break;
+                JsonArray diff = data.getAsJsonArray("diff");
+                if (diff == null || diff.isEmpty()) break;
+
+                for (JsonElement el : diff) {
+                    JsonObject item = el.getAsJsonObject();
+                    String code = item.get("f12").getAsString();
+                    String name = item.get("f14").getAsString();
+                    String market = guessMarket(code);
+                    String symbol = marketPrefix(market) + "." + code;
+
+                    Stock stock = new Stock();
+                    stock.setSymbol(symbol);
+                    stock.setName(name);
+                    stock.setMarket(market);
+                    stock.setCurrency("CNY");
+                    stockDao.upsert(stock);
+                    total++;
+                }
+                page++;
+            } catch (Exception e) {
+                log.warning("Stock list fetch failed at page " + page + ": " + e.getMessage());
+                break;
+            }
+        }
+        log.info("Fetched " + total + " stocks into database");
+        return total;
+    }
+
     private BigDecimal safeDecimal(JsonObject obj, String key) {
         try {
             JsonElement el = obj.get(key);
