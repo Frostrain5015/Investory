@@ -86,15 +86,7 @@ export default function Market() {
             }),
             symbol: 'circle', symbolSize: 18,
             emphasis: { scale: 1.6, itemStyle: { shadowBlur: 24 } },
-            label: {
-              show: true, position: 'top', distance: 10,
-              formatter: (params: any) => {
-                const f = markers[params.dataIndex]?.[0]?.flag?.toLowerCase()
-                const labels: Record<string, string> = { cn: '中国', hk: '中国香港', us: '美国', jp: '日本', kr: '韩国', gb: '英国', de: '德国', fr: '法国', tw: '中国台湾', sg: '新加坡', in: '印度', au: '澳大利亚', ca: '加拿大', br: '巴西' }
-                return labels[f] || ''
-              },
-              fontSize: 11, fontWeight: 700, color: '#475569',
-            },
+            label: { show: false },
           }],
         })
       })

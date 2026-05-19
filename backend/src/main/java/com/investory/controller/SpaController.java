@@ -27,7 +27,7 @@ public class SpaController {
     @Autowired private PortfolioDao portfolioDao;
 
     // Serve the React SPA for all non-API GET routes
-    @GetMapping(value = {"/", "/login", "/register", "/market", "/dashboard", "/portfolio",
+    @GetMapping(value = {"/", "/login", "/register", "/market", "/watchlist", "/dashboard", "/portfolio",
         "/holdings", "/transactions", "/transactions/**", "/dividends", "/dividends/**",
         "/stock", "/pnl-calendar"})
     @ResponseBody

@@ -34,10 +34,10 @@ public class MarketIndexController {
         futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 22.30, 114.17)));
         futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 22.30, 114.17)));
         futures.add(ex.submit(() -> fetchYahooIndex("HSTECH.HK",  "恒生科技",  "HK", 22.30, 114.17)));
-        // US → New York
-        futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 40.71, -74.00)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 40.71, -74.00)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 40.71, -74.00)));
+        // US → San Francisco (Silicon Valley)
+        futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 37.77, -122.42)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 37.77, -122.42)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 37.77, -122.42)));
         // Japan → Tokyo
         futures.add(ex.submit(() -> fetchYahooIndex("^N225",      "日经225",   "JP", 35.68, 139.76)));
         // Korea → Seoul

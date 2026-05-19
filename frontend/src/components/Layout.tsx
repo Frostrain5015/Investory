@@ -12,6 +12,7 @@ import { displaySymbol } from '@/lib/format'
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: '总览' },
   { to: '/market',    icon: TrendingUp,       label: '大盘' },
+  { to: '/watchlist', icon: Search,           label: '自选' },
   { to: '/holdings', icon: Wallet, label: '持仓' },
   { to: '/transactions', icon: ArrowRightLeft, label: '交易' },
   { to: '/pnl-calendar', icon: CalendarDays, label: '盈亏日历' },
