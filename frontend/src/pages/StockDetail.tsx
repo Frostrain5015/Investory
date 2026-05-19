@@ -141,8 +141,17 @@ export default function StockDetail() {
               <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
               {transactions.map(t => (
                 <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={Number(t.price)}
-                  r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2} />
+                  r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}
+                  label={{ value: t.type === 'BUY' ? 'B' : 'S', position: 'top', fontSize: 11, fill: t.type === 'BUY' ? '#ef4444' : '#10b981', fontWeight: 'bold' }} />
               ))}
+              {dividends.map(d => {
+                const match = priceData.find(p => p.date === d.recordDate)
+                return match ? (
+                  <ReferenceDot key={`div-${d.id}`} x={d.recordDate} y={match.close}
+                    r={5} fill="#0ea5e9" stroke="#fff" strokeWidth={2}
+                    label={{ value: 'D', position: 'top', fontSize: 11, fill: '#0ea5e9', fontWeight: 'bold' }} />
+                ) : null
+              })}
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>

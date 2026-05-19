@@ -251,8 +251,8 @@ export default function Dashboard() {
                       <span className="text-sm font-medium text-slate-700 w-20 truncate">{item.name}</span>
                       <div className="flex-1 flex items-center gap-2">
                         <div className="h-2 rounded-full flex-1 bg-slate-100 relative overflow-hidden">
-                          <div className={`absolute top-0 h-full rounded-full transition-all ${item.pnl >= 0 ? 'bg-red-400' : 'bg-emerald-400'}`}
-                            style={{ width: `${Math.abs(pct) * 100}%`, left: item.pnl >= 0 ? 'auto' : 0, right: item.pnl >= 0 ? 0 : 'auto' }} />
+                          <div className="absolute top-0 h-full rounded-full transition-all"
+                            style={{ width: `${Math.abs(pct) * 100}%`, left: item.pnl >= 0 ? 'auto' : 0, right: item.pnl >= 0 ? 0 : 'auto', backgroundColor: item.pnl >= 0 ? positiveHex : negativeHex }} />
                         </div>
                         <span className={`text-sm font-semibold tabular-nums whitespace-nowrap ${item.pnl >= 0 ? positiveClass : negativeClass}`}>
                           {item.pnl >= 0 ? '+' : ''}{formatCurrency(item.pnl)}
