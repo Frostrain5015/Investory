@@ -138,7 +138,7 @@ export default function StockDetail() {
                   label={{ value: `摊薄 ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
               )}
               <Tooltip />
-              <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
+              <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} isAnimationActive={false} />
               {transactions.map(t => (
                 <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={Number(t.price)}
                   r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}

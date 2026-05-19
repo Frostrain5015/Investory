@@ -4,7 +4,7 @@ import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import { chartAPI } from '@/services/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import type { AllocationItem, PnlRankItem, CumulativeReturnItem } from '@/types'
+import type { AllocationItem, CumulativeReturnItem } from '@/types'
 import {
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
   AreaChart, Area, Tooltip, ResponsiveContainer
@@ -18,6 +18,7 @@ interface Snapshot {
   totalShares: number; avgCost: number; dilutedCost: number
   totalInvested: number; totalDividends: number
   currentPrice: number; marketValue: number; unrealizedPnl: number; unrealizedPnlPct: number
+  changeToday: number; changePctToday: number
 }
 
 const COLORS = ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1',
@@ -29,9 +30,9 @@ export default function Dashboard() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0 })
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
-  const [pnlRank, setPnlRank] = useState<PnlRankItem[]>([])
   const [cumulative, setCumulative] = useState<CumulativeReturnItem[]>([])
   const [cumulativeDays, setCumulativeDays] = useState(365)
+  const [rankMode, setRankMode] = useState<'cumulative' | 'today'>('cumulative')
   const [allocChart, setAllocChart] = useState<'pie' | 'cloud'>('pie')
   const [portfolioName, setPortfolioName] = useState('')
   const [refreshing, setRefreshing] = useState(false)
@@ -42,9 +43,8 @@ export default function Dashboard() {
     Promise.all([
       getDashboard(),
       chartAPI.allocation(portfolioId),
-      chartAPI.pnlRank(portfolioId),
       chartAPI.cumulativeReturn(portfolioId, cumulativeDays),
-    ]).then(([dash, alloc, rank, cum]) => {
+    ]).then(([dash, alloc, cum]) => {
       setSnapshots(dash.snapshots || [])
       setTotals({
         totalMarketValue: dash.totalMarketValue || 0,
@@ -55,7 +55,6 @@ export default function Dashboard() {
         todayPnlPct: dash.todayPnlPct || 0,
       })
       setAllocation(alloc || [])
-      setPnlRank(rank || [])
       setCumulative(cum || [])
     }).catch((e) => console.error('Dashboard load error:', e))
     .finally(() => setLoading(false))
@@ -170,7 +169,7 @@ export default function Dashboard() {
             </div>
           </div>
           {cumulative.length > 1 && (() => { const s = Number(cumulative[0].value); const e = Number(cumulative[cumulative.length - 1].value); const chg = e - s; const pct = s > 0 ? (chg / s * 100) : 0; return (
-            <span className={`text-2xl font-bold tabular-nums tracking-tight ${chg >= 0 ? positiveClass : negativeClass}`}>
+            <span className={`text-lg font-bold tabular-nums tracking-tight ${chg >= 0 ? positiveClass : negativeClass}`}>
               {chg >= 0 ? '+' : ''}{formatCurrency(chg)} ({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)
             </span>
           )})()}
@@ -193,7 +192,7 @@ export default function Dashboard() {
                 return String(Math.round(cv))
               }} />
               <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
-              <Area type="monotone" dataKey="value" stroke={cumUp ? positiveHex : negativeHex} fill="url(#colorValue)" strokeWidth={2} />
+              <Area type="monotone" dataKey="value" stroke={cumUp ? positiveHex : negativeHex} fill="url(#colorValue)" strokeWidth={2} isAnimationActive={false} />
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>
@@ -236,26 +235,40 @@ export default function Dashboard() {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle className="text-base">盈亏排行榜</CardTitle></CardHeader>
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle className="text-base">盈亏排行榜</CardTitle>
+            <div className="flex bg-slate-100 rounded-lg p-0.5">
+              <button onClick={() => setRankMode('cumulative')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium ${rankMode === 'cumulative' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>累计</button>
+              <button onClick={() => setRankMode('today')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium ${rankMode === 'today' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>今日</button>
+            </div>
+          </CardHeader>
           <CardContent>
-            {pnlRank.length === 0 ? (
+            {snapshots.length === 0 ? (
               <div className="h-[280px] flex items-center justify-center text-slate-400 text-sm">暂无数据</div>
             ) : (
               <div className="space-y-0.5 h-[280px] overflow-auto">
-                {pnlRank.map((item, i) => {
-                  const absMax = Math.max(...pnlRank.map(r => Math.abs(r.pnl)), 1)
-                  const pct = item.pnl / absMax
+                {[...snapshots].sort((a, b) => {
+                  const va = rankMode === 'today' ? (a.changeToday || 0) : a.unrealizedPnl
+                  const vb = rankMode === 'today' ? (b.changeToday || 0) : b.unrealizedPnl
+                  return va - vb
+                }).map((item, i) => {
+                  const val = rankMode === 'today' ? (item.changeToday || 0) : item.unrealizedPnl
+                  const pctVal = rankMode === 'today' ? (item.changePctToday || 0) : item.unrealizedPnlPct
+                  const absMax = Math.max(...snapshots.map(s => Math.abs(rankMode === 'today' ? (s.changeToday || 0) : s.unrealizedPnl)), 1)
+                  const barPct = val / absMax
                   return (
-                    <div key={i} className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-slate-50 transition-colors">
-                      <span className="text-xs text-slate-500 w-5 tabular-nums">{pnlRank.length - i}</span>
-                      <span className="text-sm font-medium text-slate-700 w-20 truncate">{item.name}</span>
+                    <div key={item.stockId} className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-slate-50 transition-colors">
+                      <span className="text-xs text-slate-500 w-5 tabular-nums">{snapshots.length - i}</span>
+                      <span className="text-sm font-medium text-slate-700 w-20 truncate">{item.stockName}</span>
                       <div className="flex-1 flex items-center gap-2">
                         <div className="h-2 rounded-full flex-1 bg-slate-100 relative overflow-hidden">
                           <div className="absolute top-0 h-full rounded-full transition-all"
-                            style={{ width: `${Math.abs(pct) * 100}%`, left: item.pnl >= 0 ? 'auto' : 0, right: item.pnl >= 0 ? 0 : 'auto', backgroundColor: item.pnl >= 0 ? positiveHex : negativeHex }} />
+                            style={{ width: `${Math.abs(barPct) * 100}%`, left: val >= 0 ? 'auto' : 0, right: val >= 0 ? 0 : 'auto', backgroundColor: val >= 0 ? positiveHex : negativeHex }} />
                         </div>
-                        <span className={`text-sm font-semibold tabular-nums whitespace-nowrap ${item.pnl >= 0 ? positiveClass : negativeClass}`}>
-                          {item.pnl >= 0 ? '+' : ''}{formatCurrency(item.pnl)}
+                        <span className={`text-sm font-semibold tabular-nums whitespace-nowrap ${val >= 0 ? positiveClass : negativeClass}`}>
+                          {val >= 0 ? '+' : ''}{formatCurrency(val)} ({pctVal >= 0 ? '+' : ''}{pctVal.toFixed(2)}%)
                         </span>
                       </div>
                     </div>

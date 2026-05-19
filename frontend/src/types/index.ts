@@ -33,6 +33,8 @@ export interface HoldingSnapshot {
   marketValue: number
   unrealizedPnl: number
   unrealizedPnlPct: number
+  changeToday: number
+  changePctToday: number
 }
 
 export interface Transaction {

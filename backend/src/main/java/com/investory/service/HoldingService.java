@@ -59,6 +59,19 @@ public class HoldingService {
             if (price == null) price = stockPriceDao.findLatestClose(h.getStockId());
             snap.setCurrentPrice(price != null ? price : h.getAvgCost());
 
+            // Today's change: (currentPrice - yesterdayClose) * totalShares
+            java.time.LocalDate yesterday = java.time.LocalDate.now().minusDays(1);
+            StockPrice yesterdaySp = stockPriceDao.findLatest(h.getStockId());
+            if (yesterdaySp != null && price != null) {
+                BigDecimal prevClose = yesterdaySp.getClose();
+                if (prevClose != null && prevClose.compareTo(BigDecimal.ZERO) > 0) {
+                    BigDecimal change = price.subtract(prevClose);
+                    snap.setChangeToday(change);
+                    snap.setChangePctToday(change.divide(prevClose, 4, java.math.RoundingMode.HALF_UP)
+                            .multiply(new BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP));
+                }
+            }
+
             snapshots.add(snap);
         }
         return snapshots;
