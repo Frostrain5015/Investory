@@ -1,6 +1,7 @@
 package com.investory.dao;
 
 import com.investory.model.StockPrice;
+import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.sql.Date;
@@ -9,10 +10,8 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.List;
 
+@Repository
 public class StockPriceDao extends BaseDao {
-
-    private static final StockPriceDao INSTANCE = new StockPriceDao();
-    public static StockPriceDao get() { return INSTANCE; }
 
     private StockPrice map(ResultSet rs) throws SQLException {
         StockPrice p = new StockPrice();
@@ -28,20 +27,19 @@ public class StockPriceDao extends BaseDao {
         return p;
     }
 
-    public StockPrice findLatest(long stockId) throws SQLException {
+    public StockPrice findLatest(long stockId) {
         return queryOne(
             "SELECT * FROM stock_prices WHERE stock_id = ? ORDER BY trade_date DESC LIMIT 1",
             this::map, stockId);
     }
 
-    public List<StockPrice> findRange(long stockId, LocalDate from, LocalDate to) throws SQLException {
+    public List<StockPrice> findRange(long stockId, LocalDate from, LocalDate to) {
         return query(
             "SELECT * FROM stock_prices WHERE stock_id = ? AND trade_date BETWEEN ? AND ? ORDER BY trade_date",
             this::map, stockId, Date.valueOf(from), Date.valueOf(to));
     }
 
-    /** Insert or update price for (stock_id, trade_date). */
-    public void upsert(StockPrice p) throws SQLException {
+    public void upsert(StockPrice p) {
         update("""
             INSERT INTO stock_prices (stock_id, trade_date, open, close, high, low, volume)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -54,7 +52,7 @@ public class StockPriceDao extends BaseDao {
             p.getOpen(), p.getClose(), p.getHigh(), p.getLow(), p.getVolume());
     }
 
-    public BigDecimal findLatestClose(long stockId) throws SQLException {
+    public BigDecimal findLatestClose(long stockId) {
         StockPrice sp = findLatest(stockId);
         return sp != null ? sp.getClose() : null;
     }

@@ -134,8 +134,8 @@
 <script th:src="@{/static/js/charts.js}"></script>
 <script th:inline="javascript">
     const SYMBOL  = /*[[${stock.symbol}]]*/ '';
-    const AVG_COST = /*[[${holding?.avgCost}]]*/ null;
-    const DIL_COST = /*[[${holding?.dilutedCost}]]*/ null;
+    const AVG_COST = /*[[${holding != null ? holding.avgCost : null}]]*/ null;
+    const DIL_COST = /*[[${holding != null ? holding.dilutedCost : null}]]*/ null;
     const CTX2 = [[${contextPath}]];
 
     function loadChart(days) {

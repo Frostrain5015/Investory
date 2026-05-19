@@ -1,15 +1,14 @@
 package com.investory.dao;
 
 import com.investory.model.User;
+import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 
+@Repository
 public class UserDao extends BaseDao {
-
-    private static final UserDao INSTANCE = new UserDao();
-    public static UserDao get() { return INSTANCE; }
 
     private User map(ResultSet rs) throws SQLException {
         User u = new User();
@@ -22,22 +21,22 @@ public class UserDao extends BaseDao {
         return u;
     }
 
-    public User findByUsername(String username) throws SQLException {
+    public User findByUsername(String username) {
         return queryOne("SELECT * FROM users WHERE username = ?", this::map, username);
     }
 
-    public User findById(long id) throws SQLException {
+    public User findById(long id) {
         return queryOne("SELECT * FROM users WHERE id = ?", this::map, id);
     }
 
-    public long insert(User user) throws SQLException {
+    public long insert(User user) {
         return insert(
             "INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)",
             user.getUsername(), user.getPasswordHash(), user.getEmail()
         );
     }
 
-    public boolean usernameExists(String username) throws SQLException {
+    public boolean usernameExists(String username) {
         return queryOne("SELECT id FROM users WHERE username = ?",
                 rs -> rs.getLong("id"), username) != null;
     }

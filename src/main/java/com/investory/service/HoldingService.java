@@ -2,43 +2,41 @@ package com.investory.service;
 
 import com.investory.dao.*;
 import com.investory.model.*;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Rebuilds and queries holding snapshots enriched with live prices.
- */
+@Service
 public class HoldingService {
 
-    private static final HoldingService INSTANCE = new HoldingService();
-    public static HoldingService get() { return INSTANCE; }
+    @Autowired private TransactionDao transactionDao;
+    @Autowired private DividendDao dividendDao;
+    @Autowired private HoldingDao holdingDao;
+    @Autowired private StockDao stockDao;
+    @Autowired private StockPriceDao stockPriceDao;
+    @Autowired private CostCalculationService costCalcService;
 
-    /** Recompute holding for one stock in a portfolio and persist it. */
-    public void rebuildHolding(long portfolioId, long stockId) throws SQLException {
-        List<Transaction> txns = TransactionDao.get().findByPortfolioAndStock(portfolioId, stockId);
-        Holding h = CostCalculationService.get().rebuild(txns);
+    public void rebuildHolding(long portfolioId, long stockId) {
+        List<Transaction> txns = transactionDao.findByPortfolioAndStock(portfolioId, stockId);
+        Holding h = costCalcService.rebuild(txns);
         h.setPortfolioId(portfolioId);
         h.setStockId(stockId);
 
-        BigDecimal totalDiv = DividendDao.get().sumByPortfolioAndStock(portfolioId, stockId);
-        CostCalculationService.get().applyDividends(h, totalDiv);
+        BigDecimal totalDiv = dividendDao.sumByPortfolioAndStock(portfolioId, stockId);
+        costCalcService.applyDividends(h, totalDiv);
 
-        HoldingDao.get().upsert(h);
+        holdingDao.upsert(h);
     }
 
-    /**
-     * Return all holdings in a portfolio enriched with latest price and computed P&L.
-     * Only positions with shares > 0 are included.
-     */
-    public List<HoldingSnapshot> getSnapshots(long portfolioId) throws SQLException {
-        List<Holding> holdings = HoldingDao.get().findByPortfolio(portfolioId);
+    public List<HoldingSnapshot> getSnapshots(long portfolioId) {
+        List<Holding> holdings = holdingDao.findByPortfolio(portfolioId);
         List<HoldingSnapshot> snapshots = new ArrayList<>();
 
         for (Holding h : holdings) {
-            Stock stock = StockDao.get().findById(h.getStockId());
+            Stock stock = stockDao.findById(h.getStockId());
             if (stock == null) continue;
 
             HoldingSnapshot snap = new HoldingSnapshot();
@@ -54,8 +52,7 @@ public class HoldingService {
             snap.setTotalInvested(h.getTotalInvested());
             snap.setTotalDividends(h.getTotalDividends());
 
-            // Latest close price from stock_prices table
-            BigDecimal price = StockPriceDao.get().findLatestClose(h.getStockId());
+            BigDecimal price = stockPriceDao.findLatestClose(h.getStockId());
             snap.setCurrentPrice(price != null ? price : h.getAvgCost());
 
             snapshots.add(snap);

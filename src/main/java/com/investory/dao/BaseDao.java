@@ -1,68 +1,47 @@
 package com.investory.dao;
 
-import com.investory.util.DBUtil;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 
-import java.sql.*;
-import java.util.ArrayList;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.List;
 
-/**
- * Shared JDBC helpers inherited by all DAO classes.
- */
 public abstract class BaseDao {
+
+    @Autowired
+    protected JdbcTemplate jdbc;
 
     @FunctionalInterface
     protected interface RowMapper<T> {
         T map(ResultSet rs) throws SQLException;
     }
 
-    protected <T> List<T> query(String sql, RowMapper<T> mapper, Object... params) throws SQLException {
-        List<T> list = new ArrayList<>();
-        try (Connection con = DBUtil.getConnection();
-             PreparedStatement ps = prepare(con, sql, params);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) list.add(mapper.map(rs));
-        }
-        return list;
+    protected <T> List<T> query(String sql, RowMapper<T> mapper, Object... params) {
+        return jdbc.query(sql, (rs, rowNum) -> mapper.map(rs), params);
     }
 
-    protected <T> T queryOne(String sql, RowMapper<T> mapper, Object... params) throws SQLException {
-        try (Connection con = DBUtil.getConnection();
-             PreparedStatement ps = prepare(con, sql, params);
-             ResultSet rs = ps.executeQuery()) {
-            return rs.next() ? mapper.map(rs) : null;
-        }
+    protected <T> T queryOne(String sql, RowMapper<T> mapper, Object... params) {
+        List<T> results = jdbc.query(sql, (rs, rowNum) -> mapper.map(rs), params);
+        return results.isEmpty() ? null : results.get(0);
     }
 
-    protected int update(String sql, Object... params) throws SQLException {
-        try (Connection con = DBUtil.getConnection();
-             PreparedStatement ps = prepare(con, sql, params)) {
-            return ps.executeUpdate();
-        }
+    protected int update(String sql, Object... params) {
+        return jdbc.update(sql, params);
     }
 
-    /** Execute INSERT and return the generated key. */
-    protected long insert(String sql, Object... params) throws SQLException {
-        try (Connection con = DBUtil.getConnection();
-             PreparedStatement ps = con.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
-            setParams(ps, params);
-            ps.executeUpdate();
-            try (ResultSet keys = ps.getGeneratedKeys()) {
-                if (keys.next()) return keys.getLong(1);
-            }
-        }
-        return -1;
-    }
-
-    private PreparedStatement prepare(Connection con, String sql, Object... params) throws SQLException {
-        PreparedStatement ps = con.prepareStatement(sql);
-        setParams(ps, params);
-        return ps;
-    }
-
-    private void setParams(PreparedStatement ps, Object... params) throws SQLException {
-        for (int i = 0; i < params.length; i++) {
-            ps.setObject(i + 1, params[i]);
-        }
+    protected long insert(String sql, Object... params) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbc.update(con -> {
+            PreparedStatement ps = con.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+            for (int i = 0; i < params.length; i++) ps.setObject(i + 1, params[i]);
+            return ps;
+        }, keyHolder);
+        Number key = keyHolder.getKey();
+        return key != null ? key.longValue() : -1;
     }
 }

@@ -1,6 +1,7 @@
 package com.investory.dao;
 
 import com.investory.model.DailyValue;
+import org.springframework.stereotype.Repository;
 
 import java.sql.Date;
 import java.sql.ResultSet;
@@ -8,10 +9,8 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.util.List;
 
+@Repository
 public class DailyPortfolioValueDao extends BaseDao {
-
-    private static final DailyPortfolioValueDao INSTANCE = new DailyPortfolioValueDao();
-    public static DailyPortfolioValueDao get() { return INSTANCE; }
 
     private DailyValue map(ResultSet rs) throws SQLException {
         DailyValue d = new DailyValue();
@@ -25,7 +24,7 @@ public class DailyPortfolioValueDao extends BaseDao {
         return d;
     }
 
-    public List<DailyValue> findRange(long portfolioId, LocalDate from, LocalDate to) throws SQLException {
+    public List<DailyValue> findRange(long portfolioId, LocalDate from, LocalDate to) {
         return query("""
             SELECT * FROM daily_portfolio_value
             WHERE portfolio_id = ? AND snapshot_date BETWEEN ? AND ?
@@ -33,7 +32,7 @@ public class DailyPortfolioValueDao extends BaseDao {
             """, this::map, portfolioId, Date.valueOf(from), Date.valueOf(to));
     }
 
-    public void upsert(DailyValue v) throws SQLException {
+    public void upsert(DailyValue v) {
         update("""
             INSERT INTO daily_portfolio_value (portfolio_id, snapshot_date, total_value, total_cost, daily_pnl)
             VALUES (?, ?, ?, ?, ?)

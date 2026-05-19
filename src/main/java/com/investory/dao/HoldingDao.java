@@ -1,16 +1,15 @@
 package com.investory.dao;
 
 import com.investory.model.Holding;
+import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.List;
 
+@Repository
 public class HoldingDao extends BaseDao {
-
-    private static final HoldingDao INSTANCE = new HoldingDao();
-    public static HoldingDao get() { return INSTANCE; }
 
     private Holding map(ResultSet rs) throws SQLException {
         Holding h = new Holding();
@@ -27,17 +26,17 @@ public class HoldingDao extends BaseDao {
         return h;
     }
 
-    public List<Holding> findByPortfolio(long portfolioId) throws SQLException {
+    public List<Holding> findByPortfolio(long portfolioId) {
         return query("SELECT * FROM holdings WHERE portfolio_id = ? AND total_shares > 0",
                 this::map, portfolioId);
     }
 
-    public Holding findByPortfolioAndStock(long portfolioId, long stockId) throws SQLException {
+    public Holding findByPortfolioAndStock(long portfolioId, long stockId) {
         return queryOne("SELECT * FROM holdings WHERE portfolio_id = ? AND stock_id = ?",
                 this::map, portfolioId, stockId);
     }
 
-    public void upsert(Holding h) throws SQLException {
+    public void upsert(Holding h) {
         update("""
             INSERT INTO holdings (portfolio_id, stock_id, total_shares, avg_cost, diluted_cost,
                                   total_invested, total_dividends)

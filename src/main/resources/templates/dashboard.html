@@ -12,7 +12,7 @@
         <th:block th:each="p : ${portfolios}">
             <a th:href="@{/dashboard(pid=${p.id})}"
                th:text="${p.name}"
-               th:classappend="${p.id == activePortfolio?.id} ? 'btn btn-success btn-sm' : 'btn btn-outline-secondary btn-sm'"></a>
+               th:classappend="${activePortfolio != null and p.id == activePortfolio.id} ? 'btn btn-success btn-sm' : 'btn btn-outline-secondary btn-sm'"></a>
         </th:block>
         <a th:href="@{/portfolio}" class="btn btn-outline-primary btn-sm"><i class="bi bi-plus-lg"></i></a>
     </div>
@@ -148,7 +148,7 @@
 <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
 <script th:src="@{/static/js/charts.js}"></script>
 <script th:inline="javascript">
-    const portfolioId = /*[[${activePortfolio?.id}]]*/ 0;
+    const portfolioId = /*[[${activePortfolio != null ? activePortfolio.id : 0}]]*/ 0;
     const ctx = [[${contextPath}]];
     initDashboardCharts(portfolioId, ctx);
 </script>

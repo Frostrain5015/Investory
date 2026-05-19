@@ -1,6 +1,7 @@
 package com.investory.dao;
 
 import com.investory.model.Transaction;
+import org.springframework.stereotype.Repository;
 
 import java.sql.Date;
 import java.sql.ResultSet;
@@ -8,17 +9,14 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.List;
 
+@Repository
 public class TransactionDao extends BaseDao {
-
-    private static final TransactionDao INSTANCE = new TransactionDao();
-    public static TransactionDao get() { return INSTANCE; }
 
     private Transaction map(ResultSet rs) throws SQLException {
         Transaction t = new Transaction();
         t.setId(rs.getLong("id"));
         t.setPortfolioId(rs.getLong("portfolio_id"));
         t.setStockId(rs.getLong("stock_id"));
-        // joined fields (may be null if not joined)
         try { t.setStockName(rs.getString("stock_name")); } catch (SQLException ignored) {}
         try { t.setStockSymbol(rs.getString("stock_symbol")); } catch (SQLException ignored) {}
         t.setType(rs.getString("type"));
@@ -33,7 +31,7 @@ public class TransactionDao extends BaseDao {
         return t;
     }
 
-    public List<Transaction> findByPortfolio(long portfolioId) throws SQLException {
+    public List<Transaction> findByPortfolio(long portfolioId) {
         return query("""
             SELECT t.*, s.name AS stock_name, s.symbol AS stock_symbol
             FROM transactions t JOIN stocks s ON t.stock_id = s.id
@@ -41,7 +39,7 @@ public class TransactionDao extends BaseDao {
             """, this::map, portfolioId);
     }
 
-    public List<Transaction> findByPortfolioAndStock(long portfolioId, long stockId) throws SQLException {
+    public List<Transaction> findByPortfolioAndStock(long portfolioId, long stockId) {
         return query("""
             SELECT t.*, s.name AS stock_name, s.symbol AS stock_symbol
             FROM transactions t JOIN stocks s ON t.stock_id = s.id
@@ -49,7 +47,7 @@ public class TransactionDao extends BaseDao {
             """, this::map, portfolioId, stockId);
     }
 
-    public long insert(Transaction t) throws SQLException {
+    public long insert(Transaction t) {
         return insert("""
             INSERT INTO transactions (portfolio_id, stock_id, type, shares, price, fee, trade_date, note)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -59,7 +57,7 @@ public class TransactionDao extends BaseDao {
             Date.valueOf(t.getTradeDate()), t.getNote());
     }
 
-    public void delete(long id) throws SQLException {
+    public void delete(long id) {
         update("DELETE FROM transactions WHERE id = ?", id);
     }
 }

@@ -8,6 +8,8 @@ import com.investory.dao.StockDao;
 import com.investory.dao.StockPriceDao;
 import com.investory.model.Stock;
 import com.investory.model.StockPrice;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -20,26 +22,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Logger;
 
-/**
- * Fetches stock price data from 东方财富 (East Money) free APIs.
- *
- * Real-time multi-stock:
- *   https://push2.eastmoney.com/api/qt/ulist.np/get?secids=1.600519,...&fields=f2,f3,f4,f12,f14
- *
- * Historical daily K-line:
- *   https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=1.600519&klt=101&...
- */
+@Component
 public class EastMoneyCrawler {
 
     private static final Logger log = Logger.getLogger(EastMoneyCrawler.class.getName());
-    private static final EastMoneyCrawler INSTANCE = new EastMoneyCrawler();
-    public static EastMoneyCrawler get() { return INSTANCE; }
+
+    @Autowired private StockDao stockDao;
+    @Autowired private StockPriceDao stockPriceDao;
 
     private final HttpClient http = HttpClient.newHttpClient();
 
-    // ── Realtime prices ────────────────────────────────────────────────────────
-
-    /** Update latest close price for every stock that has holdings. */
     public void updateRealtimePrices(List<Stock> stocks) {
         if (stocks.isEmpty()) return;
         StringBuilder secids = new StringBuilder();
@@ -63,7 +55,7 @@ public class EastMoneyCrawler {
                 String market = guessMarket(code);
                 String secid  = marketPrefix(market) + "." + code;
 
-                Stock stock = StockDao.get().findBySymbol(secid);
+                Stock stock = stockDao.findBySymbol(secid);
                 if (stock == null) continue;
 
                 BigDecimal price = safeDecimal(item, "f2");
@@ -76,16 +68,13 @@ public class EastMoneyCrawler {
                 sp.setOpen(price);
                 sp.setHigh(price);
                 sp.setLow(price);
-                StockPriceDao.get().upsert(sp);
+                stockPriceDao.upsert(sp);
             }
         } catch (Exception e) {
             log.warning("Realtime price update failed: " + e.getMessage());
         }
     }
 
-    // ── Historical K-line ──────────────────────────────────────────────────────
-
-    /** Fetch and store up to 2 years of daily K-line for a single stock. */
     public void fetchHistory(Stock stock) {
         String endDate   = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
         String startDate = LocalDate.now().minusYears(2).format(DateTimeFormatter.BASIC_ISO_DATE);
@@ -114,14 +103,12 @@ public class EastMoneyCrawler {
                 try { sp.setVolume(Long.parseLong(parts[5])); } catch (NumberFormatException ignored) {}
                 prices.add(sp);
             }
-            for (StockPrice sp : prices) StockPriceDao.get().upsert(sp);
+            for (StockPrice sp : prices) stockPriceDao.upsert(sp);
             log.info("Fetched " + prices.size() + " K-lines for " + stock.getSymbol());
         } catch (Exception e) {
             log.warning("History fetch failed for " + stock.getSymbol() + ": " + e.getMessage());
         }
     }
-
-    // ── Helpers ────────────────────────────────────────────────────────────────
 
     private String get(String url) throws Exception {
         HttpRequest req = HttpRequest.newBuilder(URI.create(url))

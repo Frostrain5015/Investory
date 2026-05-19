@@ -2,32 +2,17 @@ package com.investory.service;
 
 import com.investory.model.Holding;
 import com.investory.model.Transaction;
+import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
 
-/**
- * Core cost calculation engine.
- *
- * Moving weighted average cost:
- *   BUY:  avg_cost = (total_invested + new_cost) / (old_shares + new_shares)
- *   SELL: avg_cost unchanged; total_invested reduced by avg_cost * sold_shares
- *
- * Diluted cost (cash dividends only):
- *   diluted_cost = (total_invested - total_dividends) / total_shares
- */
+@Service
 public class CostCalculationService {
-
-    private static final CostCalculationService INSTANCE = new CostCalculationService();
-    public static CostCalculationService get() { return INSTANCE; }
 
     private static final BigDecimal ZERO = BigDecimal.ZERO;
 
-    /**
-     * Rebuild holding state from an ordered list of transactions (oldest first).
-     * Does NOT include dividends — call applyDividends() afterwards.
-     */
     public Holding rebuild(List<Transaction> transactions) {
         BigDecimal totalShares   = ZERO;
         BigDecimal totalInvested = ZERO;
@@ -44,7 +29,6 @@ public class CostCalculationService {
                 totalInvested = totalInvested.add(cost);
 
             } else if ("SELL".equals(t.getType())) {
-                // Reduce shares; reduce invested proportionally at avg_cost
                 BigDecimal soldCost = avgCost.multiply(t.getShares());
                 totalShares   = totalShares.subtract(t.getShares());
                 totalInvested = totalInvested.subtract(soldCost);
@@ -65,7 +49,6 @@ public class CostCalculationService {
         return h;
     }
 
-    /** Apply total cash dividends to update diluted_cost. */
     public void applyDividends(Holding h, BigDecimal totalDividends) {
         if (totalDividends == null) totalDividends = ZERO;
         h.setTotalDividends(totalDividends.setScale(4, RoundingMode.HALF_UP));
