@@ -121,7 +121,7 @@ public class ChartDataController {
                 dailyPnl = v.getTotalValue().subtract(v.getTotalCost());
             }
             prevValue = v.getTotalValue();
-            result.add(new Object[]{ v.getSnapshotDate().toString(), dailyPnl });
+            result.add(new Object[]{ v.getSnapshotDate().toString(), dailyPnl, v.getTotalValue() });
         }
         return JsonUtil.toJson(result);
     }

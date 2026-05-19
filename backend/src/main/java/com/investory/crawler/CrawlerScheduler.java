@@ -1,36 +1,72 @@
 package com.investory.crawler;
 
-import com.investory.dao.StockDao;
-import com.investory.model.Stock;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.Objects;
+import java.io.File;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.logging.Logger;
-import java.util.stream.Collectors;
 
 /**
- * Deprecated scheduler. Realtime prices are now handled by RealtimeQuoteService.
- * Daily close syncs are handled by external Python scripts via yfinance + baostock.
- * Kept for potential future use.
+ * Schedules daily close-price syncs via external Python scripts.
+ * Scripts are in the project root /script directory and write directly to MySQL.
  */
 @Component
 public class CrawlerScheduler {
 
     private static final Logger log = Logger.getLogger(CrawlerScheduler.class.getName());
+    private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
+    private static final String SCRIPT_DIR = "script";
 
-    @Autowired private StockDao stockDao;
-    @Autowired private JdbcTemplate jdbc;
+    // ── A-shares: 15:30 Mon-Fri (BaoStock) ──────────────────────────
 
-    /** Convenience: get all stocks currently held across all portfolios. */
-    public List<Stock> getHeldStocks() {
-        List<Long> ids = jdbc.queryForList(
-            "SELECT DISTINCT stock_id FROM holdings WHERE total_shares > 0", Long.class);
-        return ids.stream()
-            .map(id -> stockDao.findById(id))
-            .filter(Objects::nonNull)
-            .collect(Collectors.toList());
+    @Scheduled(cron = "0 30 15 * * MON-FRI", zone = "Asia/Shanghai")
+    public void syncAShares() {
+        if (isWeekend()) return;
+        runScript("fetch_a_stock.py", "A股");
+    }
+
+    // ── HK: 16:30 Mon-Fri (Tencent Finance) ─────────────────────────
+
+    @Scheduled(cron = "0 30 16 * * MON-FRI", zone = "Asia/Shanghai")
+    public void syncHKStocks() {
+        if (isWeekend()) return;
+        runScript("fetch_hk_stock.py", "港股");
+    }
+
+    // ── US: 05:00 Tue-Sat (Yahoo Finance) ───────────────────────────
+
+    @Scheduled(cron = "0 0 5 * * TUE-SAT", zone = "Asia/Shanghai")
+    public void syncUSStocks() {
+        runScript("fetch_us_stock_yf.py", "美股");
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────
+
+    private boolean isWeekend() {
+        DayOfWeek day = LocalDate.now(SHANGHAI).getDayOfWeek();
+        return day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
+    }
+
+    private void runScript(String filename, String label) {
+        File script = new File(SCRIPT_DIR, filename);
+        if (!script.exists()) {
+            log.warning(label + " script not found: " + script.getAbsolutePath());
+            return;
+        }
+        log.info("Starting " + label + " sync: " + filename);
+        try {
+            ProcessBuilder pb = new ProcessBuilder("python", script.getAbsolutePath());
+            pb.directory(script.getParentFile());
+            pb.redirectErrorStream(true);
+            pb.inheritIO(); // stdout/stderr go to application log
+            Process p = pb.start();
+            p.waitFor();
+            log.info(label + " sync completed, exit=" + p.exitValue());
+        } catch (Exception e) {
+            log.warning(label + " sync error: " + e.getMessage());
+        }
     }
 }

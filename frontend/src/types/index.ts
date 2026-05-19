@@ -146,7 +146,7 @@ export interface CumulativeReturnItem {
   return: number
 }
 
-export type PnlCalendarItem = [string, number]
+export type PnlCalendarItem = [string, number, number]  // [date, dailyPnl, totalValue]
 
 export interface StockSearchItem {
   id: string

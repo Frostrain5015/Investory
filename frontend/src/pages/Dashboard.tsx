@@ -25,7 +25,7 @@ const COLORS = ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8'
 
 export default function Dashboard() {
   const { portfolioId } = useAuth()
-  const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
+  const { positiveClass, negativeClass, positiveHex, negativeHex, formatCurrency, convertCurrency } = useSettings()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, totalReturnPct: 0 })
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
@@ -102,7 +102,7 @@ export default function Dashboard() {
           <CardContent className="pt-6">
             <p className="text-xs text-slate-500 font-medium">总市值</p>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
-              &yen;{totals.totalMarketValue.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+              {formatCurrency(totals.totalMarketValue)}
             </p>
           </CardContent>
         </Card>
@@ -110,7 +110,7 @@ export default function Dashboard() {
           <CardContent className="pt-6">
             <p className="text-xs text-slate-500 font-medium">总成本</p>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
-              &yen;{totals.totalInvested.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+              {formatCurrency(totals.totalInvested)}
             </p>
           </CardContent>
         </Card>
@@ -118,7 +118,7 @@ export default function Dashboard() {
           <CardContent className="pt-6">
             <p className="text-xs text-slate-500 font-medium">浮动盈亏</p>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${isPositive ? positiveClass : negativeClass}`}>
-              {isPositive ? '+' : ''}&yen;{totals.totalPnl.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+              {isPositive ? '+' : ''}{formatCurrency(Math.abs(totals.totalPnl))}
             </p>
           </CardContent>
         </Card>
@@ -170,7 +170,7 @@ export default function Dashboard() {
                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value: unknown) => `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`} />
+                  <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
@@ -187,7 +187,7 @@ export default function Dashboard() {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                 <XAxis type="number" tick={{ fontSize: 11 }} stroke="#94a3b8" />
                 <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} stroke="#94a3b8" width={60} />
-                <Tooltip formatter={(value: unknown) => `¥${Number(value).toLocaleString()}`} />
+                <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
                 <Bar dataKey="pnl" radius={[0, 4, 4, 0]}>
                   {pnlRank.map((_, i) => (
                     <Cell key={i} fill={pnlRank[i].pnl >= 0 ? positiveHex : negativeHex} />
@@ -205,7 +205,7 @@ export default function Dashboard() {
           <CardTitle className="text-base">总资产曲线</CardTitle>
           {cumulative.length > 0 && (
             <span className="text-2xl font-bold tabular-nums tracking-tight text-slate-900">
-              ¥{Number(cumulative[cumulative.length - 1].value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+              {formatCurrency(Number(cumulative[cumulative.length - 1].value))}
             </span>
           )}
         </CardHeader>
@@ -221,10 +221,11 @@ export default function Dashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
               <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" tickFormatter={(v: number) => {
-                if (v >= 10000) return (v / 10000).toFixed(0) + '万'
-                return String(v)
+                const cv = convertCurrency(Number(v))
+                if (Math.abs(cv) >= 10000) return (cv / 10000).toFixed(0) + '万'
+                return String(Math.round(cv))
               }} />
-              <Tooltip formatter={(value: unknown) => `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`} />
+              <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
               <Area type="monotone" dataKey="value" stroke={positiveHex} fill="url(#colorValue)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
