@@ -1,0 +1,180 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app xmlns="https://jakarta.ee/xml/ns/jakartaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee
+                             https://jakarta.ee/xml/ns/jakartaee/web-app_6_0.xsd"
+         version="6.0">
+
+    <display-name>盈亏鉴 Investory</display-name>
+
+    <!-- App bootstrap: HikariCP + Thymeleaf init -->
+    <listener>
+        <listener-class>com.investory.util.AppConfig</listener-class>
+    </listener>
+
+    <!-- Stock price crawler scheduler -->
+    <listener>
+        <listener-class>com.investory.crawler.CrawlerScheduler</listener-class>
+    </listener>
+
+    <!-- Auth filter: protect all pages except /login /register /static -->
+    <filter>
+        <filter-name>AuthFilter</filter-name>
+        <filter-class>com.investory.filter.AuthFilter</filter-class>
+    </filter>
+    <filter-mapping>
+        <filter-name>AuthFilter</filter-name>
+        <url-pattern>/dashboard</url-pattern>
+    </filter-mapping>
+    <filter-mapping>
+        <filter-name>AuthFilter</filter-name>
+        <url-pattern>/portfolio</url-pattern>
+    </filter-mapping>
+    <filter-mapping>
+        <filter-name>AuthFilter</filter-name>
+        <url-pattern>/holdings</url-pattern>
+    </filter-mapping>
+    <filter-mapping>
+        <filter-name>AuthFilter</filter-name>
+        <url-pattern>/transactions</url-pattern>
+    </filter-mapping>
+    <filter-mapping>
+        <filter-name>AuthFilter</filter-name>
+        <url-pattern>/dividends</url-pattern>
+    </filter-mapping>
+    <filter-mapping>
+        <filter-name>AuthFilter</filter-name>
+        <url-pattern>/stock</url-pattern>
+    </filter-mapping>
+    <filter-mapping>
+        <filter-name>AuthFilter</filter-name>
+        <url-pattern>/pnl-calendar</url-pattern>
+    </filter-mapping>
+    <filter-mapping>
+        <filter-name>AuthFilter</filter-name>
+        <url-pattern>/api/*</url-pattern>
+    </filter-mapping>
+
+    <!-- ── Servlets ─────────────────────────────────────────────────────────── -->
+    <servlet>
+        <servlet-name>IndexServlet</servlet-name>
+        <servlet-class>com.investory.servlet.IndexServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>IndexServlet</servlet-name>
+        <url-pattern>/</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>LoginServlet</servlet-name>
+        <servlet-class>com.investory.servlet.LoginServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>LoginServlet</servlet-name>
+        <url-pattern>/login</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>RegisterServlet</servlet-name>
+        <servlet-class>com.investory.servlet.RegisterServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>RegisterServlet</servlet-name>
+        <url-pattern>/register</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>LogoutServlet</servlet-name>
+        <servlet-class>com.investory.servlet.LogoutServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>LogoutServlet</servlet-name>
+        <url-pattern>/logout</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>DashboardServlet</servlet-name>
+        <servlet-class>com.investory.servlet.DashboardServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>DashboardServlet</servlet-name>
+        <url-pattern>/dashboard</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>PortfolioServlet</servlet-name>
+        <servlet-class>com.investory.servlet.PortfolioServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>PortfolioServlet</servlet-name>
+        <url-pattern>/portfolio</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>HoldingsServlet</servlet-name>
+        <servlet-class>com.investory.servlet.HoldingsServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>HoldingsServlet</servlet-name>
+        <url-pattern>/holdings</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>TransactionServlet</servlet-name>
+        <servlet-class>com.investory.servlet.TransactionServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>TransactionServlet</servlet-name>
+        <url-pattern>/transactions</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>DividendServlet</servlet-name>
+        <servlet-class>com.investory.servlet.DividendServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>DividendServlet</servlet-name>
+        <url-pattern>/dividends</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>StockDetailServlet</servlet-name>
+        <servlet-class>com.investory.servlet.StockDetailServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>StockDetailServlet</servlet-name>
+        <url-pattern>/stock</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>PnlCalendarServlet</servlet-name>
+        <servlet-class>com.investory.servlet.PnlCalendarServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>PnlCalendarServlet</servlet-name>
+        <url-pattern>/pnl-calendar</url-pattern>
+    </servlet-mapping>
+
+    <!-- API (JSON) endpoints -->
+    <servlet>
+        <servlet-name>ChartDataServlet</servlet-name>
+        <servlet-class>com.investory.servlet.api.ChartDataServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>ChartDataServlet</servlet-name>
+        <url-pattern>/api/chart</url-pattern>
+    </servlet-mapping>
+
+    <servlet>
+        <servlet-name>StockSearchApiServlet</servlet-name>
+        <servlet-class>com.investory.servlet.api.StockSearchApiServlet</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>StockSearchApiServlet</servlet-name>
+        <url-pattern>/api/stock/search</url-pattern>
+    </servlet-mapping>
+
+    <session-config>
+        <session-timeout>60</session-timeout>
+    </session-config>
+</web-app>

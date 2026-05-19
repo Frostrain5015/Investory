@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="zh-CN">
+<head th:replace="~{layout :: head('持仓详情')}"></head>
+<body class="d-flex flex-column min-vh-100 bg-body-tertiary">
+<nav th:replace="~{layout :: navbar}"></nav>
+
+<div class="container-fluid py-3 px-4 flex-grow-1">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h5 class="fw-bold mb-0">持仓明细</h5>
+        <a th:href="@{/transactions(view='add')}" class="btn btn-success btn-sm">
+            <i class="bi bi-plus-lg me-1"></i>新增交易
+        </a>
+    </div>
+
+    <div class="card border-0 shadow-sm rounded-4">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                    <tr>
+                        <th>股票名称</th><th>市场</th><th>持仓数量</th>
+                        <th class="text-end">现价</th>
+                        <th class="text-end">平均成本</th>
+                        <th class="text-end">摊薄成本</th>
+                        <th class="text-end">总投入</th>
+                        <th class="text-end">市值</th>
+                        <th class="text-end">浮动盈亏</th>
+                        <th class="text-end">收益率</th>
+                        <th class="text-end">累计分红</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="s : ${snapshots}">
+                        <td>
+                            <a th:href="@{/stock(symbol=${s.stockSymbol})}" class="fw-semibold text-decoration-none"
+                               th:text="${s.stockName}"></a>
+                            <br><small class="text-muted" th:text="${s.stockSymbol}"></small>
+                        </td>
+                        <td><span class="badge bg-secondary" th:text="${s.market}"></span></td>
+                        <td th:text="${s.totalShares}"></td>
+                        <td class="text-end" th:text="${s.currentPrice}"></td>
+                        <td class="text-end text-warning fw-semibold" th:text="${s.avgCost}"></td>
+                        <td class="text-end text-info fw-semibold" th:text="${s.dilutedCost}"></td>
+                        <td class="text-end" th:text="${s.totalInvested}"></td>
+                        <td class="text-end fw-bold" th:text="${s.marketValue}"></td>
+                        <td class="text-end fw-bold"
+                            th:classappend="${s.unrealizedPnl >= 0} ? 'text-danger' : 'text-success'"
+                            th:text="${(s.unrealizedPnl >= 0 ? '+' : '') + s.unrealizedPnl}"></td>
+                        <td class="text-end"
+                            th:classappend="${s.unrealizedPnlPct >= 0} ? 'text-danger' : 'text-success'"
+                            th:text="${(s.unrealizedPnlPct >= 0 ? '+' : '') + s.unrealizedPnlPct + '%'}"></td>
+                        <td class="text-end text-success" th:text="${s.totalDividends}"></td>
+                        <td class="text-end">
+                            <a th:href="@{/stock(symbol=${s.stockSymbol})}" class="btn btn-outline-primary btn-sm">详情</a>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<footer th:replace="~{layout :: footer}"></footer>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

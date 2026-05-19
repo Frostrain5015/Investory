@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="zh-CN">
+<head th:replace="~{layout :: head('盈亏日历')}"></head>
+<body class="d-flex flex-column min-vh-100 bg-body-tertiary">
+<nav th:replace="~{layout :: navbar}"></nav>
+
+<div class="container-fluid py-3 px-4 flex-grow-1">
+    <div class="d-flex align-items-center gap-3 mb-3">
+        <h5 class="fw-bold mb-0">盈亏日历</h5>
+        <a th:href="@{/pnl-calendar(year=${prevYear})}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-chevron-left"></i> <span th:text="${prevYear}"></span>
+        </a>
+        <span class="fw-bold" th:text="${year}"></span>
+        <a th:href="@{/pnl-calendar(year=${nextYear})}" class="btn btn-outline-secondary btn-sm">
+            <span th:text="${nextYear}"></span> <i class="bi bi-chevron-right"></i>
+        </a>
+    </div>
+
+    <div class="card border-0 shadow-sm rounded-4">
+        <div class="card-body p-2">
+            <div id="chart-calendar" style="height:500px"></div>
+        </div>
+    </div>
+
+    <p class="text-muted small mt-2 text-center">
+        <span class="text-danger">■</span> 盈利 &nbsp;
+        <span class="text-success">■</span> 亏损 &nbsp;
+        颜色深浅代表盈亏幅度
+    </p>
+</div>
+
+<footer th:replace="~{layout :: footer}"></footer>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script th:src="@{/static/js/charts.js}"></script>
+<script th:inline="javascript">
+    const YEAR3 = /*[[${year}]]*/ new Date().getFullYear();
+    const CTX3  = [[${contextPath}]];
+    initPnlCalendar('chart-calendar', YEAR3, CTX3);
+</script>
+</body>
+</html>

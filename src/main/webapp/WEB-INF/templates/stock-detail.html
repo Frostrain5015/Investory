@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="zh-CN">
+<head th:replace="~{layout :: head(${stock.name})}"></head>
+<body class="d-flex flex-column min-vh-100 bg-body-tertiary">
+<nav th:replace="~{layout :: navbar}"></nav>
+
+<div class="container-fluid py-3 px-4 flex-grow-1">
+
+    <!-- Stock header -->
+    <div class="d-flex align-items-center gap-3 mb-3">
+        <div>
+            <h5 class="fw-bold mb-0" th:text="${stock.name}"></h5>
+            <small class="text-muted" th:text="${stock.symbol + ' · ' + stock.market + ' · ' + stock.currency}"></small>
+        </div>
+        <span class="badge bg-secondary" th:text="${stock.market}"></span>
+        <a th:href="@{/transactions(view='add')}" class="btn btn-success btn-sm ms-auto">
+            <i class="bi bi-plus-lg me-1"></i>买入/卖出
+        </a>
+    </div>
+
+    <!-- Cost summary cards -->
+    <div class="row g-3 mb-3" th:if="${holding != null}">
+        <div class="col-6 col-md-2">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div class="card-body py-3">
+                    <p class="text-muted small mb-1">持仓数量</p>
+                    <h6 class="fw-bold mb-0" th:text="${holding.totalShares}"></h6>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div class="card-body py-3">
+                    <p class="text-muted small mb-1">平均成本</p>
+                    <h6 class="fw-bold mb-0 text-warning" th:text="${holding.avgCost}"></h6>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div class="card-body py-3">
+                    <p class="text-muted small mb-1">摊薄成本</p>
+                    <h6 class="fw-bold mb-0 text-info" th:text="${holding.dilutedCost}"></h6>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div class="card-body py-3">
+                    <p class="text-muted small mb-1">总投入</p>
+                    <h6 class="fw-bold mb-0" th:text="${holding.totalInvested}"></h6>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-2">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div class="card-body py-3">
+                    <p class="text-muted small mb-1">累计分红</p>
+                    <h6 class="fw-bold mb-0 text-success" th:text="${holding.totalDividends}"></h6>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Price chart with cost lines -->
+    <div class="card border-0 shadow-sm rounded-4 mb-3">
+        <div class="card-header bg-transparent border-0 fw-semibold pt-3 d-flex gap-2 align-items-center">
+            股价走势
+            <div class="btn-group btn-group-sm ms-auto" role="group">
+                <button class="btn btn-outline-secondary" onclick="loadChart(30)">1M</button>
+                <button class="btn btn-outline-secondary active" onclick="loadChart(180)">6M</button>
+                <button class="btn btn-outline-secondary" onclick="loadChart(365)">1Y</button>
+                <button class="btn btn-outline-secondary" onclick="loadChart(730)">2Y</button>
+            </div>
+        </div>
+        <div class="card-body p-2">
+            <div id="chart-price" style="height:320px"></div>
+        </div>
+    </div>
+
+    <!-- Transaction history -->
+    <div class="row g-3">
+        <div class="col-md-7">
+            <div class="card border-0 shadow-sm rounded-4">
+                <div class="card-header bg-transparent border-0 fw-semibold pt-3">交易记录</div>
+                <div class="card-body p-0">
+                    <table class="table table-hover align-middle mb-0 small">
+                        <thead class="table-light">
+                        <tr><th>日期</th><th>操作</th><th>股数</th><th>价格</th><th>手续费</th></tr>
+                        </thead>
+                        <tbody>
+                        <tr th:each="t : ${transactions}">
+                            <td th:text="${t.tradeDate}"></td>
+                            <td>
+                                <span th:if="${t.type=='BUY'}" class="badge bg-danger">买入</span>
+                                <span th:if="${t.type=='SELL'}" class="badge bg-success">卖出</span>
+                            </td>
+                            <td th:text="${t.shares}"></td>
+                            <td th:text="${t.price}"></td>
+                            <td th:text="${t.fee}"></td>
+                        </tr>
+                        </tbody>
+                    </table>
+                    <p th:if="${transactions.isEmpty()}" class="text-center text-muted py-3 small">暂无交易记录</p>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-5">
+            <div class="card border-0 shadow-sm rounded-4">
+                <div class="card-header bg-transparent border-0 fw-semibold pt-3">分红记录</div>
+                <div class="card-body p-0">
+                    <table class="table table-hover align-middle mb-0 small">
+                        <thead class="table-light">
+                        <tr><th>记录日</th><th>每股</th><th>总额</th></tr>
+                        </thead>
+                        <tbody>
+                        <tr th:each="d : ${dividends}">
+                            <td th:text="${d.recordDate}"></td>
+                            <td th:text="${d.amountPerShare}"></td>
+                            <td class="text-success fw-semibold" th:text="${d.totalAmount}"></td>
+                        </tr>
+                        </tbody>
+                    </table>
+                    <p th:if="${dividends.isEmpty()}" class="text-center text-muted py-3 small">暂无分红记录</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<footer th:replace="~{layout :: footer}"></footer>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script th:src="@{/static/js/charts.js}"></script>
+<script th:inline="javascript">
+    const SYMBOL  = /*[[${stock.symbol}]]*/ '';
+    const AVG_COST = /*[[${holding?.avgCost}]]*/ null;
+    const DIL_COST = /*[[${holding?.dilutedCost}]]*/ null;
+    const CTX2 = [[${contextPath}]];
+
+    function loadChart(days) {
+        document.querySelectorAll('.btn-group .btn').forEach(b => b.classList.remove('active'));
+        event.target.classList.add('active');
+        initPriceChart('chart-price', SYMBOL, days, AVG_COST, DIL_COST, CTX2);
+    }
+    loadChart(180);
+</script>
+</body>
+</html>

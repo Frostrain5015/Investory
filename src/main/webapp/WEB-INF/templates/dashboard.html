@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="zh-CN">
+<head th:replace="~{layout :: head('总览')}"></head>
+<body class="d-flex flex-column min-vh-100 bg-body-tertiary">
+<nav th:replace="~{layout :: navbar}"></nav>
+
+<div class="container-fluid py-3 px-4 flex-grow-1">
+
+    <!-- Portfolio switcher -->
+    <div class="d-flex align-items-center gap-2 mb-3 flex-wrap">
+        <span class="text-muted small me-1">组合：</span>
+        <th:block th:each="p : ${portfolios}">
+            <a th:href="@{/dashboard(pid=${p.id})}"
+               th:text="${p.name}"
+               th:classappend="${p.id == activePortfolio?.id} ? 'btn btn-success btn-sm' : 'btn btn-outline-secondary btn-sm'"></a>
+        </th:block>
+        <a th:href="@{/portfolio}" class="btn btn-outline-primary btn-sm"><i class="bi bi-plus-lg"></i></a>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div class="card-body">
+                    <p class="text-muted small mb-1">总市值</p>
+                    <h5 class="fw-bold mb-0" th:text="'¥' + ${#numbers.formatDecimal(totalMarketValue,1,'COMMA',2,'POINT')}">—</h5>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div class="card-body">
+                    <p class="text-muted small mb-1">总成本</p>
+                    <h5 class="fw-bold mb-0" th:text="'¥' + ${#numbers.formatDecimal(totalInvested,1,'COMMA',2,'POINT')}">—</h5>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div class="card-body">
+                    <p class="text-muted small mb-1">浮动盈亏</p>
+                    <h5 class="fw-bold mb-0"
+                        th:classappend="${totalPnl >= 0} ? 'text-danger' : 'text-success'"
+                        th:text="${totalPnl >= 0 ? '+' : ''} + ${#numbers.formatDecimal(totalPnl,1,'COMMA',2,'POINT')}">—</h5>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm rounded-4 h-100">
+                <div class="card-body">
+                    <p class="text-muted small mb-1">总收益率</p>
+                    <h5 class="fw-bold mb-0"
+                        th:classappend="${totalReturnPct >= 0} ? 'text-danger' : 'text-success'"
+                        th:text="${totalReturnPct >= 0 ? '+' : ''} + ${totalReturnPct} + '%'">—</h5>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts row 1: Allocation pie + P&L rank -->
+    <div class="row g-3 mb-3">
+        <div class="col-md-5">
+            <div class="card border-0 shadow-sm rounded-4">
+                <div class="card-header bg-transparent border-0 fw-semibold pt-3">持仓占比</div>
+                <div class="card-body p-2">
+                    <div id="chart-allocation" style="height:300px"></div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-7">
+            <div class="card border-0 shadow-sm rounded-4">
+                <div class="card-header bg-transparent border-0 fw-semibold pt-3">盈亏排行榜</div>
+                <div class="card-body p-2">
+                    <div id="chart-pnl-rank" style="height:300px"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts row 2: Cumulative return -->
+    <div class="row g-3 mb-3">
+        <div class="col-12">
+            <div class="card border-0 shadow-sm rounded-4">
+                <div class="card-header bg-transparent border-0 fw-semibold pt-3">累计收益曲线</div>
+                <div class="card-body p-2">
+                    <div id="chart-cumulative" style="height:240px"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Holdings table -->
+    <div class="card border-0 shadow-sm rounded-4 mb-3" th:if="${!snapshots.isEmpty()}">
+        <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center pt-3">
+            <span class="fw-semibold">持仓明细</span>
+            <a th:href="@{/transactions(view='add')}" class="btn btn-success btn-sm"><i class="bi bi-plus-lg me-1"></i>买入</a>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0 small">
+                    <thead class="table-light">
+                    <tr>
+                        <th>股票</th><th>市场</th><th>持仓</th>
+                        <th class="text-end">现价</th>
+                        <th class="text-end">平均成本</th>
+                        <th class="text-end">摊薄成本</th>
+                        <th class="text-end">市值</th>
+                        <th class="text-end">浮盈</th>
+                        <th class="text-end">收益率</th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="s : ${snapshots}">
+                        <td>
+                            <a th:href="@{/stock(symbol=${s.stockSymbol})}" class="fw-semibold text-decoration-none"
+                               th:text="${s.stockName}"></a>
+                            <br><small class="text-muted" th:text="${s.stockSymbol}"></small>
+                        </td>
+                        <td><span class="badge bg-secondary" th:text="${s.market}"></span></td>
+                        <td th:text="${s.totalShares}"></td>
+                        <td class="text-end" th:text="${s.currentPrice}"></td>
+                        <td class="text-end" th:text="${s.avgCost}"></td>
+                        <td class="text-end" th:text="${s.dilutedCost}"></td>
+                        <td class="text-end fw-semibold" th:text="${s.marketValue}"></td>
+                        <td class="text-end fw-semibold"
+                            th:classappend="${s.unrealizedPnl >= 0} ? 'text-danger' : 'text-success'"
+                            th:text="${(s.unrealizedPnl >= 0 ? '+' : '') + s.unrealizedPnl}"></td>
+                        <td class="text-end"
+                            th:classappend="${s.unrealizedPnlPct >= 0} ? 'text-danger' : 'text-success'"
+                            th:text="${(s.unrealizedPnlPct >= 0 ? '+' : '') + s.unrealizedPnlPct + '%'}"></td>
+                    </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div th:if="${snapshots.isEmpty()}" class="text-center py-5 text-muted">
+        <i class="bi bi-inbox" style="font-size:3rem"></i>
+        <p class="mt-2">暂无持仓，<a th:href="@{/transactions(view='add')}">立即添加第一笔交易</a></p>
+    </div>
+
+</div>
+
+<footer th:replace="~{layout :: footer}"></footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+<script th:src="@{/static/js/charts.js}"></script>
+<script th:inline="javascript">
+    const portfolioId = /*[[${activePortfolio?.id}]]*/ 0;
+    const ctx = [[${contextPath}]];
+    initDashboardCharts(portfolioId, ctx);
+</script>
+</body>
+</html>
