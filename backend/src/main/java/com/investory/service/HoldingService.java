@@ -1,5 +1,6 @@
 package com.investory.service;
 
+import com.investory.crawler.RealtimeQuoteService;
 import com.investory.dao.*;
 import com.investory.model.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,7 @@ public class HoldingService {
     @Autowired private HoldingDao holdingDao;
     @Autowired private StockDao stockDao;
     @Autowired private StockPriceDao stockPriceDao;
+    @Autowired private RealtimeQuoteService quoteService;
     @Autowired private CostCalculationService costCalcService;
 
     public void rebuildHolding(long portfolioId, long stockId) {
@@ -52,7 +54,9 @@ public class HoldingService {
             snap.setTotalInvested(h.getTotalInvested());
             snap.setTotalDividends(h.getTotalDividends());
 
-            BigDecimal price = stockPriceDao.findLatestClose(h.getStockId());
+            // Try real-time price first, fall back to DB cache
+            BigDecimal price = quoteService.getPrice(stock);
+            if (price == null) price = stockPriceDao.findLatestClose(h.getStockId());
             snap.setCurrentPrice(price != null ? price : h.getAvgCost());
 
             snapshots.add(snap);

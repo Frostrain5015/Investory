@@ -50,9 +50,10 @@ export default function StockDetail() {
         <div>
           <div className="flex items-baseline gap-3">
             <h2 className="text-xl font-bold text-slate-900">
-              <span className="mr-2 text-2xl leading-none align-middle">
-                {stock?.market === 'SH' || stock?.market === 'SZ' ? '🇨🇳' : stock?.market === 'HK' ? '🇭🇰' : stock?.market === 'US' ? '🇺🇸' : ''}
-              </span>
+              {(() => { const m: string = stock?.market ?? ''; if (!m) return null; return (
+                <img src={`https://flagcdn.com/${m === 'SH' || m === 'SZ' ? 'cn' : m.toLowerCase()}.svg`}
+                  alt={m} className="w-6 h-4 inline-block align-middle mr-2 rounded-sm" />
+              )})()}
               {stock?.name}
             </h2>
             {currentPrice != null && (

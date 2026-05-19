@@ -70,11 +70,31 @@ export default function Dashboard() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">总览</h2>
-        <button onClick={() => fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }).then(r => r.json()).then(d => alert(`已开始刷新 ${d.count} 只股票的行情数据`))}
-          className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors">
-          刷新行情
-        </button>
+        {snapshots.length > 0 && (
+          <button onClick={() => fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }).then(r => r.json()).then(d => alert(`已开始刷新 ${d.count} 只股票的行情数据`))}
+            className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors">
+            刷新行情
+          </button>
+        )}
       </div>
+
+      {snapshots.length === 0 ? (
+        <Card>
+          <CardContent className="py-16 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4">
+              <svg className="w-8 h-8 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">开始你的投资之旅</h3>
+            <p className="text-sm text-slate-500 mb-6">添加第一笔交易记录，盈亏鉴将为你追踪持仓、计算盈亏。</p>
+            <Link to="/transactions/add"
+              className="inline-flex items-center gap-2 h-10 px-6 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
+              添加第一笔交易
+            </Link>
+          </CardContent>
+        </Card>
+      ) : (<>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -283,6 +303,7 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       )}
+      </>)}
     </div>
   )
 }

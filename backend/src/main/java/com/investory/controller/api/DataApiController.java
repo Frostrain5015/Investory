@@ -1,6 +1,7 @@
 package com.investory.controller.api;
 
 import com.investory.crawler.EastMoneyCrawler;
+import com.investory.crawler.RealtimeQuoteService;
 import com.investory.dao.*;
 import com.investory.model.*;
 import com.investory.service.HoldingService;
@@ -25,8 +26,10 @@ public class DataApiController {
     @Autowired private TransactionDao transactionDao;
     @Autowired private DividendDao dividendDao;
     @Autowired private StockDao stockDao;
+    @Autowired private StockPriceDao stockPriceDao;
     @Autowired private PortfolioAnalysisService analysisService;
     @Autowired private EastMoneyCrawler crawler;
+    @Autowired private RealtimeQuoteService quoteService;
     @Autowired private PortfolioValueCalculator valueCalculator;
 
     private long getPortfolioId(HttpServletRequest req) {
@@ -273,16 +276,30 @@ public class DataApiController {
         result.put("holding",      holdingDao.findByPortfolioAndStock(portfolioId, stock.getId()));
         result.put("transactions", transactionDao.findByPortfolioAndStock(portfolioId, stock.getId()));
         result.put("dividends",    dividendDao.findByPortfolioAndStock(portfolioId, stock.getId()));
+        result.put("livePrice", quoteService.getPrice(stock));
         return result;
     }
 
     // ── Refresh ──────────────────────────────────────────────────────────
 
+    @GetMapping("/quote/{symbol}")
+    public Map<String, Object> getQuote(@PathVariable String symbol) {
+        Stock stock = stockDao.findBySymbol(symbol);
+        if (stock == null) return Map.of("error", "Stock not found");
+        BigDecimal price = quoteService.getPrice(stock);
+        BigDecimal cached = stockPriceDao.findLatestClose(stock.getId());
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("symbol", symbol);
+        result.put("price", price != null ? price : cached);
+        result.put("live",  price != null);
+        return result;
+    }
+
     @PostMapping("/stocks/{symbol}/refresh")
     public Map<String, String> refreshStock(@PathVariable String symbol) {
         Stock stock = stockDao.findBySymbol(symbol);
         if (stock == null) return Map.of("error", "Stock not found");
-        new Thread(() -> crawler.fetchHistory(stock)).start();
+        quoteService.getPrice(stock); // fire-and-forget real-time fetch
         return Map.of("status", "ok");
     }
 
@@ -294,7 +311,7 @@ public class DataApiController {
         new Thread(() -> {
             for (HoldingSnapshot snap : snapshots) {
                 Stock stock = stockDao.findBySymbol(snap.getStockSymbol());
-                if (stock != null) crawler.fetchHistory(stock);
+                if (stock != null) quoteService.getPrice(stock);
             }
         }).start();
         return Map.of("status", "ok", "count", String.valueOf(snapshots.size()));
