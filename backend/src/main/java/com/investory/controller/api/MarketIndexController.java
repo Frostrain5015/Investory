@@ -1,0 +1,89 @@
+package com.investory.controller.api;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.math.BigDecimal;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.*;
+import java.util.concurrent.*;
+
+@RestController
+@RequestMapping("/api/market")
+public class MarketIndexController {
+
+    private final HttpClient http = HttpClient.newHttpClient();
+
+    @GetMapping("/indices")
+    public List<Map<String, Object>> getIndices() {
+        ExecutorService ex = Executors.newFixedThreadPool(9);
+        List<Future<Map<String, Object>>> futures = new ArrayList<>();
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 31, 59)));
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 32, 63)));
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 30, 64)));
+        futures.add(ex.submit(() -> fetchSinaIndex("int_hangseng","恒生指数",  "HK", 22, 72)));
+        futures.add(ex.submit(() -> fetchSinaIndex("int_hkcei",   "国企指数",  "HK", 23, 73)));
+        futures.add(ex.submit(() -> fetchSinaIndex("int_hstech",  "恒生科技",  "HK", 24, 74)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 40, 35)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 38, 38)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 42, 40)));
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Future<Map<String, Object>> f : futures) {
+            try { result.add(f.get(4, TimeUnit.SECONDS)); } catch (Exception ignored) {}
+        }
+        ex.shutdownNow();
+        return result;
+    }
+
+    private Map<String, Object> fetchSinaIndex(String code, String name, String flag, double lat, double lng) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", name);
+        m.put("flag", flag);
+        m.put("lat", lat);
+        m.put("lng", lng);
+        try {
+            String url = "https://hq.sinajs.cn/list=" + code;
+            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .header("Referer", "https://finance.sina.com.cn/").build();
+            String body = http.send(req, HttpResponse.BodyHandlers.ofString()).body();
+            String[] parts = body.split("\"");
+            if (parts.length >= 2) {
+                String[] fields = parts[1].split(",");
+                m.put("price",    new BigDecimal(fields[3]));
+                m.put("change",   new BigDecimal(fields[4]));
+                m.put("changePct", new BigDecimal(fields[5]));
+            }
+        } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
+        return m;
+    }
+
+    private Map<String, Object> fetchYahooIndex(String symbol, String name, String flag, double lat, double lng) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", name);
+        m.put("flag", flag);
+        m.put("lat", lat);
+        m.put("lng", lng);
+        try {
+            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
+            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .header("User-Agent", "Mozilla/5.0").build();
+            String body = http.send(req, HttpResponse.BodyHandlers.ofString()).body();
+            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+            JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
+                .get(0).getAsJsonObject().getAsJsonObject("meta");
+            m.put("price",    meta.get("regularMarketPrice").getAsBigDecimal());
+            m.put("change",   meta.get("regularMarketChange").getAsBigDecimal());
+            m.put("changePct",meta.get("regularMarketChangePercent").getAsBigDecimal());
+        } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
+        return m;
+    }
+}

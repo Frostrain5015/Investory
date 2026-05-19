@@ -5,6 +5,7 @@ import Layout from '@/components/Layout'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
 import Dashboard from '@/pages/Dashboard'
+import Market from '@/pages/Market'
 import Holdings from '@/pages/Holdings'
 import Transactions from '@/pages/Transactions'
 import AddTransaction from '@/pages/AddTransaction'
@@ -41,6 +42,7 @@ export default function App() {
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
         <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+          <Route path="/market" element={<Market />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/holdings" element={<Holdings />} />
           <Route path="/transactions" element={<Transactions />} />

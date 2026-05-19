@@ -78,7 +78,6 @@ export default function Dashboard() {
 
   const isPositive = totals.totalPnl >= 0
   const cumUp = totals.todayPnl >= 0
-  const todayPositive = totals.todayPnl >= 0
 
   return (
     <div className="p-6 space-y-6">
@@ -135,11 +134,11 @@ export default function Dashboard() {
         <Card>
           <CardContent className="pt-6">
             <p className="text-xs text-slate-500 font-medium">今日盈亏</p>
-            <p className={`text-2xl font-bold mt-1 tabular-nums ${todayPositive ? positiveClass : negativeClass}`}>
-              {todayPositive ? '+' : ''}{formatCurrency(Math.abs(totals.todayPnl))}
+            <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.todayPnl >= 0 ? positiveClass : negativeClass}`}>
+              {totals.todayPnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(totals.todayPnl))}
             </p>
-            <p className={`text-xs font-medium mt-0.5 ${todayPositive ? positiveClass : negativeClass}`}>
-              {todayPositive ? '+' : ''}{totals.todayPnlPct}%
+            <p className={`text-xs font-medium mt-0.5 ${totals.todayPnl >= 0 ? positiveClass : negativeClass}`}>
+              {totals.todayPnlPct >= 0 ? '+' : ''}{totals.todayPnlPct}%
             </p>
           </CardContent>
         </Card>

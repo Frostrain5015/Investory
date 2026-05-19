@@ -11,7 +11,7 @@ export default function CloudChart({ data, colors }: Props) {
     const sorted = [...data].sort((a, b) => b.value - a.value)
     return sorted.map((item, i) => {
       const pct = total > 0 ? item.value / total : 0
-      const dia = Math.max(54, Math.min(130, 48 + pct * 250))
+      const dia = Math.max(48, Math.min(170, 44 + pct * 160))
       return { name: item.name, dia, color: colors[i % colors.length], pct }
     })
   }, [data, colors, total])
