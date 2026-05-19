@@ -19,6 +19,7 @@ export default defineConfig({
       },
     },
   },
+  base: '/investory/',
   build: {
     outDir: '../backend/src/main/resources/static',
     emptyOutDir: true,
