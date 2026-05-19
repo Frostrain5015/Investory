@@ -31,7 +31,7 @@ public class MarketIndexController {
         futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 26, 46)));
         futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 20, 42)));
         futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 18, 44)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^HSTECH",    "恒生科技",  "HK", 15, 48)));
+        futures.add(ex.submit(() -> fetchYahooIndex("HSTECH.HK",  "恒生科技",  "HK", 15, 48)));
         futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 60, -25)));
         futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 55, -20)));
         futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 50, -15)));
@@ -76,9 +76,13 @@ public class MarketIndexController {
         m.put("lng", lng);
         try {
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
-            HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                .header("User-Agent", "Mozilla/5.0").build();
-            String body = http.send(req, HttpResponse.BodyHandlers.ofString()).body();
+            java.net.URL u = new java.net.URL(url);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            String body = new String(conn.getInputStream().readAllBytes());
+            conn.disconnect();
             JsonObject root = JsonParser.parseString(body).getAsJsonObject();
             JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
                 .get(0).getAsJsonObject().getAsJsonObject("meta");
