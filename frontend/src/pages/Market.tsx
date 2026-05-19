@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
+import * as echarts from 'echarts'
 import { Card, CardContent } from '@/components/ui/card'
 import { useSettings } from '@/hooks/use-settings'
 
@@ -7,15 +8,14 @@ interface IndexData {
   price: number; change: number; changePct: number
 }
 
-const FLAG_EMOJI: Record<string, string> = { CN: '🇨🇳', HK: '🇭🇰', US: '🇺🇸', UK: '🇬🇧' }
-
-function mapX(lng: number) { return ((lng + 180) / 360 * 100).toFixed(1) + '%' }
-function mapY(lat: number) { return ((90 - lat) / 180 * 100).toFixed(1) + '%' }
+function flagUrl(code: string) { return `https://flagcdn.com/${code.toLowerCase()}.svg` }
+const FLAG_CODE: Record<string, string> = { CN: 'cn', HK: 'hk', US: 'us' }
 
 export default function Market() {
   const { positiveClass, negativeClass } = useSettings()
   const [indices, setIndices] = useState<IndexData[]>([])
   const [loading, setLoading] = useState(true)
+  const chartRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     fetch('/investory/api/market/indices', { credentials: 'include' })
@@ -23,52 +23,75 @@ export default function Market() {
       .finally(() => setLoading(false))
   }, [])
 
-  if (loading) {
-    return <div className="flex items-center justify-center h-96">
-      <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-    </div>
-  }
+  useEffect(() => {
+    if (!chartRef.current || indices.length === 0) return
+    const chart = echarts.init(chartRef.current)
+
+    fetch('https://geo.datav.aliyun.com/areas_v3/bound/world_full.json')
+      .then(r => r.json())
+      .then(geoJson => {
+        echarts.registerMap('world', geoJson)
+        chart.setOption({
+          backgroundColor: 'transparent',
+          tooltip: {
+            trigger: 'item',
+            formatter: (params: any) => {
+              if (params.seriesType === 'scatter') {
+                const d = indices[params.dataIndex]
+                return `<b>${d.name}</b><br/>${Number(d.price).toLocaleString()}<br/>${Number(d.change) >= 0 ? '+' : ''}${Number(d.change).toFixed(2)} (${Number(d.change) >= 0 ? '+' : ''}${Number(d.changePct).toFixed(2)}%)`
+              }
+              return params.name
+            },
+          },
+          geo: {
+            map: 'world',
+            roam: false,
+            itemStyle: { areaColor: '#e2e8f0', borderColor: '#cbd5e1' },
+            emphasis: { itemStyle: { areaColor: '#cbd5e1' } },
+          },
+          series: [{
+            type: 'scatter',
+            coordinateSystem: 'geo',
+            data: indices.map(d => ({
+              name: d.name,
+              value: [d.lng, d.lat, Number(d.price)],
+              itemStyle: {
+                color: Number(d.change) >= 0 ? '#ef4444' : '#10b981',
+                shadowBlur: 8,
+                shadowColor: Number(d.change) >= 0 ? 'rgba(239,68,68,0.4)' : 'rgba(16,185,129,0.4)',
+              },
+            })),
+            symbolSize: (val: number[]) => Math.max(12, Math.min(28, Math.abs(val[2]) / 100 + 8)),
+            encode: { tooltip: [2] },
+            label: {
+              show: true,
+              formatter: '{b}',
+              position: 'right',
+              fontSize: 10,
+              color: '#475569',
+            },
+            emphasis: {
+              scale: 1.5,
+            },
+          }],
+        })
+      })
+
+    return () => chart.dispose()
+  }, [indices])
+
+  if (loading) return <div className="flex items-center justify-center h-96">
+    <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+  </div>
 
   return (
     <div className="p-6 space-y-6">
       <h2 className="text-xl font-bold text-slate-900 tracking-tight">大盘指数</h2>
 
-      {/* World map container */}
+      {/* World map */}
       <Card>
-        <CardContent className="relative h-[360px] overflow-hidden bg-gradient-to-b from-slate-50 to-blue-50/30 rounded-xl">
-          {/* Simplified map grid lines */}
-          <svg className="absolute inset-0 w-full h-full opacity-10" viewBox="0 0 800 400">
-            {[0, 90, 180, 270, 360].map(x => <line key={`v${x}`} x1={x/360*800} y1={0} x2={x/360*800} y2={400} stroke="#475569" strokeWidth={0.5} />)}
-            {[0, 30, 60, 90, 120, 150].map(y => <line key={`h${y}`} x1={0} y1={y/180*400} x2={800} y2={y/180*400} stroke="#475569" strokeWidth={0.5} />)}
-          </svg>
-
-          {/* Index markers */}
-          {indices.map(idx => {
-            const up = Number(idx.change) >= 0
-            return (
-              <div key={idx.name}
-                className="absolute z-10 transform -translate-x-1/2 -translate-y-1/2"
-                style={{ left: mapX(idx.lng), top: mapY(idx.lat) }}>
-                <div className={`rounded-xl px-3 py-2 shadow-lg hover:shadow-xl hover:scale-110 transition-all duration-200 cursor-default min-w-[120px] border ${up ? 'bg-red-50/80 border-red-200' : 'bg-emerald-50/80 border-emerald-200'}`}>
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <span className="text-base leading-none">{FLAG_EMOJI[idx.flag] || '📍'}</span>
-                    <span className="text-[11px] font-medium text-slate-600 truncate">{idx.name}</span>
-                  </div>
-                  <div className={`text-sm font-bold tabular-nums ${up ? 'text-red-700' : 'text-emerald-700'}`}>{Number(idx.price).toLocaleString()}</div>
-                  {Number(idx.change) !== 0 && (
-                    <div className={`text-[11px] font-semibold tabular-nums ${up ? positiveClass : negativeClass}`}>
-                      {up ? '+' : ''}{Number(idx.change).toFixed(2)} ({up ? '+' : ''}{Number(idx.changePct).toFixed(2)}%)
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-
-          {/* Legend */}
-          <div className="absolute bottom-3 right-4 bg-white/80 rounded-lg px-2 py-1 text-[10px] text-slate-400">
-            数据来源：Sina / Yahoo Finance
-          </div>
+        <CardContent className="p-2">
+          <div ref={chartRef} className="w-full h-[400px]" />
         </CardContent>
       </Card>
 
@@ -80,10 +103,12 @@ export default function Market() {
             <Card key={idx.name} className={up ? 'bg-red-50/30 border-red-100' : 'bg-emerald-50/30 border-emerald-100'}>
               <CardContent className="pt-4 pb-4">
                 <div className="flex items-center gap-2 mb-1.5">
-                  <span className="text-lg">{FLAG_EMOJI[idx.flag] || '📍'}</span>
+                  <img src={flagUrl(FLAG_CODE[idx.flag] || idx.flag)} alt="" className="w-5 h-3.5 rounded-sm" />
                   <span className="text-sm font-medium text-slate-700">{idx.name}</span>
                 </div>
-                <div className={`text-xl font-bold tabular-nums ${up ? 'text-red-700' : 'text-emerald-700'}`}>{Number(idx.price).toLocaleString()}</div>
+                <div className={`text-xl font-bold tabular-nums ${up ? 'text-red-700' : 'text-emerald-700'}`}>
+                  {Number(idx.price).toLocaleString()}
+                </div>
                 {Number(idx.change) !== 0 && (
                   <div className={`text-xs font-semibold mt-0.5 tabular-nums ${up ? positiveClass : negativeClass}`}>
                     {up ? '+' : ''}{Number(idx.change).toFixed(2)} ({up ? '+' : ''}{Number(idx.changePct).toFixed(2)}%)
