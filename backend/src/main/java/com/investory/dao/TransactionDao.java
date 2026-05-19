@@ -57,6 +57,15 @@ public class TransactionDao extends BaseDao {
             Date.valueOf(t.getTradeDate()), t.getNote());
     }
 
+    public void update(Transaction t) {
+        update("""
+            UPDATE transactions SET stock_id=?, type=?, shares=?, price=?, fee=?, trade_date=?, note=?
+            WHERE id=?
+            """,
+            t.getStockId(), t.getType(), t.getShares(), t.getPrice(), t.getFee(),
+            Date.valueOf(t.getTradeDate()), t.getNote(), t.getId());
+    }
+
     public void delete(long id) {
         update("DELETE FROM transactions WHERE id = ?", id);
     }

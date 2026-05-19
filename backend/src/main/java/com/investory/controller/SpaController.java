@@ -59,10 +59,9 @@ public class SpaController {
     }
 
     @GetMapping("/logout")
-    @ResponseBody
     public String logoutGet(HttpServletRequest req) {
         HttpSession session = req.getSession(false);
         if (session != null) session.invalidate();
-        return "ok";
+        return "redirect:/login";
     }
 }

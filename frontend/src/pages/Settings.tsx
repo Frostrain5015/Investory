@@ -54,7 +54,8 @@ export default function Settings() {
               onClick={toggleColorScheme}
               className="relative w-12 h-7 rounded-full transition-colors duration-200 bg-slate-200 hover:bg-slate-300"
             >
-              <span className={`absolute top-0.5 w-6 h-6 rounded-full bg-white shadow-sm transition-transform duration-200 ${colorScheme === 'cn' ? 'translate-x-0.5' : 'translate-x-[22px]'}`} />
+              <span className="absolute top-0.5 w-6 h-6 rounded-full bg-white shadow-sm transition-all duration-200"
+                style={{ left: colorScheme === 'cn' ? '2px' : '22px' }} />
             </button>
           </div>
         </CardContent>

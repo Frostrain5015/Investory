@@ -112,8 +112,16 @@ public class ChartDataController {
         LocalDate to   = LocalDate.of(y, 12, 31);
         List<DailyValue> values = analysisService.getDailyValues(portfolioId, from, to);
         List<Object[]> result = new ArrayList<>();
+        BigDecimal prevValue = null;
         for (DailyValue v : values) {
-            result.add(new Object[]{ v.getSnapshotDate().toString(), v.getDailyPnl() });
+            BigDecimal dailyPnl;
+            if (prevValue != null) {
+                dailyPnl = v.getTotalValue().subtract(prevValue);
+            } else {
+                dailyPnl = v.getTotalValue().subtract(v.getTotalCost());
+            }
+            prevValue = v.getTotalValue();
+            result.add(new Object[]{ v.getSnapshotDate().toString(), dailyPnl });
         }
         return JsonUtil.toJson(result);
     }

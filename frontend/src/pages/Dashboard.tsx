@@ -11,6 +11,7 @@ import {
 } from 'recharts'
 import { getDashboard } from '@/services/api'
 import { displaySymbol } from '@/lib/format'
+import CloudChart from '@/components/CloudChart'
 
 interface Snapshot {
   stockId: number; stockSymbol: string; stockName: string; market: string
@@ -30,6 +31,7 @@ export default function Dashboard() {
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
   const [pnlRank, setPnlRank] = useState<PnlRankItem[]>([])
   const [cumulative, setCumulative] = useState<CumulativeReturnItem[]>([])
+  const [allocChart, setAllocChart] = useState<'pie' | 'cloud'>('pie')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -107,18 +109,47 @@ export default function Dashboard() {
       {/* Charts row 1 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
-          <CardHeader><CardTitle className="text-base">持仓占比</CardTitle></CardHeader>
+          <CardHeader className="flex-row items-center justify-between">
+            <CardTitle className="text-base">持仓占比</CardTitle>
+            <div className="flex bg-slate-100 rounded-lg p-0.5">
+              <button onClick={() => setAllocChart('pie')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${allocChart === 'pie' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                扇形
+              </button>
+              <button onClick={() => setAllocChart('cloud')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${allocChart === 'cloud' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                云图
+              </button>
+            </div>
+          </CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={280}>
-              <PieChart>
-                <Pie data={allocation} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} innerRadius={55}>
-                  {allocation.map((_, i) => (
-                    <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip formatter={(value: unknown) => `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`} />
-              </PieChart>
-            </ResponsiveContainer>
+            {allocChart === 'pie' ? (
+              <ResponsiveContainer width="100%" height={280}>
+                <PieChart>
+                  <Pie data={allocation} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} innerRadius={55}
+                    label={({ cx, cy, midAngle, innerRadius, outerRadius, name }) => {
+                      if (midAngle == null) return null
+                      const RADIAN = Math.PI / 180
+                      const radius = (innerRadius ?? 0) + ((outerRadius ?? 0) - (innerRadius ?? 0)) * 0.6
+                      const x = (cx ?? 0) + radius * Math.cos(-midAngle * RADIAN)
+                      const y = (cy ?? 0) + radius * Math.sin(-midAngle * RADIAN)
+                      return name ? (
+                        <text x={x} y={y} textAnchor="middle" dominantBaseline="central"
+                          className="text-[10px] font-bold fill-white pointer-events-none select-none">
+                          {name.charAt(0)}
+                        </text>
+                      ) : null
+                    }}>
+                    {allocation.map((_, i) => (
+                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip formatter={(value: unknown) => `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`} />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <CloudChart data={allocation} colors={COLORS} />
+            )}
           </CardContent>
         </Card>
 

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { searchStocks } from '@/services/api'
 import type { StockSearchItem } from '@/types'
 import { displaySymbol } from '@/lib/format'
@@ -7,6 +7,9 @@ import { Card, CardContent } from '@/components/ui/card'
 
 export default function AddTransaction() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const editId = params.get('edit')
+
   const [stockQuery, setStockQuery] = useState('')
   const [stocks, setStocks] = useState<StockSearchItem[]>([])
   const [selectedStock, setSelectedStock] = useState<StockSearchItem | null>(null)
@@ -19,15 +22,40 @@ export default function AddTransaction() {
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
-  useEffect(() => { if (stockQuery.length >= 1) searchStocks(stockQuery).then(setStocks) }, [stockQuery])
+  // Load existing transaction for editing
+  useEffect(() => {
+    if (!editId) return
+    fetch(`/investory/api/transactions`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(items => {
+        const item = items.find((i: any) => i.id === Number(editId))
+        if (!item) return
+        setType(item.type)
+        setShares(String(item.shares || ''))
+        setPrice(String(item.price || ''))
+        setFee(String(item.fee || ''))
+        setTradeDate(item.date)
+        setNote(item.note || '')
+        setStockQuery(item.stockName)
+        // Create a mock selected stock with available fields
+        setSelectedStock({ id: '0', symbol: item.stockSymbol, name: item.stockName, market: '' })
+      })
+  }, [editId])
+
+  useEffect(() => { if (stockQuery.length >= 1 && !selectedStock) searchStocks(stockQuery).then(setStocks) }, [stockQuery])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!selectedStock) return
     setSubmitting(true)
-    const form = new URLSearchParams({ stockId: selectedStock.id, type, shares, price, fee: fee || '', tradeDate, note: note || '' })
-    await fetch('/investory/api/transactions', {
-      method: 'POST', credentials: 'include',
+    const form = new URLSearchParams({
+      stockId: String(selectedStock.id), type, shares, price,
+      fee: fee || '', tradeDate, note: note || ''
+    })
+    const method = editId ? 'PUT' : 'POST'
+    const url = editId ? `/investory/api/transactions/${editId}` : '/investory/api/transactions'
+    await fetch(url, {
+      method, credentials: 'include',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form.toString(),
     })
@@ -36,18 +64,19 @@ export default function AddTransaction() {
 
   return (
     <div className="p-6 max-w-lg mx-auto space-y-6">
-      <h2 className="text-xl font-bold text-slate-900 tracking-tight">添加交易</h2>
+      <h2 className="text-xl font-bold text-slate-900 tracking-tight">{editId ? '编辑交易' : '添加交易'}</h2>
       <Card>
         <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="relative">
               <label className="block text-sm font-medium text-slate-700 mb-1.5">股票</label>
-              <input type="text" value={selectedStock ? `${selectedStock.name} (${displaySymbol(selectedStock.symbol, selectedStock.market)})` : stockQuery}
+              <input type="text" value={selectedStock ? `${selectedStock.name} (${selectedStock.symbol ? displaySymbol(selectedStock.symbol, selectedStock.market) : ''})` : stockQuery}
                 onChange={(e) => { setSelectedStock(null); setStockQuery(e.target.value); setShowDropdown(true) }}
                 onFocus={() => stocks.length > 0 && setShowDropdown(true)}
                 onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
                 placeholder="搜索股票代码或名称..." required
-                className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+                disabled={!!editId}
+                className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 disabled:bg-slate-50 disabled:text-slate-500" />
               {showDropdown && stocks.length > 0 && !selectedStock && (
                 <div className="absolute top-full mt-1 w-full bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden z-50">
                   {stocks.map(s => (
@@ -65,8 +94,7 @@ export default function AddTransaction() {
               <label className="block text-sm font-medium text-slate-700 mb-1.5">操作类型</label>
               <div className="flex gap-2">
                 {['BUY', 'SELL'].map(t => (
-                  <button key={t} type="button"
-                    onClick={() => setType(t as 'BUY' | 'SELL')}
+                  <button key={t} type="button" onClick={() => setType(t as 'BUY' | 'SELL')}
                     className={`flex-1 h-10 rounded-xl text-sm font-medium transition-colors ${type === t ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                     {t === 'BUY' ? '买入' : '卖出'}
                   </button>
@@ -107,7 +135,7 @@ export default function AddTransaction() {
                 className="flex-1 h-10 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">取消</button>
               <button type="submit" disabled={submitting || !selectedStock}
                 className="flex-1 h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors disabled:opacity-50">
-                {submitting ? '提交中...' : '确认'}
+                {submitting ? '提交中...' : editId ? '保存修改' : '确认'}
               </button>
             </div>
           </form>

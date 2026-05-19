@@ -5,7 +5,7 @@ import { chartAPI, getStockDetail } from '@/services/api'
 import { useSettings } from '@/hooks/use-settings'
 import type { StockDetailResponse, Transaction, Dividend, PriceData } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts'
 import { displaySymbol } from '@/lib/format'
 
 export default function StockDetail() {
@@ -52,13 +52,12 @@ export default function StockDetail() {
             <h2 className="text-xl font-bold text-slate-900">{stock?.name}</h2>
             {currentPrice != null && (
               <span className={`text-3xl font-bold tabular-nums tracking-tight ${inProfit ? positiveClass : negativeClass}`}>
-                {currentPrice.toFixed(2)}
+                {stock?.currency === 'CNY' ? '¥' : stock?.currency === 'HKD' ? 'HK$' : '$'}{currentPrice.toFixed(2)}
               </span>
             )}
           </div>
-          <p className="text-sm text-slate-500">{stock && displaySymbol(stock.symbol, stock.market)} · {stock?.market} · {stock?.currency}</p>
+          <p className="text-sm text-slate-500">{stock && displaySymbol(stock.symbol, stock.market)}</p>
         </div>
-        <span className="inline-flex items-center rounded-lg bg-slate-100 px-2.5 py-0.5 text-xs text-slate-600">{stock?.market}</span>
         <Link to="/transactions/add"
           className="ml-auto inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
           买入/卖出
@@ -116,6 +115,11 @@ export default function StockDetail() {
               )}
               <Tooltip />
               <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
+              {/* B/S markers */}
+              {transactions.map(t => (
+                <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={Number(t.price)}
+                  r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2} />
+              ))}
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>

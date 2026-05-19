@@ -110,11 +110,40 @@ public class DataApiController {
     // ── Transactions ────────────────────────────────────────────────────────
 
     @GetMapping("/transactions")
-    public Map<String, Object> getTransactions(HttpServletRequest req) {
+    public List<Map<String, Object>> getTransactions(HttpServletRequest req) {
         long portfolioId = getPortfolioId(req);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("transactions", transactionDao.findByPortfolio(portfolioId));
-        return result;
+        List<Map<String, Object>> list = new ArrayList<>();
+
+        // Merge transactions and dividends into one timeline
+        for (Transaction t : transactionDao.findByPortfolio(portfolioId)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id",            t.getId());
+            m.put("date",          t.getTradeDate().toString());
+            m.put("type",          t.getType());
+            m.put("stockName",     t.getStockName());
+            m.put("stockSymbol",   t.getStockSymbol());
+            m.put("shares",        t.getShares());
+            m.put("price",         t.getPrice());
+            m.put("fee",           t.getFee());
+            m.put("note",          t.getNote());
+            list.add(m);
+        }
+
+        for (Dividend d : dividendDao.findByPortfolio(portfolioId)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id",            d.getId());
+            m.put("date",          d.getRecordDate().toString());
+            m.put("type",          "DIV");
+            m.put("stockName",     d.getStockName());
+            m.put("stockSymbol",   d.getStockSymbol());
+            m.put("amountPerShare", d.getAmountPerShare());
+            m.put("sharesHeld",    d.getSharesHeld());
+            m.put("totalAmount",   d.getTotalAmount());
+            list.add(m);
+        }
+
+        list.sort((a, b) -> ((String) b.get("date")).compareTo((String) a.get("date")));
+        return list;
     }
 
     @PostMapping("/transactions")
@@ -138,11 +167,37 @@ public class DataApiController {
         holdingService.rebuildHolding(portfolioId, stockId);
         Stock stock = stockDao.findById(stockId);
         if (stock != null) {
-            crawler.fetchHistory(stock);
-            valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate));
+            new Thread(() -> crawler.fetchHistory(stock)).start();
+            valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate), stockId, price, shares);
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", id);
+        return result;
+    }
+
+    @PutMapping("/transactions/{id}")
+    public Map<String, String> updateTransaction(@PathVariable long id,
+            @RequestParam long stockId, @RequestParam String type,
+            @RequestParam BigDecimal shares, @RequestParam BigDecimal price,
+            @RequestParam(required = false) String fee, @RequestParam String tradeDate,
+            @RequestParam(required = false) String note, HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        BigDecimal feeVal = (fee != null && !fee.isBlank()) ? new BigDecimal(fee) : BigDecimal.ZERO;
+        Transaction t = new Transaction();
+        t.setId(id);
+        t.setPortfolioId(portfolioId);
+        t.setStockId(stockId);
+        t.setType(type);
+        t.setShares(shares);
+        t.setPrice(price);
+        t.setFee(feeVal);
+        t.setTradeDate(LocalDate.parse(tradeDate));
+        t.setNote(note);
+        transactionDao.update(t);
+        holdingService.rebuildHolding(portfolioId, stockId);
+        valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate));
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("status", "ok");
         return result;
     }
 

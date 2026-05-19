@@ -124,18 +124,18 @@ export default function PnlCalendar() {
         /* Monthly: calendar grid */
         <Card>
           <CardContent className="pt-6">
-            <div className="grid grid-cols-7 gap-1 text-center">
-              {WEEKDAYS.map(d => <div key={d} className="text-[10px] text-slate-400 py-1">{d}</div>)}
+            <div className="grid grid-cols-7 gap-1.5 text-center">
+              {WEEKDAYS.map(d => <div key={d} className="text-[11px] text-slate-400 font-medium py-1">{d}</div>)}
               {monthlyGrid.cells.map((pnl, i) => {
                 if (pnl === null) return <div key={i} />
                 const dayOfMonth = i - monthlyGrid.firstDay + 1
                 const cls = pnl > 0 ? positiveBgClass : pnl < 0 ? negativeBgClass : 'bg-slate-50 text-slate-400'
                 return (
                   <div key={i}
-                    className={`h-10 flex flex-col items-center justify-center rounded-lg text-[10px] font-medium ${cls}`}
+                    className={`h-16 flex flex-col items-center justify-center rounded-xl text-xs font-medium ${cls}`}
                     title={pnl !== 0 ? `¥${Number(pnl).toFixed(2)}` : '0'}>
-                    <span className="text-[11px] leading-tight">{dayOfMonth}</span>
-                    {pnl !== 0 && <span className="leading-tight">{pnl > 0 ? '+' : ''}{Math.abs(pnl) < 10 ? pnl.toFixed(1) : Math.round(pnl)}</span>}
+                    <span className="text-sm leading-tight font-semibold">{dayOfMonth}</span>
+                    {pnl !== 0 && <span className="leading-tight mt-0.5">{pnl > 0 ? '+' : ''}{Math.abs(pnl) < 10 ? pnl.toFixed(1) : Math.round(pnl)}</span>}
                   </div>
                 )
               })}
