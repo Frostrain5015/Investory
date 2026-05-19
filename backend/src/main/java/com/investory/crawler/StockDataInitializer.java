@@ -17,12 +17,11 @@ public class StockDataInitializer implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        // Only seed if the stocks table is empty
         if (!stockDao.findAll().isEmpty()) {
-            log.info("Stocks table already populated, skipping initial seed");
+            log.info("Stocks table already populated, skipping seed");
             return;
         }
-        log.info("Seeding stocks table from East Money...");
+        log.info("Seeding stocks table...");
         int count = crawler.fetchAllStocks();
         log.info("Stock seed complete: " + count + " stocks inserted");
     }

@@ -38,7 +38,7 @@ export default function AddTransaction() {
         setNote(item.note || '')
         setStockQuery(item.stockName)
         // Create a mock selected stock with available fields
-        setSelectedStock({ id: '0', symbol: item.stockSymbol, name: item.stockName, market: '' })
+        setSelectedStock({ id: '0', symbol: item.stockSymbol, name: item.stockName, market: '', price: 0 })
       })
   }, [editId])
 

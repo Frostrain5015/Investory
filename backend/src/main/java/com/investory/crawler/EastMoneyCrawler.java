@@ -76,38 +76,129 @@ public class EastMoneyCrawler {
         }
     }
 
+    /** Fetch recent prices (last 30 trading days). Used by daily scheduler. */
     public void fetchHistory(Stock stock) {
+        if (fetchRecentEastMoney(stock) > 0) return;
+        if (fetchRecentSina(stock) > 0) return;
+        log.warning("Recent price fetch failed for all sources: " + stock.getSymbol());
+    }
+
+    private int fetchRecentEastMoney(Stock stock) {
         String endDate   = LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE);
-        String startDate = LocalDate.now().minusYears(2).format(DateTimeFormatter.BASIC_ISO_DATE);
+        String startDate = LocalDate.now().minusDays(45).format(DateTimeFormatter.BASIC_ISO_DATE);
         String url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
                 + "?secid=" + stock.getSymbol()
                 + "&fields1=f1,f2,f3,f4&fields2=f51,f52,f53,f54,f55,f56"
                 + "&klt=101&fqt=1&beg=" + startDate + "&end=" + endDate + "&lmt=730";
+        return fetchAndSaveKlines(url, stock, "EastMoney");
+    }
+
+    private int fetchRecentSina(Stock stock) {
+        String code = stock.getSymbol().substring(stock.getSymbol().indexOf('.') + 1);
+        String prefix = stock.getMarket().equals("SH") ? "sh" : "sz";
+        String url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+                + "CN_MarketData.getKLineData?symbol=" + prefix + code
+                + "&scale=240&ma=no&datalen=45";
+        return fetchAndSaveKlines(url, stock, "Sina");
+    }
+
+    /** Sync today's prices for ALL stocks via Sina stock list API (includes trade price). */
+    public int syncAllPricesFromSina() {
+        int total = 0;
+        for (String node : new String[]{"sh_a", "sz_a"}) {
+            int page = 1;
+            while (true) {
+                String url = "https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+                        + "Market_Center.getHQNodeData?page=" + page + "&num=500&sort=symbol&asc=1&node=" + node;
+                try {
+                    String body = getWithRetry(url);
+                    JsonArray items = JsonParser.parseString(body).getAsJsonArray();
+                    if (items.isEmpty()) break;
+                    for (JsonElement el : items) {
+                        JsonObject item = el.getAsJsonObject();
+                        String code = item.get("code").getAsString();
+                        String trade = item.has("trade") ? item.get("trade").getAsString() : null;
+                        if (trade == null || trade.isEmpty() || trade.equals("0.000")) continue;
+                        try {
+                            BigDecimal price = new BigDecimal(trade);
+                            if (price.compareTo(BigDecimal.ZERO) <= 0) continue;
+                            String market = node.equals("sh_a") ? "SH" : "SZ";
+                            String symbol = marketPrefix(market) + "." + code;
+                            Stock stock = stockDao.findBySymbol(symbol);
+                            if (stock == null) continue;
+                            StockPrice sp = new StockPrice();
+                            sp.setStockId(stock.getId());
+                            sp.setTradeDate(LocalDate.now());
+                            sp.setClose(price);
+                            sp.setOpen(price);
+                            sp.setHigh(price);
+                            sp.setLow(price);
+                            stockPriceDao.upsert(sp);
+                            total++;
+                        } catch (NumberFormatException ignored) {}
+                    }
+                    Thread.sleep(500);
+                    page++;
+                } catch (Exception e) {
+                    log.warning("Sina price sync failed at " + node + " page " + page + ": " + e.getMessage());
+                    break;
+                }
+            }
+        }
+        log.info("Sina price sync: " + total + " prices updated");
+        return total;
+    }
+
+    private int fetchAndSaveKlines(String url, Stock stock, String source) {
         try {
             String body = get(url);
-            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-            JsonObject data = root.getAsJsonObject("data");
-            if (data == null || data.get("klines") == null) return;
+            JsonElement root = JsonParser.parseString(body);
+            JsonArray lines;
+            if (root.isJsonArray()) {
+                lines = root.getAsJsonArray();
+            } else {
+                JsonObject obj = root.getAsJsonObject();
+                JsonObject data = obj.getAsJsonObject("data");
+                if (data == null || data.get("klines") == null) return 0;
+                lines = data.getAsJsonArray("klines");
+            }
+            if (lines == null || lines.isEmpty()) return 0;
 
-            JsonArray klines = data.getAsJsonArray("klines");
             List<StockPrice> prices = new ArrayList<>();
-            for (JsonElement el : klines) {
-                String[] parts = el.getAsString().split(",");
-                if (parts.length < 6) continue;
-                StockPrice sp = new StockPrice();
-                sp.setStockId(stock.getId());
-                sp.setTradeDate(LocalDate.parse(parts[0]));
-                sp.setOpen(new BigDecimal(parts[1]));
-                sp.setClose(new BigDecimal(parts[2]));
-                sp.setHigh(new BigDecimal(parts[3]));
-                sp.setLow(new BigDecimal(parts[4]));
-                try { sp.setVolume(Long.parseLong(parts[5])); } catch (NumberFormatException ignored) {}
-                prices.add(sp);
+            for (JsonElement el : lines) {
+                // Sina format: {"day":"2026-05-13","open":"1354.5","close":"1344.09","high":"1358.6","low":"1338.0","volume":"5696787"}
+                if (el.isJsonObject()) {
+                    JsonObject obj = el.getAsJsonObject();
+                    StockPrice sp = new StockPrice();
+                    sp.setStockId(stock.getId());
+                    sp.setTradeDate(LocalDate.parse(obj.get("day").getAsString()));
+                    sp.setOpen(new BigDecimal(obj.get("open").getAsString()));
+                    sp.setClose(new BigDecimal(obj.get("close").getAsString()));
+                    sp.setHigh(new BigDecimal(obj.get("high").getAsString()));
+                    sp.setLow(new BigDecimal(obj.get("low").getAsString()));
+                    try { sp.setVolume(Long.parseLong(obj.get("volume").getAsString())); } catch (Exception ignored) {}
+                    prices.add(sp);
+                } else {
+                    // EastMoney format: "2026-05-13,1354.50,..."
+                    String[] parts = el.getAsString().split(",");
+                    if (parts.length < 6) continue;
+                    StockPrice sp = new StockPrice();
+                    sp.setStockId(stock.getId());
+                    sp.setTradeDate(LocalDate.parse(parts[0]));
+                    sp.setOpen(new BigDecimal(parts[1]));
+                    sp.setClose(new BigDecimal(parts[2]));
+                    sp.setHigh(new BigDecimal(parts[3]));
+                    sp.setLow(new BigDecimal(parts[4]));
+                    try { sp.setVolume(Long.parseLong(parts[5])); } catch (NumberFormatException ignored) {}
+                    prices.add(sp);
+                }
             }
             for (StockPrice sp : prices) stockPriceDao.upsert(sp);
-            log.info("Fetched " + prices.size() + " K-lines for " + stock.getSymbol());
+            log.info("Fetched " + prices.size() + " K-lines via " + source + " for " + stock.getSymbol());
+            return prices.size();
         } catch (Exception e) {
-            log.warning("History fetch failed for " + stock.getSymbol() + ": " + e.getMessage());
+            log.warning("History fetch via " + source + " failed for " + stock.getSymbol() + ": " + e.getMessage());
+            return 0;
         }
     }
 
@@ -178,7 +269,23 @@ public class EastMoneyCrawler {
                         stock.setName(name);
                         stock.setMarket(market);
                         stock.setCurrency("CNY");
-                        stockDao.upsert(stock);
+                        long stockId = stockDao.upsert(stock);
+
+                        // Save latest price from Sina's real-time data
+                        String trade = item.has("trade") ? item.get("trade").getAsString() : null;
+                        if (trade != null && !trade.isEmpty() && !trade.equals("0.000")) {
+                            try {
+                                BigDecimal price = new BigDecimal(trade);
+                                StockPrice sp = new StockPrice();
+                                sp.setStockId(stockId);
+                                sp.setTradeDate(LocalDate.now());
+                                sp.setClose(price);
+                                sp.setOpen(price);
+                                sp.setHigh(price);
+                                sp.setLow(price);
+                                stockPriceDao.upsert(sp);
+                            } catch (Exception ignored) {}
+                        }
                         total++;
                     }
                     Thread.sleep(500);

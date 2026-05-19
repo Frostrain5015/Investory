@@ -167,7 +167,6 @@ public class DataApiController {
         holdingService.rebuildHolding(portfolioId, stockId);
         Stock stock = stockDao.findById(stockId);
         if (stock != null) {
-            new Thread(() -> crawler.fetchHistory(stock)).start();
             valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate), stockId, price, shares);
         }
         Map<String, Object> result = new LinkedHashMap<>();
@@ -275,5 +274,29 @@ public class DataApiController {
         result.put("transactions", transactionDao.findByPortfolioAndStock(portfolioId, stock.getId()));
         result.put("dividends",    dividendDao.findByPortfolioAndStock(portfolioId, stock.getId()));
         return result;
+    }
+
+    // ── Refresh ──────────────────────────────────────────────────────────
+
+    @PostMapping("/stocks/{symbol}/refresh")
+    public Map<String, String> refreshStock(@PathVariable String symbol) {
+        Stock stock = stockDao.findBySymbol(symbol);
+        if (stock == null) return Map.of("error", "Stock not found");
+        new Thread(() -> crawler.fetchHistory(stock)).start();
+        return Map.of("status", "ok");
+    }
+
+    @PostMapping("/portfolio/refresh")
+    public Map<String, String> refreshPortfolio(HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        if (portfolioId == 0) return Map.of("error", "No portfolio");
+        List<HoldingSnapshot> snapshots = holdingService.getSnapshots(portfolioId);
+        new Thread(() -> {
+            for (HoldingSnapshot snap : snapshots) {
+                Stock stock = stockDao.findBySymbol(snap.getStockSymbol());
+                if (stock != null) crawler.fetchHistory(stock);
+            }
+        }).start();
+        return Map.of("status", "ok", "count", String.valueOf(snapshots.size()));
     }
 }

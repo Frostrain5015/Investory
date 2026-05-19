@@ -153,6 +153,7 @@ export interface StockSearchItem {
   symbol: string
   name: string
   market: string
+  price: number
 }
 
 export interface CreateResponse {

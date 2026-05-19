@@ -68,7 +68,13 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 space-y-6">
-      <h2 className="text-xl font-bold text-slate-900 tracking-tight">总览</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight">总览</h2>
+        <button onClick={() => fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }).then(r => r.json()).then(d => alert(`已开始刷新 ${d.count} 只股票的行情数据`))}
+          className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors">
+          刷新行情
+        </button>
+      </div>
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
