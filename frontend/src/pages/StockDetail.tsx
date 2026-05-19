@@ -7,7 +7,6 @@ import type { StockDetailResponse, Transaction, Dividend, PriceData } from '@/ty
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts'
 import { displaySymbol } from '@/lib/format'
-import CandlestickChart from '@/components/CandlestickChart'
 
 export default function StockDetail() {
   const [params] = useSearchParams()
@@ -17,7 +16,6 @@ export default function StockDetail() {
   const [data, setData] = useState<StockDetailResponse | null>(null)
   const [priceData, setPriceData] = useState<PriceData[]>([])
   const [days, setDays] = useState(180)
-  const [chartType, setChartType] = useState<'line' | 'kline'>('line')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -103,15 +101,6 @@ export default function StockDetail() {
         <CardHeader className="flex-row items-center justify-between">
           <CardTitle className="text-base">股价走势</CardTitle>
           <div className="flex items-center gap-1">
-            <button onClick={() => setChartType('line')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${chartType === 'line' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-              收盘线
-            </button>
-            <button onClick={() => setChartType('kline')}
-              className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${chartType === 'kline' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-              K线
-            </button>
-            <span className="w-px h-4 bg-slate-200 mx-1" />
             {[30, 180, 365, 730].map(d => (
               <button key={d} onClick={() => setDays(d)}
                 className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${days === d ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
@@ -121,33 +110,31 @@ export default function StockDetail() {
           </div>
         </CardHeader>
         <CardContent>
-          {chartType === 'line' ? (
-            <ResponsiveContainer width="100%" height={300}>
-              <AreaChart data={priceData}>
-                <defs>
-                  <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={chartColor} stopOpacity={0.1} />
-                    <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-                <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" domain={['auto', 'auto']} />
-                {holding?.dilutedCost && Number(holding.dilutedCost) > 0 && (
-                  <ReferenceLine y={Number(holding.dilutedCost)} stroke="#0ea5e9" strokeDasharray="6 4" strokeWidth={1.5}
-                    label={{ value: `摊薄 ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
-                )}
-                <Tooltip />
-                <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
-                {transactions.map(t => (
-                  <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={Number(t.price)}
-                    r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2} />
-                ))}
-              </AreaChart>
-            </ResponsiveContainer>
-          ) : (
-            <CandlestickChart data={priceData} />
-          )}
+          <ResponsiveContainer width="100%" height={300}>
+            <AreaChart data={priceData}>
+              <defs>
+                <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={chartColor} stopOpacity={0.1} />
+                  <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8"
+                tickFormatter={(v: string) => days <= 180 ? v.substring(5) : v.substring(0, 7)}
+                interval={days <= 60 ? 0 : 'preserveStartEnd'} />
+              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" domain={['auto', 'auto']} />
+              {holding?.dilutedCost && Number(holding.dilutedCost) > 0 && (
+                <ReferenceLine y={Number(holding.dilutedCost)} stroke="#0ea5e9" strokeDasharray="6 4" strokeWidth={1.5}
+                  label={{ value: `摊薄 ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
+              )}
+              <Tooltip />
+              <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
+              {transactions.map(t => (
+                <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={Number(t.price)}
+                  r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2} />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
         </CardContent>
       </Card>
 
