@@ -1,9 +1,11 @@
 package com.investory.service;
 
 import com.investory.dao.DailyPortfolioValueDao;
+import com.investory.dao.DividendDao;
 import com.investory.dao.HoldingDao;
 import com.investory.dao.StockPriceDao;
 import com.investory.model.DailyValue;
+import com.investory.model.Dividend;
 import com.investory.model.Holding;
 import com.investory.model.StockPrice;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,6 +23,7 @@ public class PortfolioValueCalculator {
 
     @Autowired private HoldingDao holdingDao;
     @Autowired private StockPriceDao stockPriceDao;
+    @Autowired private DividendDao dividendDao;
     @Autowired private DailyPortfolioValueDao dailyDao;
 
     public void backfillFrom(long portfolioId, LocalDate fromDate) {
@@ -70,10 +73,20 @@ public class PortfolioValueCalculator {
                 }
                 prevValue = totalValue;
 
+                // Add dividend income on this day
+                List<Dividend> divs = dividendDao.findByPortfolio(portfolioId);
+                BigDecimal divIncome = BigDecimal.ZERO;
+                for (Dividend d : divs) {
+                    if (cursor.equals(d.getRecordDate())) {
+                        divIncome = divIncome.add(d.getTotalAmount());
+                    }
+                }
+                dailyPnl = dailyPnl.add(divIncome);
+
                 DailyValue dv = new DailyValue();
                 dv.setPortfolioId(portfolioId);
                 dv.setSnapshotDate(cursor);
-                dv.setTotalValue(totalValue);
+                dv.setTotalValue(totalValue.add(divIncome));
                 dv.setTotalCost(totalCost);
                 dv.setDailyPnl(dailyPnl);
                 dailyDao.upsert(dv);

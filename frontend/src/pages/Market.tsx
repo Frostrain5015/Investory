@@ -1,18 +1,12 @@
 import { useEffect, useState, useRef } from 'react'
 import * as echarts from 'echarts'
-import { Card, CardContent } from '@/components/ui/card'
-import { useSettings } from '@/hooks/use-settings'
 
 interface IndexData {
   name: string; flag: string; lat: number; lng: number
   price: number; change: number; changePct: number
 }
 
-function flagUrl(code: string) { return `https://flagcdn.com/${code.toLowerCase()}.svg` }
-const FLAG_CODE: Record<string, string> = { CN: 'cn', HK: 'hk', US: 'us' }
-
 export default function Market() {
-  const { positiveClass, negativeClass } = useSettings()
   const [indices, setIndices] = useState<IndexData[]>([])
   const [loading, setLoading] = useState(true)
   const chartRef = useRef<HTMLDivElement>(null)
@@ -25,7 +19,7 @@ export default function Market() {
 
   useEffect(() => {
     if (!chartRef.current || indices.length === 0) return
-    const chart = echarts.init(chartRef.current)
+    const chart = echarts.init(chartRef.current, null, { renderer: 'svg' })
 
     fetch('/investory/world.json')
       .then(r => r.json())
@@ -35,10 +29,20 @@ export default function Market() {
           backgroundColor: 'transparent',
           tooltip: {
             trigger: 'item',
+            backgroundColor: '#fff',
+            borderColor: '#e2e8f0',
+            borderWidth: 1,
+            borderRadius: 12,
+            padding: [10, 14],
+            textStyle: { color: '#334155', fontSize: 12 },
             formatter: (params: any) => {
-              if (params.seriesType === 'scatter') {
+              if (params.seriesType === 'scatter' && params.data) {
                 const d = indices[params.dataIndex]
-                return `<b>${d.name}</b><br/>${Number(d.price).toLocaleString()}<br/>${Number(d.change) >= 0 ? '+' : ''}${Number(d.change).toFixed(2)} (${Number(d.change) >= 0 ? '+' : ''}${Number(d.changePct).toFixed(2)}%)`
+                const up = Number(d.change) >= 0
+                return `<div style="font-weight:600;font-size:13px;margin-bottom:4px">${d.name}</div>
+                  <div style="font-size:20px;font-weight:700;color:${up ? '#dc2626' : '#059669'}">${Number(d.price).toLocaleString()}</div>
+                  <div style="font-size:12px;color:${up ? '#ef4444' : '#10b981'};margin-top:2px">
+                    ${up ? '+' : ''}${Number(d.change).toFixed(2)} (${up ? '+' : ''}${Number(d.changePct).toFixed(2)}%)</div>`
               }
               return params.name
             },
@@ -46,32 +50,35 @@ export default function Market() {
           geo: {
             map: 'world',
             roam: false,
-            itemStyle: { areaColor: '#e2e8f0', borderColor: '#cbd5e1' },
-            emphasis: { itemStyle: { areaColor: '#cbd5e1' } },
+            zoom: 1.25,
+            center: [18, 25],
+            aspectScale: 0.85,
+            itemStyle: { areaColor: '#f1f5f9', borderColor: '#cbd5e1', borderWidth: 0.5 },
+            emphasis: { itemStyle: { areaColor: '#e2e8f0' }, label: { show: false } },
           },
           series: [{
             type: 'scatter',
             coordinateSystem: 'geo',
             data: indices.map(d => ({
               name: d.name,
-              value: [d.lng, d.lat, Number(d.price)],
+              value: [d.lng, d.lat],
               itemStyle: {
                 color: Number(d.change) >= 0 ? '#ef4444' : '#10b981',
-                shadowBlur: 8,
-                shadowColor: Number(d.change) >= 0 ? 'rgba(239,68,68,0.4)' : 'rgba(16,185,129,0.4)',
+                shadowBlur: 10,
+                shadowColor: Number(d.change) >= 0 ? 'rgba(239,68,68,0.5)' : 'rgba(16,185,129,0.5)',
               },
             })),
-            symbolSize: (val: number[]) => Math.max(12, Math.min(28, Math.abs(val[2]) / 100 + 8)),
-            encode: { tooltip: [2] },
+            symbol: 'circle',
+            symbolSize: 16,
+            emphasis: { scale: 1.8, itemStyle: { shadowBlur: 20 } },
             label: {
               show: true,
               formatter: '{b}',
               position: 'right',
+              distance: 8,
               fontSize: 10,
+              fontWeight: 600,
               color: '#475569',
-            },
-            emphasis: {
-              scale: 1.5,
             },
           }],
         })
@@ -80,44 +87,18 @@ export default function Market() {
     return () => chart.dispose()
   }, [indices])
 
-  if (loading) return <div className="flex items-center justify-center h-96">
+  if (loading) return <div className="flex items-center justify-center h-screen">
     <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
   </div>
 
   return (
-    <div className="p-6 space-y-6">
-      <h2 className="text-xl font-bold text-slate-900 tracking-tight">大盘指数</h2>
-
-      {/* World map */}
-      <Card>
-        <CardContent className="p-2">
-          <div ref={chartRef} className="w-full h-[400px]" />
-        </CardContent>
-      </Card>
-
-      {/* Index list */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
-        {indices.map(idx => {
-          const up = Number(idx.change) >= 0
-          return (
-            <Card key={idx.name} className={up ? 'bg-red-50/30 border-red-100' : 'bg-emerald-50/30 border-emerald-100'}>
-              <CardContent className="pt-4 pb-4">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <img src={flagUrl(FLAG_CODE[idx.flag] || idx.flag)} alt="" className="w-5 h-3.5 rounded-sm" />
-                  <span className="text-sm font-medium text-slate-700">{idx.name}</span>
-                </div>
-                <div className={`text-xl font-bold tabular-nums ${up ? 'text-red-700' : 'text-emerald-700'}`}>
-                  {Number(idx.price).toLocaleString()}
-                </div>
-                {Number(idx.change) !== 0 && (
-                  <div className={`text-xs font-semibold mt-0.5 tabular-nums ${up ? positiveClass : negativeClass}`}>
-                    {up ? '+' : ''}{Number(idx.change).toFixed(2)} ({up ? '+' : ''}{Number(idx.changePct).toFixed(2)}%)
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )
-        })}
+    <div className="h-full flex flex-col">
+      <div className="px-6 pt-6 pb-2 flex items-center justify-between shrink-0">
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight">大盘指数</h2>
+        <span className="text-[10px] text-slate-400">数据来源：Sina / Yahoo Finance</span>
+      </div>
+      <div className="flex-1 min-h-0 px-2 pb-2">
+        <div ref={chartRef} className="w-full h-full" />
       </div>
     </div>
   )

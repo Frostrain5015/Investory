@@ -26,15 +26,15 @@ public class MarketIndexController {
     public List<Map<String, Object>> getIndices() {
         ExecutorService ex = Executors.newFixedThreadPool(9);
         List<Future<Map<String, Object>>> futures = new ArrayList<>();
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 31, 59)));
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 32, 63)));
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 30, 64)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 22, 72)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 23, 73)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^HSTECH",    "恒生科技",  "HK", 24, 74)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 40, 35)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 38, 38)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 42, 40)));
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 33, 56)));
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 31, 50)));
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 26, 46)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 20, 42)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 18, 44)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^HSTECH",    "恒生科技",  "HK", 15, 48)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 60, -25)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 55, -20)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 50, -15)));
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (Future<Map<String, Object>> f : futures) {
