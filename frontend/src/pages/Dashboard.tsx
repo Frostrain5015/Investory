@@ -6,7 +6,7 @@ import { chartAPI } from '@/services/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { AllocationItem, PnlRankItem, CumulativeReturnItem } from '@/types'
 import {
-  PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
   AreaChart, Area, Tooltip, ResponsiveContainer
 } from 'recharts'
 import { getDashboard, getPortfolios } from '@/services/api'
@@ -238,19 +238,31 @@ export default function Dashboard() {
         <Card>
           <CardHeader><CardTitle className="text-base">盈亏排行榜</CardTitle></CardHeader>
           <CardContent>
-            <ResponsiveContainer width="100%" height={280}>
-              <BarChart data={pnlRank} layout="vertical" margin={{ left: 40 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                <XAxis type="number" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-                <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} stroke="#94a3b8" width={60} />
-                <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
-                <Bar dataKey="pnl" radius={[0, 4, 4, 0]}>
-                  {pnlRank.map((_, i) => (
-                    <Cell key={i} fill={pnlRank[i].pnl >= 0 ? positiveHex : negativeHex} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            {pnlRank.length === 0 ? (
+              <div className="h-[280px] flex items-center justify-center text-slate-400 text-sm">暂无数据</div>
+            ) : (
+              <div className="space-y-0.5 h-[280px] overflow-auto">
+                {pnlRank.map((item, i) => {
+                  const absMax = Math.max(...pnlRank.map(r => Math.abs(r.pnl)), 1)
+                  const pct = item.pnl / absMax
+                  return (
+                    <div key={i} className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-slate-50 transition-colors">
+                      <span className="text-xs text-slate-500 w-5 tabular-nums">{pnlRank.length - i}</span>
+                      <span className="text-sm font-medium text-slate-700 w-20 truncate">{item.name}</span>
+                      <div className="flex-1 flex items-center gap-2">
+                        <div className="h-2 rounded-full flex-1 bg-slate-100 relative overflow-hidden">
+                          <div className={`absolute top-0 h-full rounded-full transition-all ${item.pnl >= 0 ? 'bg-red-400' : 'bg-emerald-400'}`}
+                            style={{ width: `${Math.abs(pct) * 100}%`, left: item.pnl >= 0 ? 'auto' : 0, right: item.pnl >= 0 ? 0 : 'auto' }} />
+                        </div>
+                        <span className={`text-sm font-semibold tabular-nums whitespace-nowrap ${item.pnl >= 0 ? positiveClass : negativeClass}`}>
+                          {item.pnl >= 0 ? '+' : ''}{formatCurrency(item.pnl)}
+                        </span>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
