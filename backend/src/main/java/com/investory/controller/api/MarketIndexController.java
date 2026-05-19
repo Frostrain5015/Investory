@@ -24,17 +24,26 @@ public class MarketIndexController {
 
     @GetMapping("/indices")
     public List<Map<String, Object>> getIndices() {
-        ExecutorService ex = Executors.newFixedThreadPool(9);
+        ExecutorService ex = Executors.newFixedThreadPool(12);
         List<Future<Map<String, Object>>> futures = new ArrayList<>();
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 33, 56)));
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 31, 50)));
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 26, 46)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 20, 42)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 18, 44)));
-        futures.add(ex.submit(() -> fetchYahooIndex("HSTECH.HK",  "恒生科技",  "HK", 15, 48)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 60, -25)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 55, -20)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 50, -15)));
+        // China → Shanghai (31.23, 121.47)
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 31.23, 121.47)));
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 31.23, 121.47)));
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 31.23, 121.47)));
+        // Hong Kong → Central (22.30, 114.17)
+        futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 22.30, 114.17)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 22.30, 114.17)));
+        futures.add(ex.submit(() -> fetchYahooIndex("HSTECH.HK",  "恒生科技",  "HK", 22.30, 114.17)));
+        // US → New York (40.71, -74.00)
+        futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 40.71, -74.00)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 40.71, -74.00)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 40.71, -74.00)));
+        // Japan → Tokyo
+        futures.add(ex.submit(() -> fetchYahooIndex("^N225",      "日经225",   "JP", 35.68, 139.76)));
+        // Korea → Seoul
+        futures.add(ex.submit(() -> fetchYahooIndex("^KS11",      "韩国KOSPI", "KR", 37.57, 126.98)));
+        // UK → London
+        futures.add(ex.submit(() -> fetchYahooIndex("^FTSE",      "富时100",   "UK", 51.51, -0.13)));
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (Future<Map<String, Object>> f : futures) {

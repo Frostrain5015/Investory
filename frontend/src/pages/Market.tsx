@@ -1,12 +1,13 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import * as echarts from 'echarts'
+import { useSettings } from '@/hooks/use-settings'
 
-interface IndexData {
-  name: string; flag: string; lat: number; lng: number
-  price: number; change: number; changePct: number
-}
+interface IndexData { name: string; flag: string; lat: number; lng: number; price: number; change: number; changePct: number }
+
+const LEADING = ['上证指数', '恒生指数', '标普500']
 
 export default function Market() {
+  const { positiveHex, negativeHex } = useSettings()
   const [indices, setIndices] = useState<IndexData[]>([])
   const [loading, setLoading] = useState(true)
   const chartRef = useRef<HTMLDivElement>(null)
@@ -17,8 +18,19 @@ export default function Market() {
       .finally(() => setLoading(false))
   }, [])
 
+  // Group co-located markers, leader color drives the dot
+  const markers = useMemo(() => {
+    const map = new Map<string, IndexData[]>()
+    for (const d of indices) {
+      const key = `${d.lat},${d.lng}`
+      if (!map.has(key)) map.set(key, [])
+      map.get(key)!.push(d)
+    }
+    return Array.from(map.values())
+  }, [indices])
+
   useEffect(() => {
-    if (!chartRef.current || indices.length === 0) return
+    if (!chartRef.current || markers.length === 0) return
     const chart = echarts.init(chartRef.current, null, { renderer: 'svg' })
 
     fetch('/investory/world.json')
@@ -32,60 +44,61 @@ export default function Market() {
             backgroundColor: '#fff',
             borderColor: '#e2e8f0',
             borderWidth: 1,
-            borderRadius: 12,
-            padding: [10, 14],
-            textStyle: { color: '#334155', fontSize: 12 },
+            borderRadius: 16,
+            padding: [14, 18],
+            textStyle: { color: '#334155', fontSize: 13 },
             formatter: (params: any) => {
-              if (params.seriesType === 'scatter' && params.data) {
-                const d = indices[params.dataIndex]
-                const up = Number(d.change) >= 0
-                return `<div style="font-weight:600;font-size:13px;margin-bottom:4px">${d.name}</div>
-                  <div style="font-size:20px;font-weight:700;color:${up ? '#dc2626' : '#059669'}">${Number(d.price).toLocaleString()}</div>
-                  <div style="font-size:12px;color:${up ? '#ef4444' : '#10b981'};margin-top:2px">
-                    ${up ? '+' : ''}${Number(d.change).toFixed(2)} (${up ? '+' : ''}${Number(d.changePct).toFixed(2)}%)</div>`
-              }
-              return params.name
+              const group = markers[params.dataIndex]
+              if (!group) return ''
+              const flagMap: Record<string, string> = { CN: '🇨🇳', HK: '🇭🇰', US: '🇺🇸' }
+              const flag = flagMap[group[0].flag] || '📍'
+              return `<div style="font-weight:700;font-size:14px;margin-bottom:6px">${flag} ${group[0].flag}</div>
+                ${group.map(d => {
+                  const u = Number(d.change) >= 0
+                  return `<div style="display:flex;align-items:center;gap:12px;padding:3px 0;font-size:12px">
+                    <span style="min-width:50px;color:#475569">${d.name}</span>
+                    <span style="font-weight:600;min-width:80px;text-align:right;color:${u ? positiveHex : negativeHex}">${Number(d.price).toLocaleString()}</span>
+                    <span style="min-width:90px;text-align:right;color:${u ? positiveHex : negativeHex}">${u ? '+' : ''}${Number(d.change).toFixed(2)} (${u ? '+' : ''}${Number(d.changePct).toFixed(2)}%)</span>
+                  </div>`
+                }).join('')}`
             },
           },
           geo: {
-            map: 'world',
-            roam: false,
-            zoom: 1.25,
-            center: [18, 25],
-            aspectScale: 0.85,
+            map: 'world', roam: false, zoom: 1.25, center: [18, 25], aspectScale: 0.85,
             itemStyle: { areaColor: '#f1f5f9', borderColor: '#cbd5e1', borderWidth: 0.5 },
             emphasis: { itemStyle: { areaColor: '#e2e8f0' }, label: { show: false } },
           },
           series: [{
-            type: 'scatter',
-            coordinateSystem: 'geo',
-            data: indices.map(d => ({
-              name: d.name,
-              value: [d.lng, d.lat],
-              itemStyle: {
-                color: Number(d.change) >= 0 ? '#ef4444' : '#10b981',
-                shadowBlur: 10,
-                shadowColor: Number(d.change) >= 0 ? 'rgba(239,68,68,0.5)' : 'rgba(16,185,129,0.5)',
-              },
-            })),
-            symbol: 'circle',
-            symbolSize: 16,
-            emphasis: { scale: 1.8, itemStyle: { shadowBlur: 20 } },
+            type: 'scatter', coordinateSystem: 'geo',
+            data: markers.map(group => {
+              const leader = group.find(d => LEADING.includes(d.name)) || group[0]
+              const up = Number(leader.change) >= 0
+              return {
+                value: [group[0].lng, group[0].lat],
+                itemStyle: {
+                  color: up ? positiveHex : negativeHex,
+                  shadowBlur: 12,
+                  shadowColor: (up ? positiveHex : negativeHex) + '80',
+                },
+              }
+            }),
+            symbol: 'circle', symbolSize: 18,
+            emphasis: { scale: 1.6, itemStyle: { shadowBlur: 24 } },
             label: {
-              show: true,
-              formatter: '{b}',
-              position: 'right',
-              distance: 8,
-              fontSize: 10,
-              fontWeight: 600,
-              color: '#475569',
+              show: true, position: 'top', distance: 10,
+              formatter: (params: any) => {
+                const group = markers[params.dataIndex]
+                const flagMap: Record<string, string> = { CN: '上海', HK: '香港', US: '纽约' }
+                return flagMap[group[0].flag] || ''
+              },
+              fontSize: 11, fontWeight: 700, color: '#475569',
             },
           }],
         })
       })
 
     return () => chart.dispose()
-  }, [indices])
+  }, [markers, positiveHex, negativeHex])
 
   if (loading) return <div className="flex items-center justify-center h-screen">
     <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
