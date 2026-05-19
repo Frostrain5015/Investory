@@ -29,9 +29,9 @@ public class MarketIndexController {
         futures.add(ex.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 31, 59)));
         futures.add(ex.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 32, 63)));
         futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 30, 64)));
-        futures.add(ex.submit(() -> fetchSinaIndex("int_hangseng","恒生指数",  "HK", 22, 72)));
-        futures.add(ex.submit(() -> fetchSinaIndex("int_hkcei",   "国企指数",  "HK", 23, 73)));
-        futures.add(ex.submit(() -> fetchSinaIndex("int_hstech",  "恒生科技",  "HK", 24, 74)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 22, 72)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 23, 73)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^HSTECH",    "恒生科技",  "HK", 24, 74)));
         futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 40, 35)));
         futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 38, 38)));
         futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 42, 40)));
@@ -58,9 +58,11 @@ public class MarketIndexController {
             String[] parts = body.split("\"");
             if (parts.length >= 2) {
                 String[] fields = parts[1].split(",");
-                m.put("price",    new BigDecimal(fields[3]));
-                m.put("change",   new BigDecimal(fields[4]));
-                m.put("changePct", new BigDecimal(fields[5]));
+                if (fields.length >= 4) {
+                    m.put("price",    new BigDecimal(fields[1]));
+                    m.put("change",   new BigDecimal(fields[2]));
+                    m.put("changePct", new BigDecimal(fields[3]));
+                }
             }
         } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
         return m;

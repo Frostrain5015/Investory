@@ -49,12 +49,12 @@ export default function Market() {
               <div key={idx.name}
                 className="absolute z-10 transform -translate-x-1/2 -translate-y-1/2"
                 style={{ left: mapX(idx.lng), top: mapY(idx.lat) }}>
-                <div className="bg-white border border-slate-200 rounded-xl px-3 py-2 shadow-lg hover:shadow-xl hover:scale-110 transition-all duration-200 cursor-default min-w-[120px]">
+                <div className={`rounded-xl px-3 py-2 shadow-lg hover:shadow-xl hover:scale-110 transition-all duration-200 cursor-default min-w-[120px] border ${up ? 'bg-red-50/80 border-red-200' : 'bg-emerald-50/80 border-emerald-200'}`}>
                   <div className="flex items-center gap-1.5 mb-1">
                     <span className="text-base leading-none">{FLAG_EMOJI[idx.flag] || '📍'}</span>
                     <span className="text-[11px] font-medium text-slate-600 truncate">{idx.name}</span>
                   </div>
-                  <div className="text-sm font-bold tabular-nums text-slate-900">{Number(idx.price).toLocaleString()}</div>
+                  <div className={`text-sm font-bold tabular-nums ${up ? 'text-red-700' : 'text-emerald-700'}`}>{Number(idx.price).toLocaleString()}</div>
                   {Number(idx.change) !== 0 && (
                     <div className={`text-[11px] font-semibold tabular-nums ${up ? positiveClass : negativeClass}`}>
                       {up ? '+' : ''}{Number(idx.change).toFixed(2)} ({up ? '+' : ''}{Number(idx.changePct).toFixed(2)}%)
@@ -77,13 +77,13 @@ export default function Market() {
         {indices.map(idx => {
           const up = Number(idx.change) >= 0
           return (
-            <Card key={idx.name}>
+            <Card key={idx.name} className={up ? 'bg-red-50/30 border-red-100' : 'bg-emerald-50/30 border-emerald-100'}>
               <CardContent className="pt-4 pb-4">
                 <div className="flex items-center gap-2 mb-1.5">
                   <span className="text-lg">{FLAG_EMOJI[idx.flag] || '📍'}</span>
                   <span className="text-sm font-medium text-slate-700">{idx.name}</span>
                 </div>
-                <div className="text-xl font-bold tabular-nums text-slate-900">{Number(idx.price).toLocaleString()}</div>
+                <div className={`text-xl font-bold tabular-nums ${up ? 'text-red-700' : 'text-emerald-700'}`}>{Number(idx.price).toLocaleString()}</div>
                 {Number(idx.change) !== 0 && (
                   <div className={`text-xs font-semibold mt-0.5 tabular-nums ${up ? positiveClass : negativeClass}`}>
                     {up ? '+' : ''}{Number(idx.change).toFixed(2)} ({up ? '+' : ''}{Number(idx.changePct).toFixed(2)}%)
