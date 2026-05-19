@@ -51,7 +51,7 @@ export default function Market() {
               const group = markers[params.dataIndex]
               if (!group) return ''
               const f = group[0].flag.toLowerCase()
-              const nameMap: Record<string, string> = { cn: '中国', hk: '中国香港', us: '美国', jp: '日本', kr: '韩国', uk: '英国' }
+              const nameMap: Record<string, string> = { cn: '中国', hk: '中国香港', us: '美国', jp: '日本', kr: '韩国', gb: '英国', de: '德国', fr: '法国', tw: '中国台湾', sg: '新加坡', in: '印度', au: '澳大利亚', ca: '加拿大', br: '巴西' }
               return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:700;font-size:14px">
                 <img src="https://flagcdn.com/${f}.svg" style="width:22px;height:15px;border-radius:2px"/>
                 ${nameMap[group[0].flag.toLowerCase()] || group[0].flag}
@@ -90,7 +90,7 @@ export default function Market() {
               show: true, position: 'top', distance: 10,
               formatter: (params: any) => {
                 const f = markers[params.dataIndex]?.[0]?.flag?.toLowerCase()
-                const labels: Record<string, string> = { cn: '中国', hk: '中国香港', us: '美国', jp: '日本', kr: '韩国', uk: '英国' }
+                const labels: Record<string, string> = { cn: '中国', hk: '中国香港', us: '美国', jp: '日本', kr: '韩国', gb: '英国', de: '德国', fr: '法国', tw: '中国台湾', sg: '新加坡', in: '印度', au: '澳大利亚', ca: '加拿大', br: '巴西' }
                 return labels[f] || ''
               },
               fontSize: 11, fontWeight: 700, color: '#475569',

@@ -43,7 +43,7 @@ public class MarketIndexController {
         // Korea → Seoul
         futures.add(ex.submit(() -> fetchYahooIndex("^KS11",      "韩国KOSPI", "KR", 37.57, 126.98)));
         // UK → London
-        futures.add(ex.submit(() -> fetchYahooIndex("^FTSE",      "富时100",   "UK", 51.51, -0.13)));
+        futures.add(ex.submit(() -> fetchYahooIndex("^FTSE",      "富时100",   "GB", 51.51, -0.13)));
         // Germany → Berlin
         futures.add(ex.submit(() -> fetchYahooIndex("^GDAXI",     "德国DAX",   "DE", 52.52, 13.40)));
         // France → Paris
@@ -56,8 +56,8 @@ public class MarketIndexController {
         futures.add(ex.submit(() -> fetchYahooIndex("^BSESN",     "印度SENSEX","IN", 28.61, 77.23)));
         // Australia → Canberra
         futures.add(ex.submit(() -> fetchYahooIndex("^AXJO",      "澳洲ASX200","AU", -35.28, 149.13)));
-        // Canada → Ottawa
-        futures.add(ex.submit(() -> fetchYahooIndex("^GSPTSE",    "加拿大TSX", "CA", 45.42, -75.70)));
+        // Canada → Toronto
+        futures.add(ex.submit(() -> fetchYahooIndex("^GSPTSE",    "加拿大TSX", "CA", 43.65, -79.38)));
         // Brazil → Brasília
         futures.add(ex.submit(() -> fetchYahooIndex("^BVSP",      "巴西Bovespa","BR", -15.80, -47.86)));
 
