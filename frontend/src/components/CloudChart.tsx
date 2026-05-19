@@ -1,52 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { AllocationItem } from '@/types'
 
-interface Props {
-  data: AllocationItem[]
-  colors: string[]
-}
-
-function logoUrl(symbol: string): string {
-  return `https://webquoteklinepic.eastmoney.com/GetPic.aspx?id=${symbol}&imageType=r`
-}
-
-function Bubble({ item, dia, color, pct }: {
-  item: AllocationItem; dia: number; color: string; pct: number
-}) {
-  const [imgError, setImgError] = useState(false)
-  const url = logoUrl(item.symbol)
-
-  return (
-    <div
-      className="flex flex-col items-center justify-center rounded-full shrink-0 font-bold shadow-md hover:scale-110 transition-transform duration-200 cursor-default relative overflow-hidden"
-      style={{
-        width: dia,
-        height: dia,
-        backgroundColor: imgError ? color : '#f1f5f9',
-        fontSize: Math.max(10, dia * 0.3),
-      }}
-      title={`${item.name}\n${(pct * 100).toFixed(1)}%`}
-    >
-      {url && !imgError ? (
-        <img
-          src={url}
-          alt={item.name.charAt(0)}
-          onError={() => setImgError(true)}
-          className="w-full h-full object-cover rounded-full"
-        />
-      ) : (
-        <>
-          <span className="leading-none text-white">{item.name.charAt(0)}</span>
-          {dia > 55 && (
-            <span className="text-[0.55em] leading-none mt-0.5 text-white/80">
-              {(pct * 100).toFixed(0)}%
-            </span>
-          )}
-        </>
-      )}
-    </div>
-  )
-}
+interface Props { data: AllocationItem[]; colors: string[] }
 
 export default function CloudChart({ data, colors }: Props) {
   const total = useMemo(() => data.reduce((s, d) => s + d.value, 0), [data])
@@ -55,9 +10,9 @@ export default function CloudChart({ data, colors }: Props) {
     if (data.length === 0) return []
     const sorted = [...data].sort((a, b) => b.value - a.value)
     return sorted.map((item, i) => {
-      const pct = total > 0 ? item.value / total : 0.25
-      const dia = Math.max(36, Math.min(90, 28 + pct * 200))
-      return { item, dia, color: colors[i % colors.length], pct }
+      const pct = total > 0 ? item.value / total : 0
+      const dia = Math.max(54, Math.min(130, 48 + pct * 250))
+      return { name: item.name, dia, color: colors[i % colors.length], pct }
     })
   }, [data, colors, total])
 
@@ -66,9 +21,25 @@ export default function CloudChart({ data, colors }: Props) {
   }
 
   return (
-    <div className="h-[280px] flex flex-wrap items-center justify-center gap-2 content-center px-2">
-      {bubbles.map(b => (
-        <Bubble key={b.item.symbol} {...b} />
+    <div className="h-[280px] flex flex-wrap items-center justify-center gap-3 content-center px-2">
+      {bubbles.map((b, i) => (
+        <div
+          key={i}
+          className="rounded-full shrink-0 flex flex-col items-center justify-center text-white shadow-md hover:scale-110 transition-transform duration-200 cursor-default select-none"
+          style={{ width: b.dia, height: b.dia, backgroundColor: b.color }}
+          title={`${b.name} ${(b.pct * 100).toFixed(1)}%`}
+        >
+          <span className="font-bold leading-tight text-center px-2"
+            style={{ fontSize: Math.max(10, b.dia * 0.16) }}>
+            {b.name.length > 4 ? b.name.substring(0, 4) : b.name}
+          </span>
+          {b.dia > 60 && (
+            <span className="opacity-80 font-medium mt-0.5"
+              style={{ fontSize: Math.max(8, b.dia * 0.11) }}>
+              {(b.pct * 100).toFixed(0)}%
+            </span>
+          )}
+        </div>
       ))}
     </div>
   )

@@ -135,8 +135,8 @@ export default function Dashboard() {
                       const y = (cy ?? 0) + radius * Math.sin(-midAngle * RADIAN)
                       return name ? (
                         <text x={x} y={y} textAnchor="middle" dominantBaseline="central"
-                          className="text-[10px] font-bold fill-white pointer-events-none select-none">
-                          {name.charAt(0)}
+                          className="text-[9px] font-semibold fill-white pointer-events-none select-none">
+                          {name.length > 4 ? name.substring(0, 4) + '…' : name}
                         </text>
                       ) : null
                     }}>
@@ -173,23 +173,33 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Cumulative return */}
+      {/* Total asset curve */}
       <Card>
-        <CardHeader><CardTitle className="text-base">累计收益曲线</CardTitle></CardHeader>
+        <CardHeader className="flex-row items-baseline justify-between">
+          <CardTitle className="text-base">总资产曲线</CardTitle>
+          {cumulative.length > 0 && (
+            <span className="text-2xl font-bold tabular-nums tracking-tight text-slate-900">
+              ¥{Number(cumulative[cumulative.length - 1].value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
+            </span>
+          )}
+        </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={240}>
             <AreaChart data={cumulative}>
               <defs>
-                <linearGradient id="colorReturn" x1="0" y1="0" x2="0" y2="1">
+                <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={positiveHex} stopOpacity={0.15} />
                   <stop offset="95%" stopColor={positiveHex} stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" tickFormatter={(v: number) => `${v}%`} />
-              <Tooltip formatter={(value: unknown) => `${Number(value).toFixed(2)}%`} />
-              <Area type="monotone" dataKey="return" stroke={positiveHex} fill="url(#colorReturn)" strokeWidth={2} />
+              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" tickFormatter={(v: number) => {
+                if (v >= 10000) return (v / 10000).toFixed(0) + '万'
+                return String(v)
+              }} />
+              <Tooltip formatter={(value: unknown) => `¥${Number(value).toLocaleString('zh-CN', { minimumFractionDigits: 2 })}`} />
+              <Area type="monotone" dataKey="value" stroke={positiveHex} fill="url(#colorValue)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>

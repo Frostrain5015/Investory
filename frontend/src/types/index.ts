@@ -142,6 +142,7 @@ export interface PnlRankItem {
 
 export interface CumulativeReturnItem {
   date: string
+  value: number
   return: number
 }
 

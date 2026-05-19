@@ -1,7 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import {
-  LayoutDashboard, Wallet, ArrowRightLeft, Banknote, CalendarDays,
+  LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
   Briefcase, LogOut, TrendingUp, ChevronDown, User, Search, Settings
 } from 'lucide-react'
 import { useState } from 'react'
@@ -13,7 +13,6 @@ const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: '总览' },
   { to: '/holdings', icon: Wallet, label: '持仓' },
   { to: '/transactions', icon: ArrowRightLeft, label: '交易' },
-  { to: '/dividends', icon: Banknote, label: '分红' },
   { to: '/pnl-calendar', icon: CalendarDays, label: '盈亏历' },
 ]
 

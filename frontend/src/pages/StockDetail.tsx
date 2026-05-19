@@ -49,7 +49,12 @@ export default function StockDetail() {
       <div className="flex items-center gap-4">
         <div>
           <div className="flex items-baseline gap-3">
-            <h2 className="text-xl font-bold text-slate-900">{stock?.name}</h2>
+            <h2 className="text-xl font-bold text-slate-900">
+              <span className="mr-2 text-2xl leading-none align-middle">
+                {stock?.market === 'SH' || stock?.market === 'SZ' ? '🇨🇳' : stock?.market === 'HK' ? '🇭🇰' : stock?.market === 'US' ? '🇺🇸' : ''}
+              </span>
+              {stock?.name}
+            </h2>
             {currentPrice != null && (
               <span className={`text-3xl font-bold tabular-nums tracking-tight ${inProfit ? positiveClass : negativeClass}`}>
                 {stock?.currency === 'CNY' ? '¥' : stock?.currency === 'HKD' ? 'HK$' : '$'}{currentPrice.toFixed(2)}

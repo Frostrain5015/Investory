@@ -134,6 +134,7 @@ public class ChartDataController {
         for (DailyValue v : values) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("date", v.getSnapshotDate().toString());
+            m.put("value", v.getTotalValue());
             BigDecimal retPct = v.getTotalCost().compareTo(BigDecimal.ZERO) == 0
                     ? BigDecimal.ZERO
                     : v.getTotalValue().subtract(v.getTotalCost())
