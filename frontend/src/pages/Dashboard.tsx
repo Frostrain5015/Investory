@@ -9,7 +9,7 @@ import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
   AreaChart, Area, Tooltip, ResponsiveContainer
 } from 'recharts'
-import { getDashboard } from '@/services/api'
+import { getDashboard, getPortfolios } from '@/services/api'
 import { displaySymbol } from '@/lib/format'
 import CloudChart from '@/components/CloudChart'
 
@@ -27,11 +27,13 @@ export default function Dashboard() {
   const { portfolioId } = useAuth()
   const { positiveClass, negativeClass, positiveHex, negativeHex, formatCurrency, convertCurrency } = useSettings()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
-  const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, totalReturnPct: 0 })
+  const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0 })
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
   const [pnlRank, setPnlRank] = useState<PnlRankItem[]>([])
   const [cumulative, setCumulative] = useState<CumulativeReturnItem[]>([])
+  const [cumulativeDays, setCumulativeDays] = useState(365)
   const [allocChart, setAllocChart] = useState<'pie' | 'cloud'>('pie')
+  const [portfolioName, setPortfolioName] = useState('')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -40,7 +42,7 @@ export default function Dashboard() {
       getDashboard(),
       chartAPI.allocation(portfolioId),
       chartAPI.pnlRank(portfolioId),
-      chartAPI.cumulativeReturn(portfolioId, 365),
+      chartAPI.cumulativeReturn(portfolioId, cumulativeDays),
     ]).then(([dash, alloc, rank, cum]) => {
       setSnapshots(dash.snapshots || [])
       setTotals({
@@ -48,12 +50,22 @@ export default function Dashboard() {
         totalInvested: dash.totalInvested || 0,
         totalPnl: dash.totalPnl || 0,
         totalReturnPct: dash.totalReturnPct || 0,
+        todayPnl: dash.todayPnl || 0,
+        todayPnlPct: dash.todayPnlPct || 0,
       })
       setAllocation(alloc || [])
       setPnlRank(rank || [])
       setCumulative(cum || [])
     }).catch((e) => console.error('Dashboard load error:', e))
     .finally(() => setLoading(false))
+  }, [portfolioId, cumulativeDays])
+
+  useEffect(() => {
+    if (!portfolioId) return
+    getPortfolios().then((list) => {
+      const p = list.find((p) => p.id === portfolioId)
+      if (p) setPortfolioName(p.name)
+    }).catch(() => {})
   }, [portfolioId])
 
   if (loading) {
@@ -65,11 +77,12 @@ export default function Dashboard() {
   }
 
   const isPositive = totals.totalPnl >= 0
+  const todayPositive = totals.todayPnl >= 0
 
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">总览</h2>
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight">{portfolioName || '总览'}</h2>
         {snapshots.length > 0 && (
           <button onClick={() => fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }).then(r => r.json()).then(d => alert(`已开始刷新 ${d.count} 只股票的行情数据`))}
             className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors">
@@ -103,6 +116,9 @@ export default function Dashboard() {
             <p className="text-xs text-slate-500 font-medium">总市值</p>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
               {formatCurrency(totals.totalMarketValue)}
+              <span className={`text-xs font-medium ml-1.5 align-middle ${isPositive ? positiveClass : negativeClass}`}>
+                {isPositive ? '+' : ''}{(totals.totalMarketValue > 0 ? (totals.totalPnl / totals.totalMarketValue * 100) : 0).toFixed(1)}%
+              </span>
             </p>
           </CardContent>
         </Card>
@@ -116,9 +132,12 @@ export default function Dashboard() {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">浮动盈亏</p>
-            <p className={`text-2xl font-bold mt-1 tabular-nums ${isPositive ? positiveClass : negativeClass}`}>
-              {isPositive ? '+' : ''}{formatCurrency(Math.abs(totals.totalPnl))}
+            <p className="text-xs text-slate-500 font-medium">今日盈亏</p>
+            <p className={`text-2xl font-bold mt-1 tabular-nums ${todayPositive ? positiveClass : negativeClass}`}>
+              {todayPositive ? '+' : ''}{formatCurrency(Math.abs(totals.todayPnl))}
+            </p>
+            <p className={`text-xs font-medium mt-0.5 ${todayPositive ? positiveClass : negativeClass}`}>
+              {todayPositive ? '+' : ''}{totals.todayPnlPct}%
             </p>
           </CardContent>
         </Card>
@@ -128,11 +147,55 @@ export default function Dashboard() {
             <p className={`text-2xl font-bold mt-1 tabular-nums ${isPositive ? positiveClass : negativeClass}`}>
               {isPositive ? '+' : ''}{totals.totalReturnPct}%
             </p>
+            <p className="text-[10px] text-slate-400 mt-0.5">现金加权</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Charts row 1 */}
+      {/* Total asset curve */}
+      <Card>
+        <CardHeader className="flex-row items-baseline justify-between">
+          <div className="flex items-center gap-3">
+            <CardTitle className="text-base">总资产曲线</CardTitle>
+            <div className="flex bg-slate-100 rounded-lg p-0.5">
+              {([30, 180, 365, 730] as const).map(days => (
+                <button key={days} onClick={() => setCumulativeDays(days)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${cumulativeDays === days ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                  {days === 30 ? '1M' : days === 180 ? '6M' : days === 365 ? '1Y' : '2Y'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {cumulative.length > 0 && (
+            <span className="text-2xl font-bold tabular-nums tracking-tight text-slate-900">
+              {formatCurrency(Number(cumulative[cumulative.length - 1].value))}
+            </span>
+          )}
+        </CardHeader>
+        <CardContent>
+          <ResponsiveContainer width="100%" height={240}>
+            <AreaChart data={cumulative}>
+              <defs>
+                <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={positiveHex} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={positiveHex} stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
+              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" tickFormatter={(v: number) => {
+                const cv = convertCurrency(Number(v))
+                if (Math.abs(cv) >= 10000) return (cv / 10000).toFixed(0) + '万'
+                return String(Math.round(cv))
+              }} />
+              <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
+              <Area type="monotone" dataKey="value" stroke={positiveHex} fill="url(#colorValue)" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader className="flex-row items-center justify-between">
@@ -187,39 +250,6 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
-
-      {/* Total asset curve */}
-      <Card>
-        <CardHeader className="flex-row items-baseline justify-between">
-          <CardTitle className="text-base">总资产曲线</CardTitle>
-          {cumulative.length > 0 && (
-            <span className="text-2xl font-bold tabular-nums tracking-tight text-slate-900">
-              {formatCurrency(Number(cumulative[cumulative.length - 1].value))}
-            </span>
-          )}
-        </CardHeader>
-        <CardContent>
-          <ResponsiveContainer width="100%" height={240}>
-            <AreaChart data={cumulative}>
-              <defs>
-                <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={positiveHex} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={positiveHex} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" tickFormatter={(v: number) => {
-                const cv = convertCurrency(Number(v))
-                if (Math.abs(cv) >= 10000) return (cv / 10000).toFixed(0) + '万'
-                return String(Math.round(cv))
-              }} />
-              <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
-              <Area type="monotone" dataKey="value" stroke={positiveHex} fill="url(#colorValue)" strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </CardContent>
-      </Card>
 
       {/* Holdings table */}
       {snapshots.length > 0 ? (

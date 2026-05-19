@@ -105,6 +105,8 @@ export interface DashboardResponse {
   totalInvested: number
   totalPnl: number
   totalReturnPct: number
+  todayPnl: number
+  todayPnlPct: number
 }
 
 export interface HoldingsResponse {

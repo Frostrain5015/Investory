@@ -32,6 +32,23 @@ public class DailyPortfolioValueDao extends BaseDao {
             """, this::map, portfolioId, Date.valueOf(from), Date.valueOf(to));
     }
 
+    public DailyValue findLatest(long portfolioId) {
+        List<DailyValue> list = query("""
+            SELECT * FROM daily_portfolio_value
+            WHERE portfolio_id = ? AND snapshot_date <= CURDATE()
+            ORDER BY snapshot_date DESC LIMIT 1
+            """, this::map, portfolioId);
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    public List<DailyValue> findAll(long portfolioId) {
+        return query("""
+            SELECT * FROM daily_portfolio_value
+            WHERE portfolio_id = ?
+            ORDER BY snapshot_date
+            """, this::map, portfolioId);
+    }
+
     public void upsert(DailyValue v) {
         update("""
             INSERT INTO daily_portfolio_value (portfolio_id, snapshot_date, total_value, total_cost, daily_pnl)

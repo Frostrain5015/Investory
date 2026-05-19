@@ -161,6 +161,35 @@ def upsert_klines(stock_id, rows):
         conn.close()
 
 # ============================================================
+def discover_new_hk_stocks():
+    """扫描腾讯API发现数据库中缺失的港股，自动补入 stocks 表（仅检查未收录的代码段）"""
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT MAX(CAST(REPLACE(symbol, '.HK', '') AS UNSIGNED)) FROM stocks WHERE market='HK'")
+    max_code = cur.fetchone()[0] or 9999
+    cur.execute("SELECT REPLACE(symbol, '.HK', '') FROM stocks WHERE market='HK'")
+    existing = {row[0] for row in cur.fetchall()}
+    # 只扫描到已有最大代码+200 的新范围
+    scan_end = min(int(max_code) + 200, 99999)
+    found = 0
+    for code5d in [f'{c:05d}' for c in range(1, scan_end + 1)]:
+        if code5d in existing: continue
+        try:
+            r = requests.get(f'http://qt.gtimg.cn/q=hk{code5d}', timeout=5)
+            r.encoding = 'gbk'
+            m = re.search(r'"\d+~([^~]+)~', r.text)
+            if not m: continue
+            name = m.group(1).strip()
+            if not name or name == code5d or name.isdigit(): continue
+            symbol = f'{code5d}.HK'
+            cur.execute("INSERT IGNORE INTO stocks (symbol, name, market, currency) VALUES (%s,%s,%s,%s)",
+                        (symbol, name, MARKET, CURRENCY))
+            conn.commit(); found += 1
+        except Exception: pass
+        time.sleep(0.015)
+    conn.close()
+    if found: log(f'  发现新港股: {found} 只')
+
 def fix_hk_names():
     """修复港股名称：对名称仅为代码的股票，从腾讯 API 拉取中文名"""
     conn = db_conn()
@@ -200,7 +229,8 @@ def main():
     print(f"  区间: {START_DATE} ~ {END_DATE}（近{DAYS_BACK}个日历日）")
     print("=" * 60 + "\n")
 
-    # Step 0: 修复名称缺失的港股
+    # Step 0: 发现新港股 + 修复名称
+    discover_new_hk_stocks()
     fix_hk_names()
 
     # Step 1: 读取 DB 中的港股列表

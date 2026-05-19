@@ -13,7 +13,7 @@ const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: '总览' },
   { to: '/holdings', icon: Wallet, label: '持仓' },
   { to: '/transactions', icon: ArrowRightLeft, label: '交易' },
-  { to: '/pnl-calendar', icon: CalendarDays, label: '盈亏历' },
+  { to: '/pnl-calendar', icon: CalendarDays, label: '盈亏日历' },
 ]
 
 export default function Layout() {
@@ -70,7 +70,7 @@ export default function Layout() {
             }
           >
             <Briefcase className="w-4 h-4" />
-            我的组合
+            投资组合
           </NavLink>
           <NavLink
             to="/settings"

@@ -96,7 +96,24 @@ public class DataApiController {
         result.put("totalMarketValue", analysisService.totalMarketValue(snapshots));
         result.put("totalInvested",    analysisService.totalInvested(snapshots));
         result.put("totalPnl",         analysisService.totalUnrealizedPnl(snapshots));
-        result.put("totalReturnPct",   analysisService.overallReturnPct(snapshots));
+        result.put("totalReturnPct",   analysisService.cashWeightedReturn(portfolioId));
+
+        DailyValue today = analysisService.getTodayValue(portfolioId);
+        if (today != null) {
+            result.put("todayPnl", today.getDailyPnl());
+            BigDecimal prevValue = today.getTotalValue().subtract(today.getDailyPnl());
+            if (prevValue.compareTo(BigDecimal.ZERO) != 0) {
+                result.put("todayPnlPct", today.getDailyPnl()
+                        .divide(prevValue, 4, java.math.RoundingMode.HALF_UP)
+                        .multiply(new java.math.BigDecimal("100"))
+                        .setScale(2, java.math.RoundingMode.HALF_UP));
+            } else {
+                result.put("todayPnlPct", java.math.BigDecimal.ZERO);
+            }
+        } else {
+            result.put("todayPnl", java.math.BigDecimal.ZERO);
+            result.put("todayPnlPct", java.math.BigDecimal.ZERO);
+        }
         return result;
     }
 
