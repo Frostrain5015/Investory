@@ -21,26 +21,23 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 
 // ── Auth ───────────────────────────────────────────────────────────────
 
-export function login(username: string, password: string) {
-  const form = new URLSearchParams({ username, password })
-  return fetch(BASE + '/login', {
+async function authPost(path: string, data: Record<string, string>): Promise<string> {
+  const form = new URLSearchParams(data)
+  const res = await fetch(BASE + path, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: form.toString(),
-    redirect: 'manual',
   })
+  return res.text()
+}
+
+export function login(username: string, password: string) {
+  return authPost('/login', { username, password })
 }
 
 export function register(username: string, password: string, email?: string) {
-  const form = new URLSearchParams({ username, password, ...(email ? { email } : {}) })
-  return fetch(BASE + '/register', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: form.toString(),
-    redirect: 'manual',
-  })
+  return authPost('/register', { username, password, ...(email ? { email } : {}) })
 }
 
 export function checkSession(): Promise<SessionResponse> {

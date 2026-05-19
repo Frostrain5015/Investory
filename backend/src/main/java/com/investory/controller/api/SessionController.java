@@ -1,10 +1,11 @@
 package com.investory.controller.api;
 
+import com.investory.dao.PortfolioDao;
+import com.investory.dao.UserDao;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -12,6 +13,9 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api")
 public class SessionController {
+
+    @Autowired private UserDao userDao;
+    @Autowired private PortfolioDao portfolioDao;
 
     @GetMapping("/session")
     public Map<String, Object> session(HttpServletRequest req) {
@@ -25,6 +29,22 @@ public class SessionController {
         } else {
             result.put("authenticated", false);
         }
+        return result;
+    }
+
+    @DeleteMapping("/account")
+    public Map<String, String> deleteAccount(HttpServletRequest req) {
+        HttpSession session = req.getSession(false);
+        if (session == null || session.getAttribute("userId") == null) {
+            Map<String, String> err = new LinkedHashMap<>();
+            err.put("error", "not authenticated");
+            return err;
+        }
+        Long userId = (Long) session.getAttribute("userId");
+        userDao.delete(userId);
+        session.invalidate();
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("status", "ok");
         return result;
     }
 }

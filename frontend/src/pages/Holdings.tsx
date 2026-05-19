@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
+import { useSettings } from '@/hooks/use-settings'
 import { Card, CardContent } from '@/components/ui/card'
 
 interface Snapshot {
@@ -12,6 +13,7 @@ interface Snapshot {
 
 export default function Holdings() {
   const { portfolioId } = useAuth()
+  const { positiveClass, negativeClass } = useSettings()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -60,10 +62,10 @@ export default function Holdings() {
                       <td className="px-3 py-3 text-right tabular-nums">{s.currentPrice?.toFixed(2)}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{s.avgCost?.toFixed(2)}</td>
                       <td className="px-3 py-3 text-right font-medium tabular-nums">{s.marketValue?.toFixed(2)}</td>
-                      <td className={`px-3 py-3 text-right font-medium tabular-nums ${s.unrealizedPnl >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      <td className={`px-3 py-3 text-right font-medium tabular-nums ${s.unrealizedPnl >= 0 ? positiveClass : negativeClass}`}>
                         {s.unrealizedPnl >= 0 ? '+' : ''}{s.unrealizedPnl?.toFixed(2)}
                       </td>
-                      <td className={`px-6 py-3 text-right font-medium tabular-nums ${s.unrealizedPnlPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      <td className={`px-6 py-3 text-right font-medium tabular-nums ${s.unrealizedPnlPct >= 0 ? positiveClass : negativeClass}`}>
                         {s.unrealizedPnlPct >= 0 ? '+' : ''}{s.unrealizedPnlPct}%
                       </td>
                     </tr>

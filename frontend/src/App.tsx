@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from '@/hooks/use-auth'
+import { SettingsProvider } from '@/hooks/use-settings'
 import Layout from '@/components/Layout'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
@@ -12,6 +13,7 @@ import AddDividend from '@/pages/AddDividend'
 import StockDetail from '@/pages/StockDetail'
 import PnlCalendar from '@/pages/PnlCalendar'
 import Portfolio from '@/pages/Portfolio'
+import Settings from '@/pages/Settings'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated, loading } = useAuth()
@@ -34,6 +36,7 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <AuthProvider>
+      <SettingsProvider>
       <Routes>
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
@@ -47,9 +50,11 @@ export default function App() {
           <Route path="/stock" element={<StockDetail />} />
           <Route path="/pnl-calendar" element={<PnlCalendar />} />
           <Route path="/portfolio" element={<Portfolio />} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
+      </SettingsProvider>
     </AuthProvider>
   )
 }

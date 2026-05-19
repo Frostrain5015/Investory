@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { chartAPI, getStockDetail } from '@/services/api'
+import { useSettings } from '@/hooks/use-settings'
 import type { StockDetailResponse, Transaction, Dividend, PriceData } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
@@ -10,6 +11,7 @@ export default function StockDetail() {
   const [params] = useSearchParams()
   const symbol = params.get('symbol') || ''
   const { portfolioId } = useAuth()
+  const { positiveClass } = useSettings()
   const [data, setData] = useState<StockDetailResponse | null>(null)
   const [priceData, setPriceData] = useState<PriceData[]>([])
   const [days, setDays] = useState(180)
@@ -59,7 +61,7 @@ export default function StockDetail() {
             { label: '平均成本', value: holding.avgCost?.toFixed(2), color: 'text-amber-600' },
             { label: '摊薄成本', value: holding.dilutedCost?.toFixed(2), color: 'text-sky-600' },
             { label: '总投入', value: holding.totalInvested?.toFixed(2) },
-            { label: '累计分红', value: holding.totalDividends?.toFixed(2), color: 'text-emerald-600' },
+            { label: '累计分红', value: holding.totalDividends?.toFixed(2), color: positiveClass },
           ].map((c, i) => (
             <Card key={i}>
               <CardContent className="pt-6">
@@ -160,7 +162,7 @@ export default function StockDetail() {
                     <tr key={d.id} className="border-b border-slate-50">
                       <td className="px-4 py-2">{d.recordDate}</td>
                       <td className="px-4 py-2 text-right">{d.amountPerShare}</td>
-                      <td className="px-4 py-2 text-right text-emerald-600 font-semibold">{d.totalAmount}</td>
+                      <td className={`px-4 py-2 text-right font-semibold ${positiveClass}`}>{d.totalAmount}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
+import { useSettings } from '@/hooks/use-settings'
 import { chartAPI } from '@/services/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { AllocationItem, PnlRankItem, CumulativeReturnItem } from '@/types'
@@ -22,6 +23,7 @@ const COLORS = ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8'
 
 export default function Dashboard() {
   const { portfolioId } = useAuth()
+  const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, totalReturnPct: 0 })
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
@@ -86,7 +88,7 @@ export default function Dashboard() {
         <Card>
           <CardContent className="pt-6">
             <p className="text-xs text-slate-500 font-medium">浮动盈亏</p>
-            <p className={`text-2xl font-bold mt-1 tabular-nums ${isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+            <p className={`text-2xl font-bold mt-1 tabular-nums ${isPositive ? positiveClass : negativeClass}`}>
               {isPositive ? '+' : ''}&yen;{totals.totalPnl.toLocaleString('zh-CN', { minimumFractionDigits: 2 })}
             </p>
           </CardContent>
@@ -94,7 +96,7 @@ export default function Dashboard() {
         <Card>
           <CardContent className="pt-6">
             <p className="text-xs text-slate-500 font-medium">总收益率</p>
-            <p className={`text-2xl font-bold mt-1 tabular-nums ${isPositive ? 'text-emerald-600' : 'text-red-500'}`}>
+            <p className={`text-2xl font-bold mt-1 tabular-nums ${isPositive ? positiveClass : negativeClass}`}>
               {isPositive ? '+' : ''}{totals.totalReturnPct}%
             </p>
           </CardContent>
@@ -130,7 +132,7 @@ export default function Dashboard() {
                 <Tooltip formatter={(value: unknown) => `¥${Number(value).toLocaleString()}`} />
                 <Bar dataKey="pnl" radius={[0, 4, 4, 0]}>
                   {pnlRank.map((_, i) => (
-                    <Cell key={i} fill={pnlRank[i].pnl >= 0 ? '#10b981' : '#ef4444'} />
+                    <Cell key={i} fill={pnlRank[i].pnl >= 0 ? positiveHex : negativeHex} />
                   ))}
                 </Bar>
               </BarChart>
@@ -147,15 +149,15 @@ export default function Dashboard() {
             <AreaChart data={cumulative}>
               <defs>
                 <linearGradient id="colorReturn" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.15} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                  <stop offset="5%" stopColor={positiveHex} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={positiveHex} stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
               <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" tickFormatter={(v: number) => `${v}%`} />
               <Tooltip formatter={(value: unknown) => `${Number(value).toFixed(2)}%`} />
-              <Area type="monotone" dataKey="return" stroke="#10b981" fill="url(#colorReturn)" strokeWidth={2} />
+              <Area type="monotone" dataKey="return" stroke={positiveHex} fill="url(#colorReturn)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>
@@ -205,10 +207,10 @@ export default function Dashboard() {
                       <td className="px-3 py-3 text-right tabular-nums">{s.avgCost?.toFixed(2)}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{s.dilutedCost?.toFixed(2)}</td>
                       <td className="px-3 py-3 text-right font-medium tabular-nums">{s.marketValue?.toFixed(2)}</td>
-                      <td className={`px-3 py-3 text-right font-medium tabular-nums ${s.unrealizedPnl >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      <td className={`px-3 py-3 text-right font-medium tabular-nums ${s.unrealizedPnl >= 0 ? positiveClass : negativeClass}`}>
                         {s.unrealizedPnl >= 0 ? '+' : ''}{s.unrealizedPnl?.toFixed(2)}
                       </td>
-                      <td className={`px-6 py-3 text-right font-medium tabular-nums ${s.unrealizedPnlPct >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                      <td className={`px-6 py-3 text-right font-medium tabular-nums ${s.unrealizedPnlPct >= 0 ? positiveClass : negativeClass}`}>
                         {s.unrealizedPnlPct >= 0 ? '+' : ''}{s.unrealizedPnlPct}%
                       </td>
                     </tr>

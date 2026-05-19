@@ -39,8 +39,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function login(username: string, password: string) {
     try {
-      const res = await apiLogin(username, password)
-      if (res.status === 302 && res.headers.get('Location')?.includes('/dashboard')) {
+      const text = await apiLogin(username, password)
+      if (text === 'ok') {
         const data: SessionResponse = await checkSession()
         if (data.userId) {
           setUserId(data.userId)
@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return { success: true }
       }
-      return { success: false, error: '用户名或密码错误' }
+      return { success: false, error: text !== 'error' ? text : '用户名或密码错误' }
     } catch {
       return { success: false, error: '系统错误，请稍后重试' }
     }
@@ -58,11 +58,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function register(username: string, password: string, email?: string) {
     try {
-      const res = await apiRegister(username, password, email)
-      if (res.status === 302 && res.headers.get('Location')?.includes('registered=1')) {
-        return { success: true }
-      }
-      return { success: false, error: '注册失败' }
+      const text = await apiRegister(username, password, email)
+      if (text === 'ok') return { success: true }
+      return { success: false, error: text || '注册失败' }
     } catch {
       return { success: false, error: '系统错误，请稍后重试' }
     }

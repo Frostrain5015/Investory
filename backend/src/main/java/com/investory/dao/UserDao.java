@@ -40,4 +40,14 @@ public class UserDao extends BaseDao {
         return queryOne("SELECT id FROM users WHERE username = ?",
                 rs -> rs.getLong("id"), username) != null;
     }
+
+    /** Cascade-delete user and all associated data. */
+    public void delete(long userId) {
+        jdbc.update("DELETE FROM daily_portfolio_value WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM dividends WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM transactions WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM holdings WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM portfolios WHERE user_id = ?", userId);
+        jdbc.update("DELETE FROM users WHERE id = ?", userId);
+    }
 }

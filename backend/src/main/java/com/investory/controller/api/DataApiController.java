@@ -5,6 +5,7 @@ import com.investory.dao.*;
 import com.investory.model.*;
 import com.investory.service.HoldingService;
 import com.investory.service.PortfolioAnalysisService;
+import com.investory.service.PortfolioValueCalculator;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -26,6 +27,7 @@ public class DataApiController {
     @Autowired private StockDao stockDao;
     @Autowired private PortfolioAnalysisService analysisService;
     @Autowired private EastMoneyCrawler crawler;
+    @Autowired private PortfolioValueCalculator valueCalculator;
 
     private long getPortfolioId(HttpServletRequest req) {
         HttpSession session = req.getSession(false);
@@ -136,6 +138,7 @@ public class DataApiController {
         holdingService.rebuildHolding(portfolioId, stockId);
         Stock stock = stockDao.findById(stockId);
         if (stock != null) new Thread(() -> crawler.fetchHistory(stock)).start();
+        valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", id);
         return result;
@@ -180,6 +183,7 @@ public class DataApiController {
         d.setRecordDate(LocalDate.parse(recordDate));
         long id = dividendDao.insert(d);
         holdingService.rebuildHolding(portfolioId, stockId);
+        valueCalculator.backfillFrom(portfolioId, LocalDate.parse(recordDate));
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", id);
         return result;

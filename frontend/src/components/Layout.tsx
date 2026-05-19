@@ -2,7 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, Banknote, CalendarDays,
-  Briefcase, LogOut, TrendingUp, ChevronDown, User, Search
+  Briefcase, LogOut, TrendingUp, ChevronDown, User, Search, Settings
 } from 'lucide-react'
 import { useState } from 'react'
 import { searchStocks } from '@/services/api'
@@ -71,6 +71,17 @@ export default function Layout() {
           >
             <Briefcase className="w-4 h-4" />
             我的组合
+          </NavLink>
+          <NavLink
+            to="/settings"
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                isActive ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+              }`
+            }
+          >
+            <Settings className="w-4 h-4" />
+            设置
           </NavLink>
           <NavLink
             to="/login"
