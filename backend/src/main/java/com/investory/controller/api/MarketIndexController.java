@@ -24,17 +24,17 @@ public class MarketIndexController {
 
     @GetMapping("/indices")
     public List<Map<String, Object>> getIndices() {
-        ExecutorService ex = Executors.newFixedThreadPool(12);
+        ExecutorService ex = Executors.newFixedThreadPool(21);
         List<Future<Map<String, Object>>> futures = new ArrayList<>();
-        // China → Shanghai (31.23, 121.47)
+        // China → Shanghai
         futures.add(ex.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 31.23, 121.47)));
         futures.add(ex.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 31.23, 121.47)));
         futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 31.23, 121.47)));
-        // Hong Kong → Central (22.30, 114.17)
+        // Hong Kong → 香港
         futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 22.30, 114.17)));
         futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 22.30, 114.17)));
         futures.add(ex.submit(() -> fetchYahooIndex("HSTECH.HK",  "恒生科技",  "HK", 22.30, 114.17)));
-        // US → New York (40.71, -74.00)
+        // US → New York
         futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 40.71, -74.00)));
         futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 40.71, -74.00)));
         futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 40.71, -74.00)));
@@ -44,6 +44,22 @@ public class MarketIndexController {
         futures.add(ex.submit(() -> fetchYahooIndex("^KS11",      "韩国KOSPI", "KR", 37.57, 126.98)));
         // UK → London
         futures.add(ex.submit(() -> fetchYahooIndex("^FTSE",      "富时100",   "UK", 51.51, -0.13)));
+        // Germany → Berlin
+        futures.add(ex.submit(() -> fetchYahooIndex("^GDAXI",     "德国DAX",   "DE", 52.52, 13.40)));
+        // France → Paris
+        futures.add(ex.submit(() -> fetchYahooIndex("^FCHI",      "法国CAC40", "FR", 48.86, 2.35)));
+        // Taiwan → Taipei
+        futures.add(ex.submit(() -> fetchYahooIndex("^TWII",      "台湾加权",   "TW", 25.03, 121.57)));
+        // Singapore
+        futures.add(ex.submit(() -> fetchYahooIndex("^STI",       "新加坡STI", "SG", 1.35, 103.82)));
+        // India → New Delhi
+        futures.add(ex.submit(() -> fetchYahooIndex("^BSESN",     "印度SENSEX","IN", 28.61, 77.23)));
+        // Australia → Canberra
+        futures.add(ex.submit(() -> fetchYahooIndex("^AXJO",      "澳洲ASX200","AU", -35.28, 149.13)));
+        // Canada → Ottawa
+        futures.add(ex.submit(() -> fetchYahooIndex("^GSPTSE",    "加拿大TSX", "CA", 45.42, -75.70)));
+        // Brazil → Brasília
+        futures.add(ex.submit(() -> fetchYahooIndex("^BVSP",      "巴西Bovespa","BR", -15.80, -47.86)));
 
         List<Map<String, Object>> result = new ArrayList<>();
         for (Future<Map<String, Object>> f : futures) {

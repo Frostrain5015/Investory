@@ -50,15 +50,17 @@ export default function Market() {
             formatter: (params: any) => {
               const group = markers[params.dataIndex]
               if (!group) return ''
-              const flagMap: Record<string, string> = { CN: '🇨🇳', HK: '🇭🇰', US: '🇺🇸' }
-              const flag = flagMap[group[0].flag] || '📍'
-              return `<div style="font-weight:700;font-size:14px;margin-bottom:6px">${flag} ${group[0].flag}</div>
-                ${group.map(d => {
+              const f = group[0].flag.toLowerCase()
+              const nameMap: Record<string, string> = { cn: '中国', hk: '中国香港', us: '美国', jp: '日本', kr: '韩国', uk: '英国' }
+              return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:700;font-size:14px">
+                <img src="https://flagcdn.com/${f}.svg" style="width:22px;height:15px;border-radius:2px"/>
+                ${nameMap[group[0].flag.toLowerCase()] || group[0].flag}
+              </div>${group.map(d => {
                   const u = Number(d.change) >= 0
                   return `<div style="display:flex;align-items:center;gap:12px;padding:3px 0;font-size:12px">
-                    <span style="min-width:50px;color:#475569">${d.name}</span>
-                    <span style="font-weight:600;min-width:80px;text-align:right;color:${u ? positiveHex : negativeHex}">${Number(d.price).toLocaleString()}</span>
-                    <span style="min-width:90px;text-align:right;color:${u ? positiveHex : negativeHex}">${u ? '+' : ''}${Number(d.change).toFixed(2)} (${u ? '+' : ''}${Number(d.changePct).toFixed(2)}%)</span>
+                    <span style="min-width:56px;color:#475569">${d.name}</span>
+                    <span style="font-weight:600;min-width:85px;text-align:right;color:${u ? positiveHex : negativeHex}">${Number(d.price).toLocaleString()}</span>
+                    <span style="min-width:95px;text-align:right;color:${u ? positiveHex : negativeHex}">${u ? '+' : ''}${Number(d.change).toFixed(2)} (${u ? '+' : ''}${Number(d.changePct).toFixed(2)}%)</span>
                   </div>`
                 }).join('')}`
             },
@@ -87,9 +89,9 @@ export default function Market() {
             label: {
               show: true, position: 'top', distance: 10,
               formatter: (params: any) => {
-                const group = markers[params.dataIndex]
-                const flagMap: Record<string, string> = { CN: '上海', HK: '香港', US: '纽约' }
-                return flagMap[group[0].flag] || ''
+                const f = markers[params.dataIndex]?.[0]?.flag?.toLowerCase()
+                const labels: Record<string, string> = { cn: '中国', hk: '中国香港', us: '美国', jp: '日本', kr: '韩国', uk: '英国' }
+                return labels[f] || ''
               },
               fontSize: 11, fontWeight: 700, color: '#475569',
             },
