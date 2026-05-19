@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import { Card, CardContent } from '@/components/ui/card'
+import { displaySymbol } from '@/lib/format'
 
 interface Snapshot {
   stockId: number; stockSymbol: string; stockName: string; market: string
@@ -56,7 +57,7 @@ export default function Holdings() {
                       <td className="px-6 py-3">
                         <Link to={`/stock?symbol=${encodeURIComponent(s.stockSymbol)}`}
                           className="font-medium text-slate-900 hover:text-blue-600">{s.stockName}</Link>
-                        <div className="text-xs text-slate-400">{s.stockSymbol}</div>
+                        <div className="text-xs text-slate-400">{displaySymbol(s.stockSymbol, s.market)}</div>
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums">{s.totalShares}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{s.currentPrice?.toFixed(2)}</td>

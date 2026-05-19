@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { shortSymbol } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 
 interface Snapshot { stockId: number; stockName: string; stockSymbol: string; totalShares: number }
@@ -41,7 +42,7 @@ export default function AddDividend() {
                 className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10">
                 <option value="">请选择持仓股票</option>
                 {snapshots.map(s => (
-                  <option key={s.stockId} value={s.stockId}>{s.stockName} ({s.stockSymbol}) — 持有 {s.totalShares} 股</option>
+                  <option key={s.stockId} value={s.stockId}>{s.stockName} ({shortSymbol(s.stockSymbol)}) — 持有 {s.totalShares} 股</option>
                 ))}
               </select>
             </div>

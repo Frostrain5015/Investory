@@ -10,6 +10,7 @@ import {
   AreaChart, Area, Tooltip, ResponsiveContainer
 } from 'recharts'
 import { getDashboard } from '@/services/api'
+import { displaySymbol } from '@/lib/format'
 
 interface Snapshot {
   stockId: number; stockSymbol: string; stockName: string; market: string
@@ -197,7 +198,7 @@ export default function Dashboard() {
                           className="font-medium text-slate-900 hover:text-blue-600 transition-colors">
                           {s.stockName}
                         </Link>
-                        <div className="text-xs text-slate-400">{s.stockSymbol}</div>
+                        <div className="text-xs text-slate-400">{displaySymbol(s.stockSymbol, s.market)}</div>
                       </td>
                       <td className="px-3 py-3">
                         <span className="inline-flex items-center rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{s.market}</span>

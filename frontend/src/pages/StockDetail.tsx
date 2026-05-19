@@ -5,13 +5,14 @@ import { chartAPI, getStockDetail } from '@/services/api'
 import { useSettings } from '@/hooks/use-settings'
 import type { StockDetailResponse, Transaction, Dividend, PriceData } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
+import { displaySymbol } from '@/lib/format'
 
 export default function StockDetail() {
   const [params] = useSearchParams()
   const symbol = params.get('symbol') || ''
   const { portfolioId } = useAuth()
-  const { positiveClass } = useSettings()
+  const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
   const [data, setData] = useState<StockDetailResponse | null>(null)
   const [priceData, setPriceData] = useState<PriceData[]>([])
   const [days, setDays] = useState(180)
@@ -35,6 +36,10 @@ export default function StockDetail() {
 
   const stock = data?.stock
   const holding = data?.holding
+  const currentPrice = priceData.length > 0 ? Number(priceData[priceData.length - 1].close) : null
+  const dilutedCost = holding ? Number(holding.dilutedCost) : 0
+  const inProfit = currentPrice != null && dilutedCost > 0 ? currentPrice >= dilutedCost : true
+  const chartColor = inProfit ? positiveHex : negativeHex
   const transactions = data?.transactions || []
   const dividends = data?.dividends || []
 
@@ -43,8 +48,15 @@ export default function StockDetail() {
       {/* Header */}
       <div className="flex items-center gap-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-900">{stock?.name}</h2>
-          <p className="text-sm text-slate-500">{stock?.symbol} · {stock?.market} · {stock?.currency}</p>
+          <div className="flex items-baseline gap-3">
+            <h2 className="text-xl font-bold text-slate-900">{stock?.name}</h2>
+            {currentPrice != null && (
+              <span className={`text-3xl font-bold tabular-nums tracking-tight ${inProfit ? positiveClass : negativeClass}`}>
+                {currentPrice.toFixed(2)}
+              </span>
+            )}
+          </div>
+          <p className="text-sm text-slate-500">{stock && displaySymbol(stock.symbol, stock.market)} · {stock?.market} · {stock?.currency}</p>
         </div>
         <span className="inline-flex items-center rounded-lg bg-slate-100 px-2.5 py-0.5 text-xs text-slate-600">{stock?.market}</span>
         <Link to="/transactions/add"
@@ -91,15 +103,19 @@ export default function StockDetail() {
             <AreaChart data={priceData}>
               <defs>
                 <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#0f172a" stopOpacity={0.1} />
-                  <stop offset="95%" stopColor="#0f172a" stopOpacity={0} />
+                  <stop offset="5%" stopColor={chartColor} stopOpacity={0.1} />
+                  <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
               <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" domain={['auto', 'auto']} />
+              {holding?.dilutedCost && Number(holding.dilutedCost) > 0 && (
+                <ReferenceLine y={Number(holding.dilutedCost)} stroke="#0ea5e9" strokeDasharray="6 4" strokeWidth={1.5}
+                  label={{ value: `摊薄 ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
+              )}
               <Tooltip />
-              <Area type="monotone" dataKey="close" stroke="#0f172a" fill="url(#colorPrice)" strokeWidth={2} />
+              <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>

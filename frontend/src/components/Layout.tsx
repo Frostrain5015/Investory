@@ -7,6 +7,7 @@ import {
 import { useState } from 'react'
 import { searchStocks } from '@/services/api'
 import type { StockSearchItem } from '@/types'
+import { displaySymbol } from '@/lib/format'
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: '总览' },
@@ -118,7 +119,7 @@ export default function Layout() {
                     className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors"
                   >
                     <span className="text-sm font-medium text-slate-900">{s.name}</span>
-                    <span className="text-xs text-slate-400">{s.symbol}</span>
+                    <span className="text-xs text-slate-400">{displaySymbol(s.symbol, s.market)}</span>
                   </a>
                 ))}
               </div>

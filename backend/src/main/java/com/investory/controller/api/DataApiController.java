@@ -137,8 +137,10 @@ public class DataApiController {
         long id = transactionDao.insert(t);
         holdingService.rebuildHolding(portfolioId, stockId);
         Stock stock = stockDao.findById(stockId);
-        if (stock != null) new Thread(() -> crawler.fetchHistory(stock)).start();
-        valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate));
+        if (stock != null) {
+            crawler.fetchHistory(stock);
+            valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate));
+        }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", id);
         return result;

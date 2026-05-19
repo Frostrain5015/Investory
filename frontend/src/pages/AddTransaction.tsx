@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { searchStocks } from '@/services/api'
 import type { StockSearchItem } from '@/types'
+import { displaySymbol } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 
 export default function AddTransaction() {
@@ -41,7 +42,7 @@ export default function AddTransaction() {
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="relative">
               <label className="block text-sm font-medium text-slate-700 mb-1.5">股票</label>
-              <input type="text" value={selectedStock ? `${selectedStock.name} (${selectedStock.symbol})` : stockQuery}
+              <input type="text" value={selectedStock ? `${selectedStock.name} (${displaySymbol(selectedStock.symbol, selectedStock.market)})` : stockQuery}
                 onChange={(e) => { setSelectedStock(null); setStockQuery(e.target.value); setShowDropdown(true) }}
                 onFocus={() => stocks.length > 0 && setShowDropdown(true)}
                 onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
@@ -54,7 +55,7 @@ export default function AddTransaction() {
                       onClick={() => { setSelectedStock(s); setStockQuery(''); setShowDropdown(false) }}
                       className="w-full text-left px-4 py-2.5 hover:bg-slate-50 flex justify-between">
                       <span className="text-sm font-medium">{s.name}</span>
-                      <span className="text-xs text-slate-400">{s.symbol}</span>
+                      <span className="text-xs text-slate-400">{displaySymbol(s.symbol, s.market)}</span>
                     </button>
                   ))}
                 </div>

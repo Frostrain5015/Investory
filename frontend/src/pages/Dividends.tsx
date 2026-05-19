@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
+import { shortSymbol } from '@/lib/format'
 
 interface Div { id: number; stockName?: string; stockSymbol?: string; amountPerShare: number; sharesHeld: number; totalAmount: number; recordDate: string }
 
@@ -58,7 +59,7 @@ export default function Dividends() {
                       <td className="px-6 py-3 text-slate-600">{d.recordDate}</td>
                       <td className="px-3 py-3">
                         <span className="font-medium">{d.stockName}</span>
-                        <span className="text-xs text-slate-400 ml-1">{d.stockSymbol}</span>
+                        <span className="text-xs text-slate-400 ml-1">{shortSymbol(d.stockSymbol || '')}</span>
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums">{d.amountPerShare}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{d.sharesHeld}</td>

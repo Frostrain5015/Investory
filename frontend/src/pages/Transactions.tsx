@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
+import { shortSymbol } from '@/lib/format'
 
 interface Tx {
   id: number; stockName?: string; stockSymbol?: string; type: 'BUY' | 'SELL'
@@ -62,7 +63,7 @@ export default function Transactions() {
                       <td className="px-6 py-3 text-slate-600">{t.tradeDate}</td>
                       <td className="px-3 py-3">
                         <span className="font-medium text-slate-900">{t.stockName}</span>
-                        <span className="text-xs text-slate-400 ml-1">{t.stockSymbol}</span>
+                        <span className="text-xs text-slate-400 ml-1">{shortSymbol(t.stockSymbol || '')}</span>
                       </td>
                       <td className="px-3 py-3">
                         <span className={`inline-flex items-center rounded-lg px-2 py-0.5 text-xs font-medium ${t.type === 'BUY' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>

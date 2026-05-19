@@ -24,8 +24,7 @@ public class PortfolioValueCalculator {
     @Autowired private DailyPortfolioValueDao dailyDao;
 
     /**
-     * Calculate and persist daily portfolio values from the given start date to today.
-     * Called after a new transaction/dividend is added with a past trade date.
+     * Calculate and persist daily portfolio values from start date to today.
      */
     public void backfillFrom(long portfolioId, LocalDate fromDate) {
         LocalDate toDate = LocalDate.now();
@@ -37,6 +36,7 @@ public class PortfolioValueCalculator {
         LocalDate cursor = fromDate;
         while (!cursor.isAfter(toDate)) {
             BigDecimal totalValue = BigDecimal.ZERO;
+            BigDecimal totalCost = BigDecimal.ZERO;
             boolean hasPrice = false;
 
             for (Holding h : holdings) {
@@ -45,17 +45,13 @@ public class PortfolioValueCalculator {
                     BigDecimal close = prices.get(0).getClose();
                     if (close != null) {
                         totalValue = totalValue.add(close.multiply(h.getTotalShares()));
+                        totalCost = totalCost.add(h.getTotalInvested());
                         hasPrice = true;
                     }
                 }
             }
 
             if (hasPrice) {
-                // Calculate total cost for this day
-                BigDecimal totalCost = holdings.stream()
-                        .map(Holding::getTotalInvested)
-                        .reduce(BigDecimal.ZERO, BigDecimal::add);
-
                 DailyValue dv = new DailyValue();
                 dv.setPortfolioId(portfolioId);
                 dv.setSnapshotDate(cursor);
