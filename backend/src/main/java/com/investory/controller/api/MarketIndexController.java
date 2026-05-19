@@ -82,9 +82,11 @@ public class MarketIndexController {
             JsonObject root = JsonParser.parseString(body).getAsJsonObject();
             JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
                 .get(0).getAsJsonObject().getAsJsonObject("meta");
-            m.put("price",    meta.get("regularMarketPrice").getAsBigDecimal());
-            m.put("change",   meta.get("regularMarketChange").getAsBigDecimal());
-            m.put("changePct",meta.get("regularMarketChangePercent").getAsBigDecimal());
+            BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
+            BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
+            m.put("price", price);
+            m.put("change", price.subtract(prev));
+            m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
         } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
         return m;
     }

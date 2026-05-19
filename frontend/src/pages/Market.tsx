@@ -27,7 +27,7 @@ export default function Market() {
     if (!chartRef.current || indices.length === 0) return
     const chart = echarts.init(chartRef.current)
 
-    fetch('https://geo.datav.aliyun.com/areas_v3/bound/world_full.json')
+    fetch('/investory/world.json')
       .then(r => r.json())
       .then(geoJson => {
         echarts.registerMap('world', geoJson)
