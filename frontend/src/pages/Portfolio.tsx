@@ -1,0 +1,98 @@
+import { useEffect, useState } from 'react'
+import { useAuth } from '@/hooks/use-auth'
+import { Card, CardContent } from '@/components/ui/card'
+import { Plus, Trash2 } from 'lucide-react'
+
+interface Portfolio { id: number; userId: number; name: string }
+
+export default function Portfolio() {
+  const { portfolioId, setPortfolioId } = useAuth()
+  const [portfolios, setPortfolios] = useState<Portfolio[]>([])
+  const [newName, setNewName] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  function load() {
+    fetch('/investory/api/portfolios', { credentials: 'include' })
+      .then(r => r.json()).then(setPortfolios)
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [])
+
+  async function handleCreate() {
+    if (!newName.trim()) return
+    const form = new URLSearchParams({ name: newName.trim() })
+    const res = await fetch('/investory/api/portfolios', {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+    })
+    const p = await res.json()
+    setPortfolioId(p.id)
+    setNewName('')
+    load()
+  }
+
+  async function handleSelect(id: number) {
+    await fetch(`/investory/api/portfolios/${id}`, { method: 'PUT', credentials: 'include' })
+    setPortfolioId(id)
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm('确认删除该组合？')) return
+    await fetch(`/investory/api/portfolios/${id}`, { method: 'DELETE', credentials: 'include' })
+    load()
+  }
+
+  if (loading) {
+    return <div className="flex items-center justify-center h-96"><div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /></div>
+  }
+
+  return (
+    <div className="p-6 max-w-lg mx-auto space-y-6">
+      <h2 className="text-xl font-bold text-slate-900 tracking-tight">我的投资组合</h2>
+
+      <Card>
+        <CardContent className="pt-6">
+          <div className="space-y-2">
+            {portfolios.map(p => (
+              <div key={p.id}
+                className={`flex items-center justify-between px-4 py-3 rounded-xl transition-colors cursor-pointer ${
+                  p.id === portfolioId ? 'bg-slate-900 text-white' : 'hover:bg-slate-50'
+                }`}
+                onClick={() => handleSelect(p.id)}>
+                <span className="text-sm font-medium">{p.name}</span>
+                <div className="flex items-center gap-2">
+                  {p.id === portfolioId && (
+                    <span className="text-xs bg-emerald-500 text-white px-2 py-0.5 rounded-lg">当前</span>
+                  )}
+                  <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }}
+                    className={`p-1.5 rounded-lg transition-colors ${p.id === portfolioId ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+            {portfolios.length === 0 && (
+              <p className="text-center text-slate-400 text-sm py-4">暂无组合</p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="pt-6">
+          <div className="flex gap-3">
+            <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
+              placeholder="新组合名称"
+              className="flex-1 h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+            <button onClick={handleCreate} disabled={!newName.trim()}
+              className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors disabled:opacity-50">
+              <Plus className="w-4 h-4" /> 创建
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
