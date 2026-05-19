@@ -37,6 +37,9 @@ export default function StockDetail() {
   const stock = data?.stock
   const holding = data?.holding
   const currentPrice = priceData.length > 0 ? Number(priceData[priceData.length - 1].close) : null
+  const prevClose = priceData.length > 1 ? Number(priceData[priceData.length - 2].close) : null
+  const changePct = currentPrice != null && prevClose != null && prevClose > 0
+    ? ((currentPrice - prevClose) / prevClose * 100) : null
   const dilutedCost = holding ? Number(holding.dilutedCost) : 0
   const inProfit = currentPrice != null && dilutedCost > 0 ? currentPrice >= dilutedCost : true
   const chartColor = inProfit ? positiveHex : negativeHex
@@ -57,9 +60,16 @@ export default function StockDetail() {
               {stock?.name}
             </h2>
             {currentPrice != null && (
-              <span className={`text-3xl font-bold tabular-nums tracking-tight ${inProfit ? positiveClass : negativeClass}`}>
-                {stock?.currency === 'CNY' ? '¥' : stock?.currency === 'HKD' ? 'HK$' : '$'}{currentPrice.toFixed(2)}
-              </span>
+              <>
+                <span className={`text-3xl font-bold tabular-nums tracking-tight ${inProfit ? positiveClass : negativeClass}`}>
+                  {stock?.currency === 'CNY' ? '¥' : stock?.currency === 'HKD' ? 'HK$' : '$'}{currentPrice.toFixed(2)}
+                </span>
+                {changePct != null && (
+                  <span className={`text-lg font-semibold tabular-nums ${changePct >= 0 ? positiveClass : negativeClass}`}>
+                    {changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%
+                  </span>
+                )}
+              </>
             )}
           </div>
           <p className="text-sm text-slate-500">{stock && displaySymbol(stock.symbol, stock.market)}</p>

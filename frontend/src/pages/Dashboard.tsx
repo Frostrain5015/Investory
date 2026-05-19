@@ -152,20 +152,9 @@ export default function Dashboard() {
             {allocChart === 'pie' ? (
               <ResponsiveContainer width="100%" height={280}>
                 <PieChart>
-                  <Pie data={allocation} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={100} innerRadius={55}
-                    label={({ cx, cy, midAngle, innerRadius, outerRadius, name }) => {
-                      if (midAngle == null) return null
-                      const RADIAN = Math.PI / 180
-                      const radius = (innerRadius ?? 0) + ((outerRadius ?? 0) - (innerRadius ?? 0)) * 0.6
-                      const x = (cx ?? 0) + radius * Math.cos(-midAngle * RADIAN)
-                      const y = (cy ?? 0) + radius * Math.sin(-midAngle * RADIAN)
-                      return name ? (
-                        <text x={x} y={y} textAnchor="middle" dominantBaseline="central"
-                          className="text-[9px] font-semibold fill-white pointer-events-none select-none">
-                          {name.length > 4 ? name.substring(0, 4) + '…' : name}
-                        </text>
-                      ) : null
-                    }}>
+                  <Pie data={allocation} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85} innerRadius={45}
+                    labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}
+                    label={({ name, percent }) => name ? `${name} ${((percent ?? 0) * 100).toFixed(0)}%` : ''}>
                     {allocation.map((_, i) => (
                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
                     ))}
