@@ -161,6 +161,37 @@ def upsert_klines(stock_id, rows):
         conn.close()
 
 # ============================================================
+def fix_hk_names():
+    """修复港股名称：对名称仅为代码的股票，从腾讯 API 拉取中文名"""
+    conn = db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id, symbol FROM stocks WHERE market='HK' AND (name REGEXP '^[0-9]+$' OR CHAR_LENGTH(name)<=5)")
+    bad = cur.fetchall()
+    if not bad:
+        conn.close()
+        return
+    log(f'[0/3] 修复 {len(bad)} 只港股的名称...')
+    fixed = 0
+    for stock_id, symbol in bad:
+        code5d = symbol.replace('.HK', '').replace('hk', '')
+        try:
+            r = requests.get(f'http://qt.gtimg.cn/q=hk{code5d}', timeout=5)
+            r.encoding = 'gbk'
+            text = r.text
+            # Format: v_hk00001="1~长和~00001~..."
+            m = re.search(r'"\d+~([^~]+)~', text)
+            if m:
+                name = m.group(1).strip()
+                if name and name != code5d and not name.isdigit():
+                    cur.execute("UPDATE stocks SET name=%s WHERE id=%s", (name, stock_id))
+                    conn.commit()
+                    fixed += 1
+        except Exception:
+            pass
+        time.sleep(0.02)
+    conn.close()
+    log(f'  修复完成: {fixed} 只')
+
 # 主流程
 # ============================================================
 def main():
@@ -168,6 +199,9 @@ def main():
     print("  港股增量日K线抓取  (腾讯财经 → MySQL investory)")
     print(f"  区间: {START_DATE} ~ {END_DATE}（近{DAYS_BACK}个日历日）")
     print("=" * 60 + "\n")
+
+    # Step 0: 修复名称缺失的港股
+    fix_hk_names()
 
     # Step 1: 读取 DB 中的港股列表
     stocks = get_hk_stocks_from_db()
