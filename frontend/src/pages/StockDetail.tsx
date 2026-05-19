@@ -40,9 +40,8 @@ export default function StockDetail() {
   const prevClose = priceData.length > 1 ? Number(priceData[priceData.length - 2].close) : null
   const changePct = currentPrice != null && prevClose != null && prevClose > 0
     ? ((currentPrice - prevClose) / prevClose * 100) : null
-  const dilutedCost = holding ? Number(holding.dilutedCost) : 0
-  const inProfit = currentPrice != null && dilutedCost > 0 ? currentPrice >= dilutedCost : true
-  const chartColor = inProfit ? positiveHex : negativeHex
+  const priceUp = changePct != null ? changePct >= 0 : true
+  const chartColor = priceUp ? positiveHex : negativeHex
   const transactions = data?.transactions || []
   const dividends = data?.dividends || []
 
@@ -61,7 +60,7 @@ export default function StockDetail() {
             </h2>
             {currentPrice != null && (
               <>
-                <span className={`text-3xl font-bold tabular-nums tracking-tight ${inProfit ? positiveClass : negativeClass}`}>
+                <span className={`text-3xl font-bold tabular-nums tracking-tight ${priceUp ? positiveClass : negativeClass}`}>
                   {stock?.currency === 'CNY' ? '¥' : stock?.currency === 'HKD' ? 'HK$' : '$'}{currentPrice.toFixed(2)}
                 </span>
                 {changePct != null && (

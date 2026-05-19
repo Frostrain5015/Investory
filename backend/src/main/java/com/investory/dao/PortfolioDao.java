@@ -34,6 +34,10 @@ public class PortfolioDao extends BaseDao {
                 portfolio.getUserId(), portfolio.getName());
     }
 
+    public void updateName(long id, String name) {
+        update("UPDATE portfolios SET name = ? WHERE id = ?", name, id);
+    }
+
     public void delete(long id) {
         update("DELETE FROM portfolios WHERE id = ?", id);
     }

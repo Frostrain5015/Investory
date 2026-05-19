@@ -34,6 +34,7 @@ export default function Dashboard() {
   const [cumulativeDays, setCumulativeDays] = useState(365)
   const [allocChart, setAllocChart] = useState<'pie' | 'cloud'>('pie')
   const [portfolioName, setPortfolioName] = useState('')
+  const [refreshing, setRefreshing] = useState(false)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -77,6 +78,7 @@ export default function Dashboard() {
   }
 
   const isPositive = totals.totalPnl >= 0
+  const cumUp = totals.todayPnl >= 0
   const todayPositive = totals.todayPnl >= 0
 
   return (
@@ -84,9 +86,10 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">{portfolioName || '总览'}</h2>
         {snapshots.length > 0 && (
-          <button onClick={() => fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }).then(r => r.json()).then(d => alert(`已开始刷新 ${d.count} 只股票的行情数据`))}
-            className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors">
-            刷新行情
+          <button disabled={refreshing}
+            onClick={async () => { setRefreshing(true); await fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }); setTimeout(() => setRefreshing(false), 5000) }}
+            className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-50">
+            {refreshing ? '刷新中...' : '刷新行情'}
           </button>
         )}
       </div>
@@ -166,30 +169,31 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
-          {cumulative.length > 0 && (
-            <span className="text-2xl font-bold tabular-nums tracking-tight text-slate-900">
-              {formatCurrency(Number(cumulative[cumulative.length - 1].value))}
+          {cumulative.length > 1 && (() => { const s = Number(cumulative[0].value); const e = Number(cumulative[cumulative.length - 1].value); const chg = e - s; const pct = s > 0 ? (chg / s * 100) : 0; return (
+            <span className={`text-2xl font-bold tabular-nums tracking-tight ${chg >= 0 ? positiveClass : negativeClass}`}>
+              {chg >= 0 ? '+' : ''}{formatCurrency(chg)} ({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)
             </span>
-          )}
+          )})()}
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={240}>
             <AreaChart data={cumulative}>
               <defs>
                 <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={positiveHex} stopOpacity={0.15} />
-                  <stop offset="95%" stopColor={positiveHex} stopOpacity={0} />
+                  <stop offset="5%" stopColor={cumUp ? positiveHex : negativeHex} stopOpacity={0.15} />
+                  <stop offset="95%" stopColor={cumUp ? positiveHex : negativeHex} stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8" />
+              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8"
+                tickFormatter={(v: string) => cumulativeDays <= 180 ? v.substring(5) : v} />
               <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" tickFormatter={(v: number) => {
                 const cv = convertCurrency(Number(v))
                 if (Math.abs(cv) >= 10000) return (cv / 10000).toFixed(0) + '万'
                 return String(Math.round(cv))
               }} />
               <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
-              <Area type="monotone" dataKey="value" stroke={positiveHex} fill="url(#colorValue)" strokeWidth={2} />
+              <Area type="monotone" dataKey="value" stroke={cumUp ? positiveHex : negativeHex} fill="url(#colorValue)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>

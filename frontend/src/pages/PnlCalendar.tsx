@@ -190,9 +190,9 @@ export default function PnlCalendar() {
                     className="h-20 flex flex-col items-center justify-center rounded-xl text-xs font-medium"
                     style={{ backgroundColor: s.bg }}
                     title={val !== 0 ? `${pnlDisplay === 'amount' ? '¥' : ''}${Number(val).toFixed(2)}${pnlDisplay === 'pct' ? '%' : ''}` : ''}>
-                    <span className={`text-sm leading-tight font-semibold ${s.text}`}>{dayOfMonth}</span>
+                    <span className={`text-base font-bold ${s.text}`}>{dayOfMonth}</span>
                     {val !== 0 && (
-                      <span className={`leading-tight mt-0.5 ${s.text}`}>
+                      <span className={`text-sm font-semibold mt-0.5 ${s.text}`}>
                         {val > 0 ? '+' : ''}{Math.abs(val) < 10 ? val.toFixed(1) : Math.round(val)}{pnlDisplay === 'pct' ? '%' : ''}
                       </span>
                     )}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { Card, CardContent } from '@/components/ui/card'
-import { Plus, Trash2 } from 'lucide-react'
+import { Plus, Trash2, Pencil } from 'lucide-react'
 
 interface Portfolio { id: number; userId: number; name: string }
 
@@ -9,6 +9,8 @@ export default function Portfolio() {
   const { portfolioId, setPortfolioId } = useAuth()
   const [portfolios, setPortfolios] = useState<Portfolio[]>([])
   const [newName, setNewName] = useState('')
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [editName, setEditName] = useState('')
   const [loading, setLoading] = useState(true)
 
   function load() {
@@ -38,6 +40,16 @@ export default function Portfolio() {
     setPortfolioId(id)
   }
 
+  async function handleRename(id: number) {
+    if (!editName.trim()) return
+    await fetch(`/investory/api/portfolios/${id}`, {
+      method: 'PUT', credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ name: editName.trim() }),
+    })
+    load()
+  }
+
   async function handleDelete(id: number) {
     if (!confirm('确认删除该组合？')) return
     await fetch(`/investory/api/portfolios/${id}`, { method: 'DELETE', credentials: 'include' })
@@ -60,12 +72,25 @@ export default function Portfolio() {
                 className={`flex items-center justify-between px-4 py-3 rounded-xl transition-colors cursor-pointer ${
                   p.id === portfolioId ? 'bg-slate-900 text-white' : 'hover:bg-slate-50'
                 }`}
-                onClick={() => handleSelect(p.id)}>
-                <span className="text-sm font-medium">{p.name}</span>
+                onClick={() => editingId !== p.id && handleSelect(p.id)}>
+                {editingId === p.id ? (
+                  <input value={editName} onChange={e => setEditName(e.target.value)}
+                    onBlur={async () => { await handleRename(p.id); setEditingId(null) }}
+                    onKeyDown={e => { if (e.key === 'Enter') { handleRename(p.id); setEditingId(null) } }}
+                    onClick={e => e.stopPropagation()}
+                    className="text-sm font-medium bg-white border border-slate-300 rounded-lg px-2 py-1 text-slate-900 outline-none focus:ring-2 focus:ring-slate-900/10"
+                    autoFocus />
+                ) : (
+                  <span className="text-sm font-medium">{p.name}</span>
+                )}
                 <div className="flex items-center gap-2">
                   {p.id === portfolioId && (
                     <span className="text-xs bg-emerald-500 text-white px-2 py-0.5 rounded-lg">当前</span>
                   )}
+                  <button onClick={(e) => { e.stopPropagation(); setEditingId(p.id); setEditName(p.name) }}
+                    className={`p-1.5 rounded-lg transition-colors ${p.id === portfolioId ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
                   <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id) }}
                     className={`p-1.5 rounded-lg transition-colors ${p.id === portfolioId ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
                     <Trash2 className="w-3.5 h-3.5" />

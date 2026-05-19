@@ -2,7 +2,7 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
-  Briefcase, LogOut, TrendingUp, ChevronDown, User, Search, Settings
+  Briefcase, LogOut, TrendingUp, User, Search, Settings
 } from 'lucide-react'
 import { useState } from 'react'
 import { searchStocks } from '@/services/api'
@@ -130,7 +130,6 @@ export default function Layout() {
                 <User className="w-4 h-4 text-slate-500" />
               </div>
               <span className="text-sm font-medium text-slate-700">{username}</span>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
             </div>
           </div>
         </header>

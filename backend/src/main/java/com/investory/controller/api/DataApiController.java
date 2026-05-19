@@ -64,8 +64,13 @@ public class DataApiController {
     }
 
     @PutMapping("/portfolios/{id}")
-    public Map<String, String> setActivePortfolio(@PathVariable long id, HttpServletRequest req) {
-        req.getSession().setAttribute("portfolioId", id);
+    public Map<String, String> updatePortfolio(@PathVariable long id,
+            @RequestParam(required = false) String name, HttpServletRequest req) {
+        if (name != null && !name.isBlank()) {
+            portfolioDao.updateName(id, name.trim());
+        } else {
+            req.getSession().setAttribute("portfolioId", id);
+        }
         Map<String, String> result = new LinkedHashMap<>();
         result.put("status", "ok");
         return result;
