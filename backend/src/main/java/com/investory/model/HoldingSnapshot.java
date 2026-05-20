@@ -40,7 +40,9 @@ public class HoldingSnapshot {
 
     public BigDecimal getUnrealizedPnl() {
         if (currentPrice == null || avgCost == null || totalShares == null) return BigDecimal.ZERO;
-        return currentPrice.subtract(avgCost).multiply(totalShares).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal pnl = currentPrice.subtract(avgCost).multiply(totalShares);
+        if (totalDividends != null) pnl = pnl.add(totalDividends);
+        return pnl.setScale(2, RoundingMode.HALF_UP);
     }
 
     public BigDecimal getUnrealizedPnlPct() {

@@ -34,7 +34,7 @@ public class TransactionDao extends BaseDao {
     public List<Transaction> findByPortfolio(long portfolioId) {
         return query("""
             SELECT t.*, s.name AS stock_name, s.symbol AS stock_symbol
-            FROM transactions t JOIN stocks s ON t.stock_id = s.id
+            FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
             WHERE t.portfolio_id = ? ORDER BY t.trade_date DESC, t.id DESC
             """, this::map, portfolioId);
     }

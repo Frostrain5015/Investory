@@ -103,7 +103,19 @@ public class DataApiController {
         result.put("totalMarketValue", analysisService.totalMarketValue(snapshots));
         result.put("totalInvested",    analysisService.totalInvested(snapshots));
         result.put("totalPnl",         analysisService.totalUnrealizedPnl(snapshots));
-        result.put("totalReturnPct",   analysisService.cashWeightedReturn(portfolioId));
+
+        // Sum cash balances converted to CNY (CNY rate=1, others via exchange_rates)
+        BigDecimal cashBalance = jdbc.queryForObject(
+            "SELECT COALESCE(SUM(CASE WHEN c.currency='CNY' THEN c.amount ELSE c.amount / NULLIF(e.rate, 0) END), 0) FROM cash_balances c LEFT JOIN exchange_rates e ON c.currency = e.currency WHERE c.portfolio_id=?",
+            BigDecimal.class, portfolioId);
+        cashBalance = cashBalance != null ? cashBalance : BigDecimal.ZERO;
+        result.put("cashBalance", cashBalance);
+
+        result.put("totalReturnPct",   analysisService.cashWeightedReturn(portfolioId,
+            analysisService.totalMarketValue(snapshots),
+            analysisService.totalInvested(snapshots),
+            cashBalance,
+            analysisService.totalDividends(snapshots)));
 
         // Today's P&L from real-time snapshots (not backfill, which may carry forward)
         BigDecimal todayPnl = BigDecimal.ZERO;
@@ -120,12 +132,6 @@ public class DataApiController {
         } else {
             result.put("todayPnlPct", java.math.BigDecimal.ZERO);
         }
-
-        // Sum cash balances converted to CNY (CNY rate=1, others via exchange_rates)
-        BigDecimal cashBalance = jdbc.queryForObject(
-            "SELECT COALESCE(SUM(CASE WHEN c.currency='CNY' THEN c.amount ELSE c.amount / NULLIF(e.rate, 0) END), 0) FROM cash_balances c LEFT JOIN exchange_rates e ON c.currency = e.currency WHERE c.portfolio_id=?",
-            BigDecimal.class, portfolioId);
-        result.put("cashBalance", cashBalance != null ? cashBalance : BigDecimal.ZERO);
 
         // Allocation built from already-fetched snapshots (avoids double getSnapshots)
         List<Map<String, Object>> allocation = new ArrayList<>();
@@ -207,7 +213,7 @@ public class DataApiController {
                 portfolioId, currency, amount, amount);
             Transaction t = new Transaction();
             t.setPortfolioId(portfolioId);
-            t.setStockId(0L);
+            t.setStockId(null);
             t.setType(type);
             t.setShares(shares);
             t.setPrice(BigDecimal.ZERO);
@@ -221,6 +227,45 @@ public class DataApiController {
             return result;
         }
 
+        Stock stock = stockDao.findById(stockId);
+        String cur = stock != null ? stock.getCurrency() : "CNY";
+        BigDecimal cost = BigDecimal.ZERO;
+
+        if ("BUY".equals(type)) cost = shares.multiply(price).add(feeVal);
+
+        // Auto-inject cash if buying without sufficient balance
+        if ("BUY".equals(type) && stock != null) {
+            List<BigDecimal> rows = jdbc.queryForList(
+                "SELECT amount FROM cash_balances WHERE portfolio_id=? AND currency=?", BigDecimal.class, portfolioId, cur);
+            BigDecimal balance = rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
+            if (balance == null) balance = BigDecimal.ZERO;
+            if (balance.compareTo(cost) < 0) {
+                BigDecimal needed = cost.subtract(balance);
+                jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                    portfolioId, cur, needed, needed);
+                Transaction autoTx = new Transaction();
+                autoTx.setPortfolioId(portfolioId);
+                autoTx.setStockId(null);
+                autoTx.setType("TRANSFER_IN");
+                autoTx.setShares(needed);
+                autoTx.setPrice(BigDecimal.ZERO);
+                autoTx.setFee(BigDecimal.ZERO);
+                autoTx.setTradeDate(LocalDate.parse(tradeDate));
+                autoTx.setNote("自动入金（买入 " + stock.getSymbol() + "）");
+                transactionDao.insert(autoTx);
+            }
+        }
+
+        // Deduct/add to cash_balances for BUY/SELL
+        if ("BUY".equals(type)) {
+            jdbc.update("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?",
+                cost, portfolioId, cur);
+        } else if ("SELL".equals(type)) {
+            BigDecimal proceeds = shares.multiply(price).subtract(feeVal);
+            jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                portfolioId, cur, proceeds, proceeds);
+        }
+
         Transaction t = new Transaction();
         t.setPortfolioId(portfolioId);
         t.setStockId(stockId);
@@ -232,7 +277,6 @@ public class DataApiController {
         t.setNote(note);
         long id = transactionDao.insert(t);
         holdingService.rebuildHolding(portfolioId, stockId);
-        Stock stock = stockDao.findById(stockId);
         if (stock != null) {
             valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate), stockId, price, shares);
         }

@@ -131,6 +131,7 @@ export default function AddTransaction() {
               </div>
             </div>
             {(type === 'TRANSFER_IN' || type === 'TRANSFER_OUT') ? (
+              <>
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">金额</label>
@@ -147,6 +148,12 @@ export default function AddTransaction() {
                   </select>
                 </div>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">日期</label>
+                <input type="date" value={tradeDate} onChange={e => setTradeDate(e.target.value)} required
+                  className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+              </div>
+              </>
             ) : type === 'DIV' ? (
               <div className="grid grid-cols-2 gap-4">
                 <div>

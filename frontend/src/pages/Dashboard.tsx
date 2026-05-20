@@ -88,7 +88,6 @@ export default function Dashboard() {
     )
   }
 
-  const isPositive = totals.totalPnl >= 0
   const cumUp = cumulative.length > 1 ? Number(cumulative[cumulative.length - 1].value) >= Number(cumulative[0].value) : totals.todayPnl >= 0
 
   return (
@@ -168,8 +167,8 @@ export default function Dashboard() {
         <Card>
           <CardContent className="pt-6">
             <p className="text-xs text-slate-500 font-medium">总收益率</p>
-            <p className={`text-2xl font-bold mt-1 tabular-nums ${isPositive ? positiveClass : negativeClass}`}>
-              {isPositive ? '+' : ''}{totals.totalReturnPct}%
+            <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.totalReturnPct >= 0 ? positiveClass : negativeClass}`}>
+              {totals.totalReturnPct >= 0 ? '+' : '-'}{Math.abs(totals.totalReturnPct)}%
             </p>
             <p className="text-[10px] text-slate-400 mt-0.5">现金加权</p>
           </CardContent>
@@ -190,9 +189,9 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
-          {cumulative.length > 1 && (() => { const s = Number(cumulative[0].value); const e = Number(cumulative[cumulative.length - 1].value); const chg = e - s; const pct = s > 0 ? (chg / s * 100) : 0; return (
+          {cumulative.length > 1 && (() => { const useExTransfer = cumulative[0].valueExTransfer != null; const s = useExTransfer ? Number(cumulative[0].valueExTransfer) : Number(cumulative[0].value); const e = useExTransfer ? Number(cumulative[cumulative.length - 1].valueExTransfer) : Number(cumulative[cumulative.length - 1].value); const chg = e - s; const pct = s > 0 ? (chg / s * 100) : 0; return (
             <span className={`text-lg font-bold tabular-nums tracking-tight ${chg >= 0 ? positiveClass : negativeClass}`}>
-              {chg >= 0 ? '+' : ''}{formatCurrency(chg)} ({pct >= 0 ? '+' : ''}{pct.toFixed(2)}%)
+              {chg >= 0 ? '+' : '-'}{formatCurrency(Math.abs(chg))} ({pct >= 0 ? '+' : '-'}{Math.abs(pct).toFixed(2)}%)
             </span>
           )})()}
         </CardHeader>

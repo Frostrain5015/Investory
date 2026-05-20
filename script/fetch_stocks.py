@@ -36,8 +36,9 @@ from typing import Optional
 
 # ─── 配置 ─────────────────────────────────────────────────────────────────────
 
-SCRIPT_DIR  = Path(__file__).parent
-CONFIG_FILE = SCRIPT_DIR / "config.ini"
+SCRIPT_DIR     = Path(__file__).parent
+CONFIG_FILE    = SCRIPT_DIR / "config.ini"
+CHECKPOINT_DIR = SCRIPT_DIR / ".checkpoints"
 
 
 def load_config() -> dict:
@@ -64,6 +65,22 @@ def load_config() -> dict:
         "delay_us":    float(get("fetch", "delay_us", "0.3")),
     }
 
+
+# ─── 断点续传 ─────────────────────────────────────────────────────────────────
+
+def load_checkpoint(market: str):
+    cf = CHECKPOINT_DIR / f"{market}.txt"
+    if cf.exists():
+        return cf.read_text().strip() or None
+    return None
+
+def save_checkpoint(market: str, symbol: str):
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    (CHECKPOINT_DIR / f"{market}.txt").write_text(symbol)
+
+def clear_checkpoint(market: str):
+    cf = CHECKPOINT_DIR / f"{market}.txt"
+    if cf.exists(): cf.unlink()
 
 # ─── 日志 ─────────────────────────────────────────────────────────────────────
 
@@ -179,10 +196,18 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
         total     = len(df)
         total_rows = 0
         errors    = []
+        checkpoint = load_checkpoint("a")
+        skipped    = checkpoint is not None
 
         for seq, (_, row) in enumerate(df.iterrows(), 1):
             bs_code  = row["code"]
             stock_id = None if dry_run else int(row["stock_id"])
+
+            if skipped:
+                if bs_code != checkpoint:
+                    continue
+                skipped = False
+                continue
 
             rs2 = bs.query_history_k_data_plus(
                 bs_code,
@@ -216,12 +241,12 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
                 n = upsert_prices(conn, price_rows)
                 total_rows += n
 
-            if seq % 500 == 0 or seq == total:
-                pct = seq / total * 100
-                log.info(f"  进度 {seq}/{total} ({pct:.1f}%)，已写 {total_rows} 行")
-
+            save_checkpoint("a", bs_code)
+            pct = seq / total * 100
+            log.info(f"  [{seq}/{total} {pct:.1f}%] {row['name']}({bs_code}) → {n}行")
             time.sleep(cfg["delay_a"])
 
+        clear_checkpoint("a")
         log.info(f"A股完成: 写入 {total_rows} 行，失败 {len(errors)} 只")
         for sym, nm, msg in errors[:10]:
             log.warning(f"  ✗ {sym} {nm}: {msg}")
@@ -342,9 +367,18 @@ def fetch_hk_stocks(
 
     total_rows = 0
     no_data    = 0
+    checkpoint = load_checkpoint("hk")
+    skipped    = checkpoint is not None
 
     for seq, (stock_id, symbol, name) in enumerate(stocks, 1):
         code5d = symbol.replace(".HK", "").replace("hk", "")
+
+        if skipped:
+            if code5d != checkpoint:
+                continue
+            skipped = False
+            continue
+
         krows  = _tencent_kline(code5d, start, end)
 
         if krows:
@@ -354,11 +388,12 @@ def fetch_hk_stocks(
         else:
             no_data += 1
 
-        if seq % 500 == 0 or seq == len(stocks):
-            log.info(f"  进度 {seq}/{len(stocks)} ({seq/len(stocks)*100:.1f}%)")
-
+        save_checkpoint("hk", code5d)
+        pct = seq / len(stocks) * 100
+        log.info(f"  [{seq}/{len(stocks)} {pct:.1f}%] {name}({code5d}.HK) → {n if krows else 0}行")
         time.sleep(cfg["delay_hk"])
 
+    clear_checkpoint("hk")
     conn.close()
     log.info(f"港股完成: 写入 {total_rows} 行，无数据(停牌/错误) {no_data} 只")
 
@@ -499,8 +534,16 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
     total      = len(tickers)
     total_rows = 0
     errors     = []
+    checkpoint = load_checkpoint("us")
+    skipped    = checkpoint is not None
 
     for seq, ticker in enumerate(tickers, 1):
+        if skipped:
+            if ticker != checkpoint:
+                continue
+            skipped = False
+            continue
+
         stock_id = ensure_stock(ticker)
         if stock_id is None:
             errors.append((ticker, "无法获取 stock_id"))
@@ -520,11 +563,12 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
             errors.append((ticker, msg))
             log.warning(f"  ✗ {ticker}: {msg}")
 
-        if seq % 50 == 0 or seq == total:
-            log.info(f"  进度 {seq}/{total} ({seq/total*100:.1f}%)，已写 {total_rows} 行")
-
+        save_checkpoint("us", ticker)
+        pct = seq / total * 100
+        log.info(f"  [{seq}/{total} {pct:.1f}%] {ticker}.US → {n if krows else 0}行")
         time.sleep(cfg["delay_us"])
 
+    clear_checkpoint("us")
     if conn:
         conn.close()
 

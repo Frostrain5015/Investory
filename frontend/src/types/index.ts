@@ -148,6 +148,7 @@ export interface AllocationItem {
 export interface CumulativeReturnItem {
   date: string
   value: number
+  valueExTransfer?: number
   return: number
 }
 
