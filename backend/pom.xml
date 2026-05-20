@@ -68,26 +68,6 @@
         </resources>
         <plugins>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-antrun-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <phase>generate-resources</phase>
-                        <goals><goal>run</goal></goals>
-                        <configuration>
-                            <target>
-                                <exec executable="cmd" dir="${project.basedir}/../frontend">
-                                    <arg value="/c"/>
-                                    <arg value="npm"/>
-                                    <arg value="run"/>
-                                    <arg value="build"/>
-                                </exec>
-                            </target>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
-            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
@@ -96,4 +76,70 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Windows: cmd /c npm run build（自动激活） -->
+        <profile>
+            <id>build-windows</id>
+            <activation>
+                <os><family>windows</family></os>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>build-frontend</id>
+                                <phase>generate-resources</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <exec executable="cmd" dir="${project.basedir}/../frontend" failonerror="true">
+                                            <arg value="/c"/>
+                                            <arg value="npm"/>
+                                            <arg value="run"/>
+                                            <arg value="build"/>
+                                        </exec>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- Linux/macOS: npm run build（自动激活） -->
+        <profile>
+            <id>build-unix</id>
+            <activation>
+                <os><family>unix</family></os>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>build-frontend</id>
+                                <phase>generate-resources</phase>
+                                <goals><goal>run</goal></goals>
+                                <configuration>
+                                    <target>
+                                        <exec executable="npm" dir="${project.basedir}/../frontend" failonerror="true">
+                                            <arg value="run"/>
+                                            <arg value="build"/>
+                                        </exec>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>
