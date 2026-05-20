@@ -1,10 +1,12 @@
 import { useState, useEffect, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
+import { useSettings } from '@/hooks/use-settings'
 import { TrendingUp } from 'lucide-react'
 
 export default function Login() {
   const { login } = useAuth()
+  const { positiveHex } = useSettings()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -55,8 +57,8 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center mx-auto mb-4">
-            <TrendingUp className="w-6 h-6 text-emerald-400" />
+          <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: positiveHex }}>
+            <TrendingUp className="w-6 h-6 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Investory</h1>
           <p className="text-sm text-slate-500 mt-1">登录以管理你的投资组合</p>

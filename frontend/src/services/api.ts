@@ -1,7 +1,7 @@
 import type {
   SessionResponse, DashboardResponse, HoldingsResponse,
   TransactionsResponse, DividendsResponse, StockDetailResponse,
-  AllocationItem, PnlRankItem, PnlCalendarItem, CumulativeReturnItem,
+  AllocationItem, PnlCalendarItem, CumulativeReturnItem,
   StockSearchItem, PriceData, Portfolio,
 } from '@/types'
 
@@ -143,9 +143,6 @@ export const chartAPI = {
   },
   allocation(portfolioId: number): Promise<AllocationItem[]> {
     return request<AllocationItem[]>(`/api/chart?type=allocation&portfolioId=${portfolioId}`)
-  },
-  pnlRank(portfolioId: number): Promise<PnlRankItem[]> {
-    return request<PnlRankItem[]>(`/api/chart?type=pnl_rank&portfolioId=${portfolioId}`)
   },
   pnlCalendar(portfolioId: number, year: number): Promise<PnlCalendarItem[]> {
     return request<PnlCalendarItem[]>(`/api/chart?type=pnl_calendar&portfolioId=${portfolioId}&year=${year}`)

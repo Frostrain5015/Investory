@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
+import { useSettings } from '@/hooks/use-settings'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
   Briefcase, LogOut, TrendingUp, User, Search, Settings
@@ -19,6 +20,7 @@ const navItems = [
 
 export default function Layout() {
   const { username, logout } = useAuth()
+  const { positiveHex } = useSettings()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<StockSearchItem[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
@@ -36,7 +38,7 @@ export default function Layout() {
       {/* Sidebar */}
       <aside className="w-60 flex flex-col bg-slate-900 text-slate-300 shrink-0">
         <a href="/investory/dashboard" className="flex items-center gap-3 px-5 h-16 border-b border-slate-800">
-          <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center">
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: positiveHex }}>
             <TrendingUp className="w-5 h-5 text-white" />
           </div>
           <span className="text-lg font-bold text-white tracking-tight">Investory</span>

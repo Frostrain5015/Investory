@@ -67,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
+    localStorage.removeItem('investory_creds')
     window.location.href = '/investory/logout'
   }
 

@@ -125,10 +125,10 @@ export default function PnlCalendar() {
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">盈亏日历</h2>
           {periodTotalPnl.amt !== 0 && (
             <span className={`text-sm font-bold ${periodTotalPnl.amt >= 0 ? 'text-red-700' : 'text-emerald-700'}`}>
-              {pnlDisplay === 'amount'
-                ? `${periodTotalPnl.amt >= 0 ? '+' : ''}${fmt(periodTotalPnl.amt)}`
-                : `${periodTotalPnl.pct >= 0 ? '+' : ''}${periodTotalPnl.pct.toFixed(1)}%`
-              }
+              {`${periodTotalPnl.amt >= 0 ? '+' : '-'}${fmt(periodTotalPnl.amt)}`}
+              {periodTotalPnl.pct !== 0 && (
+                <span className="ml-1.5">{`${periodTotalPnl.pct >= 0 ? '+' : ''}${periodTotalPnl.pct.toFixed(1)}%`}</span>
+              )}
             </span>
           )}
         </div>

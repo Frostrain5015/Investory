@@ -10,6 +10,7 @@ import com.investory.service.PortfolioValueCalculator;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -31,6 +32,7 @@ public class DataApiController {
     @Autowired private EastMoneyCrawler crawler;
     @Autowired private RealtimeQuoteService quoteService;
     @Autowired private PortfolioValueCalculator valueCalculator;
+    @Autowired private JdbcTemplate jdbc;
 
     private long getPortfolioId(HttpServletRequest req) {
         HttpSession session = req.getSession(false);
@@ -103,22 +105,38 @@ public class DataApiController {
         result.put("totalPnl",         analysisService.totalUnrealizedPnl(snapshots));
         result.put("totalReturnPct",   analysisService.cashWeightedReturn(portfolioId));
 
-        DailyValue today = analysisService.getTodayValue(portfolioId);
-        if (today != null) {
-            result.put("todayPnl", today.getDailyPnl());
-            BigDecimal prevValue = today.getTotalValue().subtract(today.getDailyPnl());
-            if (prevValue.compareTo(BigDecimal.ZERO) != 0) {
-                result.put("todayPnlPct", today.getDailyPnl()
-                        .divide(prevValue, 4, java.math.RoundingMode.HALF_UP)
-                        .multiply(new java.math.BigDecimal("100"))
-                        .setScale(2, java.math.RoundingMode.HALF_UP));
-            } else {
-                result.put("todayPnlPct", java.math.BigDecimal.ZERO);
-            }
+        // Today's P&L from real-time snapshots (not backfill, which may carry forward)
+        BigDecimal todayPnl = BigDecimal.ZERO;
+        for (HoldingSnapshot s : snapshots) {
+            if (s.getChangeToday() != null) todayPnl = todayPnl.add(s.getChangeToday());
+        }
+        result.put("todayPnl", todayPnl);
+        BigDecimal prevValue = analysisService.totalMarketValue(snapshots).subtract(todayPnl);
+        if (prevValue.compareTo(BigDecimal.ZERO) != 0) {
+            result.put("todayPnlPct", todayPnl
+                    .divide(prevValue, 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(new java.math.BigDecimal("100"))
+                    .setScale(2, java.math.RoundingMode.HALF_UP));
         } else {
-            result.put("todayPnl", java.math.BigDecimal.ZERO);
             result.put("todayPnlPct", java.math.BigDecimal.ZERO);
         }
+
+        BigDecimal cashBalance = jdbc.queryForObject(
+            "SELECT COALESCE(SUM(amount),0) FROM cash_balances WHERE portfolio_id=?",
+            BigDecimal.class, portfolioId);
+        result.put("cashBalance", cashBalance != null ? cashBalance : BigDecimal.ZERO);
+
+        // Allocation built from already-fetched snapshots (avoids double getSnapshots)
+        List<Map<String, Object>> allocation = new ArrayList<>();
+        for (HoldingSnapshot s : snapshots) {
+            Map<String, Object> a = new LinkedHashMap<>();
+            a.put("name", s.getStockName());
+            a.put("symbol", s.getStockSymbol());
+            a.put("value", s.getMarketValue());
+            a.put("currency", s.getCurrency() != null ? s.getCurrency() : "CNY");
+            allocation.add(a);
+        }
+        result.put("allocation", allocation);
         return result;
     }
 
@@ -176,9 +194,32 @@ public class DataApiController {
             @RequestParam long stockId, @RequestParam String type,
             @RequestParam BigDecimal shares, @RequestParam BigDecimal price,
             @RequestParam(required = false) String fee, @RequestParam String tradeDate,
+            @RequestParam(required = false, defaultValue = "CNY") String currency,
             @RequestParam(required = false) String note, HttpServletRequest req) {
         long portfolioId = getPortfolioId(req);
         BigDecimal feeVal = (fee != null && !fee.isBlank()) ? new BigDecimal(fee) : BigDecimal.ZERO;
+
+        // Cash transfers update cash_balances instead of stock holdings
+        if ("TRANSFER_IN".equals(type) || "TRANSFER_OUT".equals(type)) {
+            BigDecimal amount = "TRANSFER_IN".equals(type) ? shares : shares.negate();
+            jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                portfolioId, currency, amount, amount);
+            Transaction t = new Transaction();
+            t.setPortfolioId(portfolioId);
+            t.setStockId(0L);
+            t.setType(type);
+            t.setShares(shares);
+            t.setPrice(BigDecimal.ZERO);
+            t.setFee(BigDecimal.ZERO);
+            t.setTradeDate(LocalDate.parse(tradeDate));
+            t.setNote(note);
+            long id = transactionDao.insert(t);
+            valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate));
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("id", id);
+            return result;
+        }
+
         Transaction t = new Transaction();
         t.setPortfolioId(portfolioId);
         t.setStockId(stockId);

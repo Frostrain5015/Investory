@@ -1,9 +1,9 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 
 export type ColorScheme = 'cn' | 'western'
 export type BaseCurrency = 'CNY' | 'HKD' | 'USD'
 
-const EXCHANGE_RATES: Record<BaseCurrency, number> = {
+const FALLBACK_RATES: Record<BaseCurrency, number> = {
   CNY: 1,
   HKD: 1.08,
   USD: 0.138,
@@ -61,16 +61,26 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [baseCurrency, setBaseCurrency] = useState<BaseCurrency>(() => {
     return (localStorage.getItem('baseCurrency') as BaseCurrency) || 'CNY'
   })
+  const [rates, setRates] = useState<Record<BaseCurrency, number>>(FALLBACK_RATES)
+
+  const fetchRates = useCallback(() => {
+    fetch('/investory/api/market/exchange-rates', { credentials: 'include' })
+      .then(r => r.json())
+      .then(data => {
+        setRates({ CNY: 1, HKD: Number(data.HKD) || FALLBACK_RATES.HKD, USD: Number(data.USD) || FALLBACK_RATES.USD })
+      }).catch(() => {})
+  }, [])
 
   useEffect(() => { localStorage.setItem('colorScheme', colorScheme) }, [colorScheme])
   useEffect(() => { localStorage.setItem('baseCurrency', baseCurrency) }, [baseCurrency])
+  useEffect(() => { fetchRates() }, [fetchRates])
 
   function toggleColorScheme() {
     setColorScheme(prev => prev === 'cn' ? 'western' : 'cn')
   }
 
   function convertCurrency(cnyValue: number): number {
-    return cnyValue * EXCHANGE_RATES[baseCurrency]
+    return cnyValue * rates[baseCurrency]
   }
 
   function formatCurrency(value: number): string {

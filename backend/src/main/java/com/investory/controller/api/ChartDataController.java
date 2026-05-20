@@ -79,13 +79,14 @@ public class ChartDataController {
 
     private String allocationData(long portfolioId) {
         List<HoldingSnapshot> snapshots = holdingService.getSnapshots(portfolioId);
+        // Group by stock, sum market values (already in CNY for A-shares, need conversion for others)
         List<Map<String, Object>> result = new ArrayList<>();
         for (HoldingSnapshot s : snapshots) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name",   s.getStockName());
             m.put("symbol", s.getStockSymbol());
             m.put("value",  s.getMarketValue());
-            m.put("pct",    s.getMarketValue());
+            m.put("currency", s.getCurrency() != null ? s.getCurrency() : "CNY");
             result.add(m);
         }
         return JsonUtil.toJson(result);
@@ -132,14 +133,14 @@ public class ChartDataController {
         List<DailyValue> values = analysisService.getDailyValues(portfolioId, from, to);
         List<Map<String, Object>> result = new ArrayList<>();
         for (DailyValue v : values) {
+            // Skip non-trading days (cash-only, no stock prices)
+            if (v.getTotalCost().compareTo(BigDecimal.ZERO) == 0) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("date", v.getSnapshotDate().toString());
             m.put("value", v.getTotalValue());
-            BigDecimal retPct = v.getTotalCost().compareTo(BigDecimal.ZERO) == 0
-                    ? BigDecimal.ZERO
-                    : v.getTotalValue().subtract(v.getTotalCost())
-                        .divide(v.getTotalCost(), 4, java.math.RoundingMode.HALF_UP)
-                        .multiply(new BigDecimal("100"));
+            BigDecimal retPct = v.getTotalValue().subtract(v.getTotalCost())
+                    .divide(v.getTotalCost(), 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(new BigDecimal("100"));
             m.put("return", retPct);
             result.add(m);
         }

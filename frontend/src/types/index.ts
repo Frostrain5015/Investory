@@ -35,6 +35,11 @@ export interface HoldingSnapshot {
   unrealizedPnlPct: number
   changeToday: number
   changePctToday: number
+  nativePrice: number
+  nativeAvgCost: number
+  nativeInvested: number
+  nativeMarketValue: number
+  nativeUnrealizedPnl: number
 }
 
 export interface Transaction {
@@ -103,12 +108,14 @@ export interface SessionResponse {
 
 export interface DashboardResponse {
   snapshots: HoldingSnapshot[]
+  allocation: AllocationItem[]
   totalMarketValue: number
   totalInvested: number
   totalPnl: number
   totalReturnPct: number
   todayPnl: number
   todayPnlPct: number
+  cashBalance: number
 }
 
 export interface HoldingsResponse {
@@ -135,13 +142,7 @@ export interface AllocationItem {
   symbol: string
   value: number
   pct: number
-}
-
-export interface PnlRankItem {
-  name: string
-  symbol: string
-  pnl: number
-  pnlPct: number
+  currency: string
 }
 
 export interface CumulativeReturnItem {

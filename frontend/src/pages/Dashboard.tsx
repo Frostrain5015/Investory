@@ -16,11 +16,12 @@ import { displaySymbol } from '@/lib/format'
 import CloudChart from '@/components/CloudChart'
 
 interface Snapshot {
-  stockId: number; stockSymbol: string; stockName: string; market: string
+  stockId: number; stockSymbol: string; stockName: string; market: string; currency: string
   totalShares: number; avgCost: number; dilutedCost: number
   totalInvested: number; totalDividends: number
   currentPrice: number; marketValue: number; unrealizedPnl: number; unrealizedPnlPct: number
   changeToday: number; changePctToday: number
+  nativePrice: number; nativeAvgCost: number; nativeInvested: number; nativeMarketValue: number; nativeUnrealizedPnl: number
 }
 
 const COLORS = ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1',
@@ -31,12 +32,13 @@ export default function Dashboard() {
   const { positiveClass, negativeClass, positiveHex, negativeHex, formatCurrency, convertCurrency } = useSettings()
   const toast = useToast()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
-  const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0 })
+  const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
   const [cumulative, setCumulative] = useState<CumulativeReturnItem[]>([])
   const [cumulativeDays, setCumulativeDays] = useState(365)
   const [rankMode, setRankMode] = useState<'cumulative' | 'today'>('cumulative')
   const [allocChart, setAllocChart] = useState<'pie' | 'cloud'>('pie')
+  const [priceMode, setPriceMode] = useState<'base' | 'native'>('base')
   const [portfolioName, setPortfolioName] = useState('')
   const [refreshing, setRefreshing] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -45,9 +47,8 @@ export default function Dashboard() {
     if (!portfolioId) return
     Promise.all([
       getDashboard(),
-      chartAPI.allocation(portfolioId),
       chartAPI.cumulativeReturn(portfolioId, cumulativeDays),
-    ]).then(([dash, alloc, cum]) => {
+    ]).then(([dash, cum]) => {
       setSnapshots(dash.snapshots || [])
       setTotals({
         totalMarketValue: dash.totalMarketValue || 0,
@@ -56,8 +57,9 @@ export default function Dashboard() {
         totalReturnPct: dash.totalReturnPct || 0,
         todayPnl: dash.todayPnl || 0,
         todayPnlPct: dash.todayPnlPct || 0,
+        cashBalance: dash.cashBalance || 0,
       })
-      setAllocation(alloc || [])
+      setAllocation((dash as any).allocation || [])
       setCumulative(cum || [])
     }).catch((e) => console.error('Dashboard load error:', e))
     .finally(() => setLoading(false))
@@ -133,20 +135,22 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">总市值</p>
+            <p className="text-xs text-slate-500 font-medium">总资产</p>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
-              {formatCurrency(totals.totalMarketValue)}
-              <span className={`text-xs font-medium ml-1.5 align-middle ${isPositive ? positiveClass : negativeClass}`}>
-                {isPositive ? '+' : ''}{(totals.totalMarketValue > 0 ? (totals.totalPnl / totals.totalMarketValue * 100) : 0).toFixed(1)}%
-              </span>
+              {formatCurrency(totals.totalMarketValue + totals.cashBalance)}
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">总成本</p>
+            <p className="text-xs text-slate-500 font-medium">总市值</p>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
-              {formatCurrency(totals.totalInvested)}
+              {formatCurrency(totals.totalMarketValue)}
+              {(totals.totalMarketValue + totals.cashBalance) > 0 && (
+                <span className="text-xs font-medium text-slate-400 ml-1.5 align-middle">
+                  仓位{(totals.totalMarketValue / (totals.totalMarketValue + totals.cashBalance) * 100).toFixed(0)}%
+                </span>
+              )}
             </p>
           </CardContent>
         </Card>
@@ -236,10 +240,13 @@ export default function Dashboard() {
             {allocChart === 'pie' ? (
               <ResponsiveContainer width="100%" height={280}>
                 <PieChart>
-                  <Pie data={allocation} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85} innerRadius={45}
+                  <Pie data={[...allocation].sort((a, b) => (b.value || 0) - (a.value || 0))} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85} innerRadius={45}
                     labelLine={{ stroke: '#94a3b8', strokeWidth: 1 }}
-                    label={({ name, percent }) => name ? `${name} ${((percent ?? 0) * 100).toFixed(0)}%` : ''}>
-                    {allocation.map((_, i) => (
+                    label={({ name, percent }) => {
+                      if ((percent ?? 0) < 0.03) return null
+                      return name ? `${name} ${((percent ?? 0) * 100).toFixed(0)}%` : ''
+                    }}>
+                    {[...allocation].sort((a, b) => (b.value || 0) - (a.value || 0)).map((_, i) => (
                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
                     ))}
                   </Pie>
@@ -270,20 +277,19 @@ export default function Dashboard() {
                 {[...snapshots].sort((a, b) => {
                   const va = rankMode === 'today' ? (a.changeToday || 0) : a.unrealizedPnl
                   const vb = rankMode === 'today' ? (b.changeToday || 0) : b.unrealizedPnl
-                  return va - vb
-                }).map((item, i) => {
+                  return vb - va
+                }).map(item => {
                   const val = rankMode === 'today' ? (item.changeToday || 0) : item.unrealizedPnl
                   const pctVal = rankMode === 'today' ? (item.changePctToday || 0) : item.unrealizedPnlPct
                   const absMax = Math.max(...snapshots.map(s => Math.abs(rankMode === 'today' ? (s.changeToday || 0) : s.unrealizedPnl)), 1)
                   const barPct = val / absMax
                   return (
                     <div key={item.stockId} className="flex items-center gap-3 py-2 px-3 rounded-lg hover:bg-slate-50 transition-colors">
-                      <span className="text-xs text-slate-500 w-5 tabular-nums">{snapshots.length - i}</span>
-                      <span className="text-sm font-medium text-slate-700 w-20 truncate">{item.stockName}</span>
+                      <span className="text-sm font-medium text-slate-700 w-24 truncate">{item.stockName}</span>
                       <div className="flex-1 flex items-center gap-2">
                         <div className="h-2 rounded-full flex-1 bg-slate-100 relative overflow-hidden">
                           <div className="absolute top-0 h-full rounded-full transition-all"
-                            style={{ width: `${Math.abs(barPct) * 100}%`, left: val >= 0 ? 'auto' : 0, right: val >= 0 ? 0 : 'auto', backgroundColor: val >= 0 ? positiveHex : negativeHex }} />
+                            style={{ width: `${Math.abs(barPct) * 100}%`, left: 0, backgroundColor: val >= 0 ? positiveHex : negativeHex }} />
                         </div>
                         <span className={`text-sm font-semibold tabular-nums whitespace-nowrap ${val >= 0 ? positiveClass : negativeClass}`}>
                           {val >= 0 ? '+' : ''}{formatCurrency(val)} ({pctVal >= 0 ? '+' : ''}{pctVal.toFixed(2)}%)
@@ -301,8 +307,14 @@ export default function Dashboard() {
       {/* Holdings table */}
       {snapshots.length > 0 ? (
         <Card>
-          <CardHeader>
+          <CardHeader className="flex-row items-center justify-between">
             <CardTitle className="text-base">持仓明细</CardTitle>
+            <div className="flex bg-slate-100 rounded-lg p-0.5">
+              <button onClick={() => setPriceMode('base')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium ${priceMode === 'base' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>本位币</button>
+              <button onClick={() => setPriceMode('native')}
+                className={`px-2.5 py-1 rounded-md text-xs font-medium ${priceMode === 'native' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>原币种</button>
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             <div className="overflow-auto">
@@ -321,7 +333,16 @@ export default function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {snapshots.map(s => (
+                  {[...snapshots].sort((a, b) => (b.marketValue || 0) - (a.marketValue || 0)).map(s => {
+                    const native = priceMode === 'native' && s.currency !== 'CNY'
+                    const price = native ? (s.nativePrice || s.currentPrice) : s.currentPrice
+                    const cost = native ? (s.nativeAvgCost || s.avgCost) : s.avgCost
+                    const diluted = native ? s.dilutedCost : s.dilutedCost
+                    const mv = native ? (s.nativeMarketValue || s.marketValue) : s.marketValue
+                    const pnl = native ? (s.nativeUnrealizedPnl || s.unrealizedPnl) : s.unrealizedPnl
+                    const fmtNative = (v: number) => v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    const fmtVal = (v: number) => native ? fmtNative(v) : fmtNative(convertCurrency(v))
+                    return (
                     <tr key={s.stockId} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
                       <td className="px-6 py-3">
                         <Link to={`/stock?symbol=${encodeURIComponent(s.stockSymbol)}`}
@@ -334,18 +355,18 @@ export default function Dashboard() {
                         <span className="inline-flex items-center rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{s.market}</span>
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums">{s.totalShares}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{s.currentPrice?.toFixed(2)}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{s.avgCost?.toFixed(2)}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{s.dilutedCost?.toFixed(2)}</td>
-                      <td className="px-3 py-3 text-right font-medium tabular-nums">{s.marketValue?.toFixed(2)}</td>
-                      <td className={`px-3 py-3 text-right font-medium tabular-nums ${s.unrealizedPnl >= 0 ? positiveClass : negativeClass}`}>
-                        {s.unrealizedPnl >= 0 ? '+' : ''}{s.unrealizedPnl?.toFixed(2)}
+                      <td className="px-3 py-3 text-right tabular-nums">{fmtVal(price)}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">{fmtVal(cost)}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">{fmtVal(diluted)}</td>
+                      <td className="px-3 py-3 text-right font-medium tabular-nums">{fmtVal(mv)}</td>
+                      <td className={`px-3 py-3 text-right font-medium tabular-nums ${pnl >= 0 ? positiveClass : negativeClass}`}>
+                        {pnl >= 0 ? '+' : ''}{fmtVal(Math.abs(pnl))}
                       </td>
                       <td className={`px-6 py-3 text-right font-medium tabular-nums ${s.unrealizedPnlPct >= 0 ? positiveClass : negativeClass}`}>
                         {s.unrealizedPnlPct >= 0 ? '+' : ''}{s.unrealizedPnlPct}%
                       </td>
                     </tr>
-                  ))}
+                  )})}
                 </tbody>
               </table>
             </div>

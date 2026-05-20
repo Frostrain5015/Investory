@@ -22,6 +22,12 @@ public class HoldingSnapshot {
     private BigDecimal totalDividends;
 
     private BigDecimal currentPrice;
+    // Original-currency values before CNY conversion
+    private BigDecimal nativePrice;
+    private BigDecimal nativeAvgCost;
+    private BigDecimal nativeInvested;
+    private BigDecimal nativeMarketValue;
+    private BigDecimal nativeUnrealizedPnl;
     private BigDecimal changeToday;
     private BigDecimal changePctToday;
 
@@ -74,6 +80,16 @@ public class HoldingSnapshot {
     public void setTotalDividends(BigDecimal totalDividends) { this.totalDividends = totalDividends; }
     public BigDecimal getCurrentPrice() { return currentPrice; }
     public void setCurrentPrice(BigDecimal currentPrice) { this.currentPrice = currentPrice; }
+    public BigDecimal getNativePrice() { return nativePrice; }
+    public void setNativePrice(BigDecimal nativePrice) { this.nativePrice = nativePrice; }
+    public BigDecimal getNativeAvgCost() { return nativeAvgCost; }
+    public void setNativeAvgCost(BigDecimal nativeAvgCost) { this.nativeAvgCost = nativeAvgCost; }
+    public BigDecimal getNativeInvested() { return nativeInvested; }
+    public void setNativeInvested(BigDecimal nativeInvested) { this.nativeInvested = nativeInvested; }
+    public BigDecimal getNativeMarketValue() { return nativeMarketValue; }
+    public void setNativeMarketValue(BigDecimal nativeMarketValue) { this.nativeMarketValue = nativeMarketValue; }
+    public BigDecimal getNativeUnrealizedPnl() { return nativeUnrealizedPnl; }
+    public void setNativeUnrealizedPnl(BigDecimal nativeUnrealizedPnl) { this.nativeUnrealizedPnl = nativeUnrealizedPnl; }
     public BigDecimal getChangeToday() { return changeToday; }
     public void setChangeToday(BigDecimal changeToday) { this.changeToday = changeToday; }
     public BigDecimal getChangePctToday() { return changePctToday; }

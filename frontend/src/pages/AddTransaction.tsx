@@ -14,7 +14,8 @@ export default function AddTransaction() {
   const [stocks, setStocks] = useState<StockSearchItem[]>([])
   const [selectedStock, setSelectedStock] = useState<StockSearchItem | null>(null)
   const [showDropdown, setShowDropdown] = useState(false)
-  const [type, setType] = useState<'BUY' | 'SELL' | 'DIV'>('BUY')
+  const [type, setType] = useState<'BUY' | 'SELL' | 'DIV' | 'TRANSFER_IN' | 'TRANSFER_OUT'>('BUY')
+  const [currency, setCurrency] = useState('CNY')
   const [shares, setShares] = useState('')
   const [price, setPrice] = useState('')
   const [fee, setFee] = useState('')
@@ -47,9 +48,18 @@ export default function AddTransaction() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!selectedStock) return
+    if (type !== 'TRANSFER_IN' && type !== 'TRANSFER_OUT' && !selectedStock) return
     setSubmitting(true)
-    if (type === 'DIV') {
+    if (type === 'TRANSFER_IN' || type === 'TRANSFER_OUT') {
+      const form = new URLSearchParams({
+        stockId: '0', type, shares, price: '0', tradeDate, currency, note: note || '',
+      })
+      await fetch('/investory/api/transactions', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      })
+    } else if (type === 'DIV' && selectedStock) {
       const form = new URLSearchParams({
         stockId: String(selectedStock.id), amountPerShare: dividendPerShare, recordDate: tradeDate,
       })
@@ -58,7 +68,7 @@ export default function AddTransaction() {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString(),
       })
-    } else {
+    } else if (selectedStock) {
       const form = new URLSearchParams({
         stockId: String(selectedStock.id), type, shares, price,
         fee: fee || '', tradeDate, note: note || ''
@@ -79,6 +89,7 @@ export default function AddTransaction() {
       <Card>
         <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="space-y-4">
+            {(type !== 'TRANSFER_IN' && type !== 'TRANSFER_OUT') && (
             <div className="relative">
               <label className="block text-sm font-medium text-slate-700 mb-1.5">股票</label>
               <input type="text" value={selectedStock ? `${selectedStock.name} (${selectedStock.symbol ? displaySymbol(selectedStock.symbol, selectedStock.market) : ''})` : stockQuery}
@@ -101,6 +112,7 @@ export default function AddTransaction() {
                 </div>
               )}
             </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1.5">操作类型</label>
               <div className="flex gap-2">
@@ -108,6 +120,8 @@ export default function AddTransaction() {
                   ['BUY', '买入'],
                   ['SELL', '卖出'],
                   ['DIV', '股息/分红'],
+                  ['TRANSFER_IN', '转入'],
+                  ['TRANSFER_OUT', '转出'],
                 ] as const).map(([val, label]) => (
                   <button key={val} type="button" onClick={() => setType(val)}
                     className={`flex-1 h-10 rounded-xl text-sm font-medium transition-colors ${type === val ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
@@ -116,7 +130,24 @@ export default function AddTransaction() {
                 ))}
               </div>
             </div>
-            {type === 'DIV' ? (
+            {(type === 'TRANSFER_IN' || type === 'TRANSFER_OUT') ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">金额</label>
+                  <input type="number" step="any" value={shares} onChange={e => setShares(e.target.value)} required
+                    className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">币种</label>
+                  <select value={currency} onChange={e => setCurrency(e.target.value)}
+                    className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10">
+                    <option value="CNY">¥ 人民币</option>
+                    <option value="HKD">HK$ 港币</option>
+                    <option value="USD">$ 美元</option>
+                  </select>
+                </div>
+              </div>
+            ) : type === 'DIV' ? (
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1.5">每股分红</label>
@@ -165,7 +196,7 @@ export default function AddTransaction() {
             <div className="flex gap-3">
               <button type="button" onClick={() => navigate('/transactions')}
                 className="flex-1 h-10 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">取消</button>
-              <button type="submit" disabled={submitting || !selectedStock}
+              <button type="submit" disabled={submitting || (!selectedStock && type !== 'TRANSFER_IN' && type !== 'TRANSFER_OUT')}
                 className="flex-1 h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors disabled:opacity-50">
                 {submitting ? '提交中...' : editId ? '保存修改' : '确认'}
               </button>

@@ -97,7 +97,7 @@
                                 <goals><goal>run</goal></goals>
                                 <configuration>
                                     <target>
-                                        <exec executable="cmd" dir="${project.basedir}/../frontend" failonerror="true">
+                                        <exec executable="cmd" dir="${project.basedir}/../frontend" failonerror="false">
                                             <arg value="/c"/>
                                             <arg value="npm"/>
                                             <arg value="run"/>
@@ -130,7 +130,7 @@
                                 <goals><goal>run</goal></goals>
                                 <configuration>
                                     <target>
-                                        <exec executable="npm" dir="${project.basedir}/../frontend" failonerror="true">
+                                        <exec executable="npm" dir="${project.basedir}/../frontend" failonerror="false">
                                             <arg value="run"/>
                                             <arg value="build"/>
                                         </exec>

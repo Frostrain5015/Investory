@@ -4,6 +4,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -148,5 +150,52 @@ public class MarketIndexController {
             m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
         } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
         return m;
+    }
+
+    @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
+
+    @GetMapping("/exchange-rates")
+    public Map<String, Object> getExchangeRates() {
+        Map<String, Object> rates = new LinkedHashMap<>();
+        // Fetch live rates from Yahoo
+        BigDecimal usdCny = fetchYahooPrice("USDCNY=X");
+        BigDecimal usdHkd = fetchYahooPrice("USDHKD=X");
+        if (usdCny != null && usdCny.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal usdPerCny = BigDecimal.ONE.divide(usdCny, 8, java.math.RoundingMode.HALF_UP);
+            jdbc.update("INSERT INTO exchange_rates (currency, rate) VALUES ('USD', ?) ON DUPLICATE KEY UPDATE rate=?", usdPerCny, usdPerCny);
+            rates.put("USD", usdPerCny.doubleValue());
+        }
+        if (usdHkd != null && usdHkd.compareTo(BigDecimal.ZERO) > 0 && usdCny != null && usdCny.compareTo(BigDecimal.ZERO) > 0) {
+            BigDecimal hkdPerCny = usdHkd.divide(usdCny, 8, java.math.RoundingMode.HALF_UP);
+            jdbc.update("INSERT INTO exchange_rates (currency, rate) VALUES ('HKD', ?) ON DUPLICATE KEY UPDATE rate=?", hkdPerCny, hkdPerCny);
+            rates.put("HKD", hkdPerCny.doubleValue());
+        }
+        // If Yahoo failed, fall back to DB cache
+        if (!rates.containsKey("USD")) {
+            BigDecimal cached = jdbc.queryForObject("SELECT rate FROM exchange_rates WHERE currency='USD'", BigDecimal.class);
+            if (cached != null) rates.put("USD", cached.doubleValue());
+        }
+        if (!rates.containsKey("HKD")) {
+            BigDecimal cached = jdbc.queryForObject("SELECT rate FROM exchange_rates WHERE currency='HKD'", BigDecimal.class);
+            if (cached != null) rates.put("HKD", cached.doubleValue());
+        }
+        return rates;
+    }
+
+    private BigDecimal fetchYahooPrice(String symbol) {
+        try {
+            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
+            java.net.URL u = new java.net.URL(url);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            String body = new String(conn.getInputStream().readAllBytes());
+            conn.disconnect();
+            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+            return root.getAsJsonObject("chart").getAsJsonArray("result")
+                .get(0).getAsJsonObject().getAsJsonObject("meta")
+                .get("regularMarketPrice").getAsBigDecimal();
+        } catch (Exception e) { return BigDecimal.ZERO; }
     }
 }
