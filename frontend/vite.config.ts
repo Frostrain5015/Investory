@@ -14,8 +14,9 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/investory': {
-        target: 'http://localhost:8080',
+        target: 'https://localhost:8443',
         changeOrigin: true,
+        secure: false,
       },
     },
   },

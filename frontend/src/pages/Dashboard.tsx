@@ -89,7 +89,7 @@ export default function Dashboard() {
   }
 
   const isPositive = totals.totalPnl >= 0
-  const cumUp = totals.todayPnl >= 0
+  const cumUp = cumulative.length > 1 ? Number(cumulative[cumulative.length - 1].value) >= Number(cumulative[0].value) : totals.todayPnl >= 0
 
   return (
     <div className="p-6 space-y-6">
@@ -146,12 +146,12 @@ export default function Dashboard() {
             <p className="text-xs text-slate-500 font-medium">总市值</p>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
               {formatCurrency(totals.totalMarketValue)}
-              {(totals.totalMarketValue + totals.cashBalance) > 0 && (
-                <span className="text-xs font-medium text-slate-400 ml-1.5 align-middle">
-                  仓位{(totals.totalMarketValue / (totals.totalMarketValue + totals.cashBalance) * 100).toFixed(0)}%
-                </span>
-              )}
             </p>
+            {(totals.totalMarketValue + totals.cashBalance) > 0 && (
+              <p className="text-xs font-medium text-slate-400 mt-0.5">
+                仓位{(totals.totalMarketValue / (totals.totalMarketValue + totals.cashBalance) * 100).toFixed(0)}%
+              </p>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -208,7 +208,7 @@ export default function Dashboard() {
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8"
                 tickFormatter={(v: string) => cumulativeDays <= 180 ? v.substring(5) : v} />
-              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" tickFormatter={(v: number) => {
+              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" domain={['auto', 'auto']} tickFormatter={(v: number) => {
                 const cv = convertCurrency(Number(v))
                 if (Math.abs(cv) >= 10000) return (cv / 10000).toFixed(0) + '万'
                 return String(Math.round(cv))

@@ -15,7 +15,7 @@ export default function StockDetail() {
   const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
   const [data, setData] = useState<StockDetailResponse | null>(null)
   const [priceData, setPriceData] = useState<PriceData[]>([])
-  const [days, setDays] = useState(180)
+  const [days, setDays] = useState(730)
   const [loading, setLoading] = useState(true)
   const [watching, setWatching] = useState(false)
   const [watchId, setWatchId] = useState<number | null>(null)
@@ -131,17 +131,34 @@ export default function StockDetail() {
       {/* Cost cards */}
       {holding && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-          {[
-            { label: '持仓数量', value: holding.totalShares },
-            { label: '平均成本', value: holding.avgCost?.toFixed(2), color: 'text-amber-600' },
-            { label: '摊薄成本', value: holding.dilutedCost?.toFixed(2), color: 'text-sky-600' },
-            { label: '总投入', value: holding.totalInvested?.toFixed(2) },
-            { label: '累计分红', value: holding.totalDividends?.toFixed(2), color: positiveClass },
-          ].map((c, i) => (
+          {([
+            { label: '持仓数量' as const, value: holding.totalShares, sub: '' as string | undefined, color: '' },
+            { label: '持仓市值' as const, value: currentPrice != null && holding?.totalShares != null ? (currentPrice * holding.totalShares).toFixed(2) : '—', sub: undefined, color: '' },
+            { label: '平均成本' as const, value: holding.avgCost?.toFixed(2), sub: undefined, color: 'text-amber-600' },
+            { label: '摊薄成本' as const, value: holding.dilutedCost?.toFixed(2), sub: undefined, color: 'text-sky-600' },
+            { label: '持仓盈亏' as const, value: (() => {
+                if (currentPrice == null || !holding?.totalShares || !holding?.totalInvested) return '—'
+                const mv = currentPrice * holding.totalShares
+                const pnl = mv - holding.totalInvested + (holding.totalDividends || 0)
+                const sign = pnl >= 0 ? '+' : ''
+                return `${sign}${pnl.toFixed(2)}`
+              })(), sub: (() => {
+                if (currentPrice == null || !holding?.totalShares || !holding?.totalInvested || holding.totalInvested === 0) return undefined
+                const mv = currentPrice * holding.totalShares
+                const pnl = mv - holding.totalInvested + (holding.totalDividends || 0)
+                const pct = (pnl / holding.totalInvested * 100)
+                return `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`
+              })(), color: (() => {
+                if (currentPrice == null || !holding?.totalShares || !holding?.totalInvested) return 'text-slate-900'
+                const pnl = (currentPrice * holding.totalShares) - holding.totalInvested + (holding.totalDividends || 0)
+                return pnl >= 0 ? positiveClass : negativeClass
+              })() },
+          ] as const).map((c, i) => (
             <Card key={i}>
               <CardContent className="pt-6">
                 <p className="text-xs text-slate-500 font-medium">{c.label}</p>
                 <p className={`text-lg font-bold mt-1 tabular-nums ${c.color || 'text-slate-900'}`}>{c.value}</p>
+                {c.sub && <p className={`text-xs font-medium mt-0.5 ${c.color || 'text-slate-400'}`}>{c.sub}</p>}
               </CardContent>
             </Card>
           ))}
@@ -181,11 +198,14 @@ export default function StockDetail() {
               )}
               <Tooltip />
               <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
-              {transactions.map(t => (
-                <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={Number(t.price)}
+              {transactions.map(t => {
+                const match = priceData.find(p => p.date === t.tradeDate)
+                const y = match ? Number(match.close) : Number(t.price)
+                return (
+                <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={y}
                   r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}
                   label={{ value: t.type === 'BUY' ? 'B' : 'S', position: 'top', fontSize: 11, fill: t.type === 'BUY' ? '#ef4444' : '#10b981', fontWeight: 'bold' }} />
-              ))}
+              )})}
               {dividends.map(d => {
                 const match = priceData.find(p => p.date === d.recordDate)
                 return match ? (
@@ -218,7 +238,7 @@ export default function StockDetail() {
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map((t: Transaction) => (
+                  {[...transactions].sort((a, b) => b.tradeDate.localeCompare(a.tradeDate)).map((t: Transaction) => (
                     <tr key={t.id} className="border-b border-slate-50">
                       <td className="px-4 py-2">{t.tradeDate}</td>
                       <td className="px-4 py-2">

@@ -29,9 +29,10 @@ public class CostCalculationService {
                 totalInvested = totalInvested.add(cost);
 
             } else if ("SELL".equals(t.getType())) {
-                BigDecimal soldCost = avgCost.multiply(t.getShares());
+                // Subtract at actual sell proceeds to reflect net cash deployed
+                BigDecimal cashBack = t.getPrice().multiply(t.getShares()).subtract(t.getFee());
                 totalShares   = totalShares.subtract(t.getShares());
-                totalInvested = totalInvested.subtract(soldCost);
+                totalInvested = totalInvested.subtract(cashBack);
                 if (totalShares.compareTo(ZERO) <= 0) {
                     totalShares   = ZERO;
                     totalInvested = ZERO;

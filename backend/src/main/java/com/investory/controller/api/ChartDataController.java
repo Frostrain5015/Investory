@@ -111,15 +111,18 @@ public class ChartDataController {
         int y = year != null ? year : LocalDate.now().getYear();
         LocalDate from = LocalDate.of(y, 1, 1);
         LocalDate to   = LocalDate.of(y, 12, 31);
+        // Find previous year's last value for continuity
+        DailyValue lastBefore = analysisService.getDailyValues(portfolioId, from.minusDays(1), from.minusDays(1))
+            .stream().findFirst().orElse(null);
         List<DailyValue> values = analysisService.getDailyValues(portfolioId, from, to);
         List<Object[]> result = new ArrayList<>();
-        BigDecimal prevValue = null;
+        BigDecimal prevValue = lastBefore != null ? lastBefore.getTotalValue() : null;
         for (DailyValue v : values) {
             BigDecimal dailyPnl;
             if (prevValue != null) {
                 dailyPnl = v.getTotalValue().subtract(prevValue);
             } else {
-                dailyPnl = v.getTotalValue().subtract(v.getTotalCost());
+                dailyPnl = BigDecimal.ZERO;
             }
             prevValue = v.getTotalValue();
             result.add(new Object[]{ v.getSnapshotDate().toString(), dailyPnl, v.getTotalValue() });

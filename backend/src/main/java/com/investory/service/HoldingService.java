@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.util.*;
 
 @Service
@@ -96,10 +97,11 @@ public class HoldingService {
     }
 
     private volatile Map<String, BigDecimal> cachedRates;
-    private volatile long ratesLoadedAt;
+    private volatile LocalDate ratesDate;
 
     private Map<String, BigDecimal> loadCnyRates() {
-        if (cachedRates != null && System.currentTimeMillis() - ratesLoadedAt < 300_000) return cachedRates;
+        LocalDate today = LocalDate.now();
+        if (cachedRates != null && today.equals(ratesDate)) return cachedRates;
         Map<String, BigDecimal> rates = new HashMap<>();
         rates.put("CNY", BigDecimal.ONE);
         try {
@@ -113,7 +115,7 @@ public class HoldingService {
             }
         } catch (Exception ignored) {}
         cachedRates = rates;
-        ratesLoadedAt = System.currentTimeMillis();
+        ratesDate = today;
         return rates;
     }
 }

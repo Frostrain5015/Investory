@@ -121,8 +121,9 @@ public class DataApiController {
             result.put("todayPnlPct", java.math.BigDecimal.ZERO);
         }
 
+        // Sum cash balances converted to CNY (CNY rate=1, others via exchange_rates)
         BigDecimal cashBalance = jdbc.queryForObject(
-            "SELECT COALESCE(SUM(amount),0) FROM cash_balances WHERE portfolio_id=?",
+            "SELECT COALESCE(SUM(CASE WHEN c.currency='CNY' THEN c.amount ELSE c.amount / NULLIF(e.rate, 0) END), 0) FROM cash_balances c LEFT JOIN exchange_rates e ON c.currency = e.currency WHERE c.portfolio_id=?",
             BigDecimal.class, portfolioId);
         result.put("cashBalance", cashBalance != null ? cashBalance : BigDecimal.ZERO);
 

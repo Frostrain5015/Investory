@@ -77,7 +77,7 @@ java -DsocksProxyHost=127.0.0.1 -DsocksProxyPort=7897 -jar backend/target/invest
 - **Java**: 17 (E:\Java\jdk-17)
 - **Maven**: 3.9.16 (C:\tmp\maven\apache-maven-3.9.16)
 - **MySQL**: localhost:3306, investory_db, credentials in application.properties
-- **App URL**: http://localhost:8080/investory/
+- **App URL**: https://localhost:8443/investory/
 
 ## Key conventions
 

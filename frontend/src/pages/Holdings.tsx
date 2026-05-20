@@ -3,10 +3,11 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
-import { searchStocks } from '@/services/api'
+import { searchStocks, chartAPI } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { displaySymbol } from '@/lib/format'
-import type { StockSearchItem } from '@/types'
+import Sparkline from '@/components/Sparkline'
+import type { StockSearchItem, PriceData } from '@/types'
 import { Search, X, Plus, GripVertical } from 'lucide-react'
 
 interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number; changeToday?: number; changePctToday?: number }
@@ -20,8 +21,19 @@ export default function Holdings() {
   const [results, setResults] = useState<StockSearchItem[]>([])
   const [showAdd, setShowAdd] = useState(false)
   const [managing, setManaging] = useState(false)
+  const [sparkData, setSparkData] = useState<Record<string, number[]>>({})
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropIdx, setDropIdx] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (items.length === 0) return
+    items.forEach(item => {
+      if (sparkData[item.symbol]) return
+      chartAPI.price(item.symbol, 30).then((prices: PriceData[]) => {
+        setSparkData(prev => ({ ...prev, [item.symbol]: prices.map(p => p.close) }))
+      }).catch(() => {})
+    })
+  }, [items])
 
   function handleDragStart(idx: number) {
     setDragIdx(idx)
@@ -160,6 +172,7 @@ export default function Holdings() {
                 <thead>
                   <tr className="border-b border-slate-100">
                     <th className="text-left text-xs font-medium text-slate-500 px-6 py-3">股票</th>
+                    <th className="text-center text-xs font-medium text-slate-500 px-1 py-3 w-[68px]">1M</th>
                     <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">现价</th>
                     <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">今日涨跌</th>
                     <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">涨跌幅</th>
@@ -187,6 +200,11 @@ export default function Holdings() {
                               className="font-medium text-slate-900 hover:text-blue-600">{item.name}</Link>
                           </div>
                           <div className="text-xs text-slate-400">{displaySymbol(item.symbol, item.market)}</div>
+                        </td>
+                        <td className="px-1 py-3 flex justify-center">
+                          {sparkData[item.symbol]?.length > 0
+                            ? <Sparkline data={sparkData[item.symbol]} />
+                            : <div className="w-[60px] h-6 bg-slate-50 rounded" />}
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums">{valid ? Number(item.price).toFixed(2) : '—'}</td>
                         <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>

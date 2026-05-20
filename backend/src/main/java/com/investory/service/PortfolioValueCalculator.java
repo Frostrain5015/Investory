@@ -3,10 +3,12 @@ package com.investory.service;
 import com.investory.dao.DailyPortfolioValueDao;
 import com.investory.dao.DividendDao;
 import com.investory.dao.HoldingDao;
+import com.investory.dao.StockDao;
 import com.investory.dao.StockPriceDao;
 import com.investory.model.DailyValue;
 import com.investory.model.Dividend;
 import com.investory.model.Holding;
+import com.investory.model.Stock;
 import com.investory.model.StockPrice;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -25,9 +27,26 @@ public class PortfolioValueCalculator {
 
     @Autowired private HoldingDao holdingDao;
     @Autowired private StockPriceDao stockPriceDao;
+    @Autowired private StockDao stockDao;
     @Autowired private DividendDao dividendDao;
     @Autowired private DailyPortfolioValueDao dailyDao;
     @Autowired private JdbcTemplate jdbc;
+
+    private Map<String, BigDecimal> loadCnyRates() {
+        Map<String, BigDecimal> rates = new HashMap<>();
+        rates.put("CNY", BigDecimal.ONE);
+        try {
+            List<Map<String, Object>> rows = jdbc.queryForList("SELECT currency, rate FROM exchange_rates");
+            for (Map<String, Object> row : rows) {
+                String curr = (String) row.get("currency");
+                BigDecimal rate = (BigDecimal) row.get("rate");
+                if (rate != null && rate.compareTo(BigDecimal.ZERO) > 0) {
+                    rates.put(curr, BigDecimal.ONE.divide(rate, 8, RoundingMode.HALF_UP));
+                }
+            }
+        } catch (Exception ignored) {}
+        return rates;
+    }
 
     public void backfillFrom(long portfolioId, LocalDate fromDate) {
         backfillFrom(portfolioId, fromDate, 0, null, null);
@@ -46,6 +65,14 @@ public class PortfolioValueCalculator {
 
         BigDecimal prevStockValue = null;
         BigDecimal prevTotalValue = null;
+        // Exchange rates & stock currencies for CNY conversion
+        Map<String, BigDecimal> toCny = loadCnyRates();
+        Map<Long, BigDecimal> stockCnyRate = new HashMap<>();
+        for (Holding h : holdings) {
+            Stock s = stockDao.findById(h.getStockId());
+            stockCnyRate.put(h.getStockId(), toCny.getOrDefault(s != null ? s.getCurrency() : "CNY", BigDecimal.ONE));
+        }
+
         // Track last known price per stock for non-trading days
         Map<Long, BigDecimal> lastPriceByStock = new HashMap<>();
         LocalDate cursor = fromDate;
@@ -61,12 +88,12 @@ public class PortfolioValueCalculator {
                 if (close == null && tradePrice != null && cursor.equals(fromDate) && h.getStockId() == tradedStockId) {
                     close = tradePrice;
                 }
-                // Carry forward last known price on non-trading days
                 if (close == null) close = lastPriceByStock.get(h.getStockId());
                 if (close != null) {
                     lastPriceByStock.put(h.getStockId(), close);
-                    stockValue = stockValue.add(close.multiply(h.getTotalShares()));
-                    totalCost = totalCost.add(h.getTotalInvested());
+                    BigDecimal rate = stockCnyRate.getOrDefault(h.getStockId(), BigDecimal.ONE);
+                    stockValue = stockValue.add(close.multiply(h.getTotalShares()).multiply(rate));
+                    totalCost = totalCost.add(h.getTotalInvested().multiply(rate));
                     hasPrice = true;
                 }
             }
@@ -113,7 +140,20 @@ public class PortfolioValueCalculator {
     }
 
     private Map<LocalDate, BigDecimal> computeDailyCash(long portfolioId, LocalDate from, LocalDate to) {
-        // All cash-affecting transactions (including before 'from' to build starting position)
+        // Load exchange rates to convert all cash to CNY
+        Map<String, BigDecimal> toCny = new HashMap<>();
+        toCny.put("CNY", BigDecimal.ONE);
+        try {
+            List<Map<String, Object>> rates = jdbc.queryForList("SELECT currency, rate FROM exchange_rates");
+            for (Map<String, Object> r : rates) {
+                String curr = (String) r.get("currency");
+                BigDecimal rate = (BigDecimal) r.get("rate");
+                if (rate != null && rate.compareTo(BigDecimal.ZERO) > 0) {
+                    toCny.put(curr, BigDecimal.ONE.divide(rate, 8, RoundingMode.HALF_UP));
+                }
+            }
+        } catch (Exception ignored) {}
+
         List<Map<String, Object>> txns = jdbc.queryForList(
             "SELECT trade_date, type, shares, price, currency, fee FROM transactions WHERE portfolio_id=? AND trade_date <= ? ORDER BY trade_date",
             portfolioId, to);
@@ -126,18 +166,18 @@ public class PortfolioValueCalculator {
             BigDecimal shares = t.get("shares") != null ? (BigDecimal) t.get("shares") : BigDecimal.ZERO;
             BigDecimal price = t.get("price") != null ? (BigDecimal) t.get("price") : BigDecimal.ZERO;
             BigDecimal fee = t.get("fee") != null ? (BigDecimal) t.get("fee") : BigDecimal.ZERO;
+            String cur = (String) t.getOrDefault("currency", "CNY");
+            BigDecimal rate = toCny.getOrDefault(cur, BigDecimal.ONE);
 
             switch (type) {
-                case "SELL": cumulativeCash = cumulativeCash.add(shares.multiply(price).subtract(fee)); break;
-                case "BUY":  cumulativeCash = cumulativeCash.subtract(shares.multiply(price).add(fee)); break;
-                case "TRANSFER_IN":  cumulativeCash = cumulativeCash.add(shares); break;
-                case "TRANSFER_OUT": cumulativeCash = cumulativeCash.subtract(shares); break;
-                // DIV goes to stock-side P&L, not cash
+                case "SELL": cumulativeCash = cumulativeCash.add(shares.multiply(price).subtract(fee).multiply(rate)); break;
+                case "BUY":  cumulativeCash = cumulativeCash.subtract(shares.multiply(price).add(fee).multiply(rate)); break;
+                case "TRANSFER_IN":  cumulativeCash = cumulativeCash.add(shares.multiply(rate)); break;
+                case "TRANSFER_OUT": cumulativeCash = cumulativeCash.subtract(shares.multiply(rate)); break;
             }
             cashByDate.put(d, cumulativeCash);
         }
 
-        // Fill forward: carry last known cash to each day
         TreeMap<LocalDate, BigDecimal> result = new TreeMap<>();
         BigDecimal running = BigDecimal.ZERO;
         for (LocalDate d = from; !d.isAfter(to); d = d.plusDays(1)) {
