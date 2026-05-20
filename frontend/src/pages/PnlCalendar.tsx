@@ -18,7 +18,9 @@ export default function PnlCalendar() {
 
   function fmt(v: number): string {
     const cv = convertCurrency(v)
-    return Math.abs(cv).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    const s = Math.abs(cv).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 4 })
+    // Strip trailing zeros after decimal point
+    return s.includes('.') ? s.replace(/\.?0+$/, '') : s
   }
   const [viewMode, setViewMode] = useState<ViewMode>('yearly')
   const [pnlDisplay, setPnlDisplay] = useState<PnlDisplay>('amount')
@@ -26,6 +28,8 @@ export default function PnlCalendar() {
   const [month, setMonth] = useState(new Date().getMonth())
   const [data, setData] = useState<PnlCalendarItem[]>([])
   const [loading, setLoading] = useState(true)
+
+  useEffect(() => { setData([]); setLoading(true) }, [portfolioId])
 
   useEffect(() => {
     if (!portfolioId) return

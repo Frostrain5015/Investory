@@ -14,6 +14,7 @@ import {
 import { getDashboard, getPortfolios } from '@/services/api'
 import { displaySymbol } from '@/lib/format'
 import CloudChart from '@/components/CloudChart'
+import ClosedPositions from '@/components/ClosedPositions'
 
 interface Snapshot {
   stockId: number; stockSymbol: string; stockName: string; market: string; currency: string
@@ -28,20 +29,32 @@ const COLORS = ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8'
   '#0369a1', '#0284c7', '#0ea5e9', '#38bdf8', '#7dd3fc', '#06b6d4', '#0891b2']
 
 export default function Dashboard() {
-  const { portfolioId } = useAuth()
+  const { portfolioId, portfolioName, setPortfolioName } = useAuth()
   const { positiveClass, negativeClass, positiveHex, negativeHex, formatCurrency, convertCurrency } = useSettings()
   const toast = useToast()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
-  const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
+  const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
   const [cumulative, setCumulative] = useState<CumulativeReturnItem[]>([])
   const [cumulativeDays, setCumulativeDays] = useState(365)
   const [rankMode, setRankMode] = useState<'cumulative' | 'today'>('cumulative')
   const [allocChart, setAllocChart] = useState<'pie' | 'cloud'>('pie')
   const [priceMode, setPriceMode] = useState<'base' | 'native'>('base')
-  const [portfolioName, setPortfolioName] = useState('')
+  const [pnlCardMode, setPnlCardMode] = useState<'today' | 'holding'>('today')
+  const [showClosed, setShowClosed] = useState(false)
+  const [cashCardMode, setCashCardMode] = useState<'mv' | 'cash'>('mv')
+  const [cashByCurrency, setCashByCurrency] = useState<{ currency: string; amount: number }[]>([])
   const [refreshing, setRefreshing] = useState(false)
   const [loading, setLoading] = useState(true)
+
+  // Clear data when switching portfolios to avoid stale data flash
+  useEffect(() => {
+    setSnapshots([])
+    setAllocation([])
+    setCumulative([])
+    setTotals({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
+    setLoading(true)
+  }, [portfolioId])
 
   const loadDashboard = useCallback(() => {
     if (!portfolioId) return
@@ -54,16 +67,27 @@ export default function Dashboard() {
         totalMarketValue: dash.totalMarketValue || 0,
         totalInvested: dash.totalInvested || 0,
         totalPnl: dash.totalPnl || 0,
+        realizedPnl: dash.realizedPnl || 0,
+        cumulativePnl: dash.cumulativePnl || 0,
         totalReturnPct: dash.totalReturnPct || 0,
         todayPnl: dash.todayPnl || 0,
         todayPnlPct: dash.todayPnlPct || 0,
         cashBalance: dash.cashBalance || 0,
       })
+      setCashByCurrency((dash as any).cashByCurrency || [])
       setAllocation((dash as any).allocation || [])
       setCumulative(cum || [])
     }).catch((e) => console.error('Dashboard load error:', e))
     .finally(() => setLoading(false))
   }, [portfolioId, cumulativeDays])
+
+  useEffect(() => {
+    if (!portfolioId) return
+    getPortfolios().then((list) => {
+      const p = list.find(p => p.id === portfolioId)
+      if (p) setPortfolioName(p.name)
+    }).catch(() => {})
+  }, [portfolioId])
 
   useEffect(() => { loadDashboard() }, [loadDashboard])
 
@@ -71,14 +95,6 @@ export default function Dashboard() {
     fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' })
     loadDashboard()
   })
-
-  useEffect(() => {
-    if (!portfolioId) return
-    getPortfolios().then((list) => {
-      const p = list.find((p) => p.id === portfolioId)
-      if (p) setPortfolioName(p.name)
-    }).catch(() => {})
-  }, [portfolioId])
 
   if (loading) {
     return (
@@ -93,7 +109,7 @@ export default function Dashboard() {
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">{portfolioName || '总览'}</h2>
+        <Link to="/portfolio" className="text-xl font-bold text-slate-900 hover:text-blue-600 transition-colors tracking-tight">{portfolioName || '总览'}</Link>
         <div className="flex items-center gap-2">
           {lastRefresh && (
             <span className="text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>
@@ -140,9 +156,10 @@ export default function Dashboard() {
             </p>
           </CardContent>
         </Card>
-        <Card>
+        <Card className="cursor-pointer select-none" onClick={() => setCashCardMode(cashCardMode === 'mv' ? 'cash' : 'mv')}>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">总市值</p>
+            <p className="text-xs text-slate-500 font-medium">{cashCardMode === 'mv' ? '总市值' : '现金余额'}</p>
+            {cashCardMode === 'mv' ? (<>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
               {formatCurrency(totals.totalMarketValue)}
             </p>
@@ -151,26 +168,52 @@ export default function Dashboard() {
                 仓位{(totals.totalMarketValue / (totals.totalMarketValue + totals.cashBalance) * 100).toFixed(0)}%
               </p>
             )}
+            </>) : (
+            <div className="space-y-1 mt-1">
+              {cashByCurrency.map(c => {
+                const flag = c.currency === 'CNY' ? 'cn' : c.currency === 'HKD' ? 'hk' : 'us'
+                return (
+                  <div key={c.currency} className="flex items-center gap-2">
+                    <img src={`https://flagcdn.com/${flag}.svg`} className="w-4 h-3 rounded-sm" alt={c.currency} />
+                    <span className="text-base font-semibold text-slate-700 tabular-nums">{Number(c.amount).toLocaleString('zh-CN', {minimumFractionDigits:2})}</span>
+                    <span className="text-xs text-slate-400">{c.currency}</span>
+                  </div>
+                )
+              })}
+              {cashByCurrency.length === 0 && <span className="text-sm text-slate-400">暂无现金</span>}
+            </div>
+            )}
           </CardContent>
         </Card>
-        <Card>
+        <Card className="cursor-pointer select-none" onClick={() => setPnlCardMode(pnlCardMode === 'today' ? 'holding' : 'today')}>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">今日盈亏</p>
+            <p className="text-xs text-slate-500 font-medium">{pnlCardMode === 'today' ? '今日盈亏' : '持仓盈亏'}</p>
+            {pnlCardMode === 'today' ? (<>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.todayPnl >= 0 ? positiveClass : negativeClass}`}>
               {totals.todayPnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(totals.todayPnl))}
             </p>
             <p className={`text-xs font-medium mt-0.5 ${totals.todayPnl >= 0 ? positiveClass : negativeClass}`}>
               {totals.todayPnlPct >= 0 ? '+' : ''}{totals.todayPnlPct}%
             </p>
+            </>) : (<>
+            <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.totalPnl >= 0 ? positiveClass : negativeClass}`}>
+              {totals.totalPnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(totals.totalPnl))}
+            </p>
+            <p className={`text-xs font-medium mt-0.5 ${totals.totalPnl >= 0 ? positiveClass : negativeClass}`}>
+              {totals.totalPnl >= 0 ? '+' : '-'}{Math.abs(totals.totalReturnPct).toFixed(2)}%
+            </p>
+            </>)}
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">总收益率</p>
-            <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.totalReturnPct >= 0 ? positiveClass : negativeClass}`}>
-              {totals.totalReturnPct >= 0 ? '+' : '-'}{Math.abs(totals.totalReturnPct)}%
+            <p className="text-xs text-slate-500 font-medium">累计盈亏</p>
+            <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.cumulativePnl >= 0 ? positiveClass : negativeClass}`}>
+              {totals.cumulativePnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(totals.cumulativePnl))}
             </p>
-            <p className="text-[10px] text-slate-400 mt-0.5">现金加权</p>
+            <p className={`text-xs font-medium mt-0.5 ${totals.totalReturnPct >= 0 ? positiveClass : negativeClass}`}>
+              {totals.totalReturnPct >= 0 ? '+' : '-'}{Math.abs(totals.totalReturnPct).toFixed(2)}%
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -189,9 +232,9 @@ export default function Dashboard() {
               ))}
             </div>
           </div>
-          {cumulative.length > 1 && (() => { const useExTransfer = cumulative[0].valueExTransfer != null; const s = useExTransfer ? Number(cumulative[0].valueExTransfer) : Number(cumulative[0].value); const e = useExTransfer ? Number(cumulative[cumulative.length - 1].valueExTransfer) : Number(cumulative[cumulative.length - 1].value); const chg = e - s; const pct = s > 0 ? (chg / s * 100) : 0; return (
+          {cumulative.length > 1 && (() => { const useExTransfer = cumulative[0].valueExTransfer != null; const s = useExTransfer ? Number(cumulative[0].valueExTransfer) : Number(cumulative[0].value); const e = useExTransfer ? Number(cumulative[cumulative.length - 1].valueExTransfer) : Number(cumulative[cumulative.length - 1].value); const chg = e - s; return (
             <span className={`text-lg font-bold tabular-nums tracking-tight ${chg >= 0 ? positiveClass : negativeClass}`}>
-              {chg >= 0 ? '+' : '-'}{formatCurrency(Math.abs(chg))} ({pct >= 0 ? '+' : '-'}{Math.abs(pct).toFixed(2)}%)
+              {chg >= 0 ? '+' : '-'}{formatCurrency(Math.abs(chg))}
             </span>
           )})()}
         </CardHeader>
@@ -308,11 +351,14 @@ export default function Dashboard() {
         <Card>
           <CardHeader className="flex-row items-center justify-between">
             <CardTitle className="text-base">持仓明细</CardTitle>
+            <div className="flex items-center gap-2">
             <div className="flex bg-slate-100 rounded-lg p-0.5">
               <button onClick={() => setPriceMode('base')}
                 className={`px-2.5 py-1 rounded-md text-xs font-medium ${priceMode === 'base' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>本位币</button>
               <button onClick={() => setPriceMode('native')}
                 className={`px-2.5 py-1 rounded-md text-xs font-medium ${priceMode === 'native' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>原币种</button>
+            </div>
+            <button onClick={() => setShowClosed(true)} className="text-xs text-slate-500 hover:text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg hover:bg-slate-50 transition-colors">查看已清仓</button>
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -387,6 +433,7 @@ export default function Dashboard() {
         </Card>
       )}
       </>)}
+      <ClosedPositions open={showClosed} onClose={() => setShowClosed(false)} />
     </div>
   )
 }

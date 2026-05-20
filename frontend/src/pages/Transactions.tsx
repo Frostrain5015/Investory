@@ -1,25 +1,28 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
+import { useAuth } from '@/hooks/use-auth'
 import { Card, CardContent } from '@/components/ui/card'
-import { shortSymbol } from '@/lib/format'
+import { displaySymbol } from '@/lib/format'
 
 interface Activity {
-  id: number; date: string; type: 'BUY' | 'SELL' | 'DIV'
+  id: number; date: string; type: 'BUY' | 'SELL' | 'DIV' | 'TRANSFER_IN' | 'TRANSFER_OUT'
   stockName?: string; stockSymbol?: string
   shares?: number; price?: number; fee?: number; note?: string
   amountPerShare?: number; sharesHeld?: number; totalAmount?: number
 }
 
 export default function Transactions() {
+  const { portfolioId } = useAuth()
   const [items, setItems] = useState<Activity[]>([])
   const [loading, setLoading] = useState(true)
 
-  function load() {
+  const load = useCallback(() => {
     fetch('/investory/api/transactions', { credentials: 'include' })
       .then(r => r.json()).then(setItems)
       .finally(() => setLoading(false))
-  }
+  }, [])
 
+  useEffect(() => { setItems([]); setLoading(true); load() }, [portfolioId])
   useEffect(() => { load() }, [])
 
   async function handleDelete(id: number, type: string) {
@@ -35,10 +38,12 @@ export default function Transactions() {
 
   const typeBadge = (t: string) => {
     switch (t) {
-      case 'BUY':  return { label: '买', cls: 'bg-red-50 text-red-600' }
-      case 'SELL': return { label: '卖', cls: 'bg-emerald-50 text-emerald-600' }
-      case 'DIV':  return { label: '分红', cls: 'bg-blue-50 text-blue-600' }
-      default:     return { label: t, cls: 'bg-slate-50' }
+      case 'BUY':          return { label: '买', cls: 'bg-red-50 text-red-600' }
+      case 'SELL':         return { label: '卖', cls: 'bg-emerald-50 text-emerald-600' }
+      case 'DIV':          return { label: '分红', cls: 'bg-blue-50 text-blue-600' }
+      case 'TRANSFER_IN':  return { label: '转入', cls: 'bg-amber-50 text-amber-600' }
+      case 'TRANSFER_OUT': return { label: '转出', cls: 'bg-orange-50 text-orange-600' }
+      default:             return { label: t, cls: 'bg-slate-50' }
     }
   }
 
@@ -73,19 +78,28 @@ export default function Transactions() {
                 <tbody>
                   {items.map(item => {
                     const badge = typeBadge(item.type)
+                    const isTransfer = item.type === 'TRANSFER_IN' || item.type === 'TRANSFER_OUT'
                     const detail = item.type === 'DIV'
                       ? `${item.amountPerShare} × ${item.sharesHeld}股`
+                      : isTransfer
+                      ? `${item.shares}`
                       : `${item.shares}股 @ ${item.price?.toFixed(2)}`
                     const amount = item.type === 'DIV'
                       ? item.totalAmount?.toFixed(2)
+                      : isTransfer
+                      ? item.shares?.toFixed(2)
                       : (item.price && item.shares ? (item.price * item.shares).toFixed(2) : '')
                     return (
                       <tr key={`${item.type}-${item.id}`} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
                         <td className="px-6 py-3 text-slate-600">{item.date}</td>
                         <td className="px-3 py-3">
-                          <Link to={`/stock?symbol=${encodeURIComponent(item.stockSymbol || '')}`}
-                            className="font-medium text-slate-900 hover:text-blue-600 transition-colors">{item.stockName}</Link>
-                          <span className="text-xs text-slate-400 ml-1">{shortSymbol(item.stockSymbol || '')}</span>
+                          {item.stockSymbol ? (
+                            <Link to={`/stock?symbol=${encodeURIComponent(item.stockSymbol)}`}
+                              className="font-medium text-slate-900 hover:text-blue-600 transition-colors">{item.stockName}</Link>
+                          ) : (
+                            <span className="font-medium text-slate-600">{item.stockName || '—'}</span>
+                          )}
+                          {item.stockSymbol && <span className="text-xs text-slate-400 ml-1">{displaySymbol(item.stockSymbol, (item as any).stockMarket || '')}</span>}
                         </td>
                         <td className="px-3 py-3">
                           <span className={`inline-flex items-center rounded-lg px-2 py-0.5 text-xs font-medium ${badge.cls}`}>{badge.label}</span>

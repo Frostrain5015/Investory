@@ -6,7 +6,7 @@ import { Plus, Trash2, Pencil } from 'lucide-react'
 interface Portfolio { id: number; userId: number; name: string }
 
 export default function Portfolio() {
-  const { portfolioId, setPortfolioId } = useAuth()
+  const { portfolioId, setPortfolioId, setPortfolioName } = useAuth()
   const [portfolios, setPortfolios] = useState<Portfolio[]>([])
   const [newName, setNewName] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -38,6 +38,8 @@ export default function Portfolio() {
   async function handleSelect(id: number) {
     await fetch(`/investory/api/portfolios/${id}`, { method: 'PUT', credentials: 'include' })
     setPortfolioId(id)
+    const p = portfolios.find(p => p.id === id)
+    if (p) setPortfolioName(p.name)
   }
 
   async function handleRename(id: number) {
@@ -47,6 +49,7 @@ export default function Portfolio() {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ name: editName.trim() }),
     })
+    setPortfolioName(editName.trim())
     load()
   }
 

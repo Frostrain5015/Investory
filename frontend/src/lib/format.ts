@@ -6,9 +6,8 @@ export function shortSymbol(symbol: string): string {
 
 /** Convert to display format "601288.SH" / "00001.HK" / "AAPL.US" */
 export function displaySymbol(symbol: string, market: string): string {
-  // Already in display format (e.g. "MMM.US")? Return as-is
+  if (!market) return symbol  // Can't format without market info
   const suffix = '.' + market
   if (symbol.endsWith(suffix)) return symbol
-  // EastMoney format (e.g. "116.00001") → extract code and append market
   return shortSymbol(symbol) + suffix
 }

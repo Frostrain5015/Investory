@@ -19,6 +19,8 @@ public class TransactionDao extends BaseDao {
         t.setStockId(rs.getLong("stock_id"));
         try { t.setStockName(rs.getString("stock_name")); } catch (SQLException ignored) {}
         try { t.setStockSymbol(rs.getString("stock_symbol")); } catch (SQLException ignored) {}
+        try { t.setStockMarket(rs.getString("stock_market")); } catch (SQLException ignored) {}
+        try { t.setCurrency(rs.getString("currency")); } catch (SQLException ignored) {}
         t.setType(rs.getString("type"));
         t.setShares(rs.getBigDecimal("shares"));
         t.setPrice(rs.getBigDecimal("price"));
@@ -33,7 +35,7 @@ public class TransactionDao extends BaseDao {
 
     public List<Transaction> findByPortfolio(long portfolioId) {
         return query("""
-            SELECT t.*, s.name AS stock_name, s.symbol AS stock_symbol
+            SELECT t.*, s.name AS stock_name, s.symbol AS stock_symbol, s.market AS stock_market
             FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
             WHERE t.portfolio_id = ? ORDER BY t.trade_date DESC, t.id DESC
             """, this::map, portfolioId);

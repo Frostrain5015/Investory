@@ -36,6 +36,10 @@ public class UserDao extends BaseDao {
         );
     }
 
+    public void updatePassword(long userId, String hash) {
+        jdbc.update("UPDATE users SET password_hash=? WHERE id=?", hash, userId);
+    }
+
     public boolean usernameExists(String username) {
         return queryOne("SELECT id FROM users WHERE username = ?",
                 rs -> rs.getLong("id"), username) != null;

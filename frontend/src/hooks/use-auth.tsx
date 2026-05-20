@@ -6,6 +6,8 @@ interface AuthState {
   userId: number | null
   username: string | null
   portfolioId: number | null
+  portfolioName: string
+  setPortfolioName: (name: string) => void
   authenticated: boolean
   loading: boolean
   login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>
@@ -20,6 +22,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [userId, setUserId] = useState<number | null>(null)
   const [username, setUsername] = useState<string | null>(null)
   const [portfolioId, setPortfolioId] = useState<number | null>(null)
+  const [portfolioName, setPortfolioName] = useState('')
   const [authenticated, setAuthenticated] = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -72,7 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ userId, username, portfolioId, authenticated, loading, login, register, logout, setPortfolioId }}>
+    <AuthContext.Provider value={{ userId, username, portfolioId, portfolioName, setPortfolioName, authenticated, loading, login, register, logout, setPortfolioId }}>
       {children}
     </AuthContext.Provider>
   )

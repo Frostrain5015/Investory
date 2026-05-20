@@ -4,6 +4,7 @@ import com.investory.crawler.EastMoneyCrawler;
 import com.investory.crawler.RealtimeQuoteService;
 import com.investory.dao.*;
 import com.investory.model.*;
+import com.investory.service.AuthService;
 import com.investory.service.HoldingService;
 import com.investory.service.PortfolioAnalysisService;
 import com.investory.service.PortfolioValueCalculator;
@@ -30,6 +31,7 @@ public class DataApiController {
     @Autowired private StockPriceDao stockPriceDao;
     @Autowired private PortfolioAnalysisService analysisService;
     @Autowired private EastMoneyCrawler crawler;
+    @Autowired private AuthService authService;
     @Autowired private RealtimeQuoteService quoteService;
     @Autowired private PortfolioValueCalculator valueCalculator;
     @Autowired private JdbcTemplate jdbc;
@@ -102,7 +104,11 @@ public class DataApiController {
         result.put("snapshots",        snapshots);
         result.put("totalMarketValue", analysisService.totalMarketValue(snapshots));
         result.put("totalInvested",    analysisService.totalInvested(snapshots));
-        result.put("totalPnl",         analysisService.totalUnrealizedPnl(snapshots));
+        BigDecimal holdingPnl = analysisService.totalUnrealizedPnl(snapshots);
+        BigDecimal realizedPnl = analysisService.totalRealizedPnl(portfolioId);
+        result.put("totalPnl",      holdingPnl);
+        result.put("realizedPnl",   realizedPnl);
+        result.put("cumulativePnl", holdingPnl.add(realizedPnl));
 
         // Sum cash balances converted to CNY (CNY rate=1, others via exchange_rates)
         BigDecimal cashBalance = jdbc.queryForObject(
@@ -110,6 +116,9 @@ public class DataApiController {
             BigDecimal.class, portfolioId);
         cashBalance = cashBalance != null ? cashBalance : BigDecimal.ZERO;
         result.put("cashBalance", cashBalance);
+        List<Map<String, Object>> cashByCurrency = jdbc.queryForList(
+            "SELECT currency, amount FROM cash_balances WHERE portfolio_id=?", portfolioId);
+        result.put("cashByCurrency", cashByCurrency);
 
         result.put("totalReturnPct",   analysisService.cashWeightedReturn(portfolioId,
             analysisService.totalMarketValue(snapshots),
@@ -147,6 +156,27 @@ public class DataApiController {
         return result;
     }
 
+    // ── Password ─────────────────────────────────────────────────────────
+
+    @PostMapping("/password")
+    public Map<String, String> changePassword(@RequestParam String oldPassword,
+            @RequestParam String newPassword, HttpServletRequest req) {
+        HttpSession session = req.getSession(false);
+        if (session == null || session.getAttribute("userId") == null)
+            return Map.of("error", "未登录");
+        long userId = (Long) session.getAttribute("userId");
+        boolean ok = authService.changePassword(userId, oldPassword, newPassword);
+        return ok ? Map.of("status", "ok") : Map.of("error", "原密码错误");
+    }
+
+    // ── Closed positions ──────────────────────────────────────────────────
+
+    @GetMapping("/closed-positions")
+    public List<Map<String, Object>> getClosedPositions(HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        return analysisService.getClosedPositions(portfolioId);
+    }
+
     // ── Holdings ────────────────────────────────────────────────────────────
 
     @GetMapping("/holdings")
@@ -172,6 +202,7 @@ public class DataApiController {
             m.put("type",          t.getType());
             m.put("stockName",     t.getStockName());
             m.put("stockSymbol",   t.getStockSymbol());
+            m.put("stockMarket",   t.getStockMarket());
             m.put("shares",        t.getShares());
             m.put("price",         t.getPrice());
             m.put("fee",           t.getFee());
@@ -316,12 +347,43 @@ public class DataApiController {
         long portfolioId = getPortfolioId(req);
         List<Transaction> txns = transactionDao.findByPortfolio(portfolioId);
         txns.stream().filter(t -> t.getId() == id).findFirst().ifPresent(old -> {
+            // Reverse cash balance changes
+            String type = old.getType();
+            // Get currency: use transaction's currency field, or look up from stock
+            String cur = old.getCurrency();
+            if (cur == null && old.getStockId() != null && old.getStockId() > 0) {
+                cur = getStockCurrency(old.getStockId());
+            }
+            if (cur == null) cur = "CNY";
+
+            if ("BUY".equals(type)) {
+                BigDecimal cost = old.getShares().multiply(old.getPrice()).add(old.getFee());
+                jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                    portfolioId, cur, cost, cost);
+            } else if ("SELL".equals(type)) {
+                BigDecimal proceeds = old.getShares().multiply(old.getPrice()).subtract(old.getFee());
+                jdbc.update("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?",
+                    proceeds, portfolioId, cur);
+            } else if ("TRANSFER_IN".equals(type)) {
+                jdbc.update("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?",
+                    old.getShares(), portfolioId, cur);
+            } else if ("TRANSFER_OUT".equals(type)) {
+                jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                    portfolioId, cur, old.getShares(), old.getShares());
+            }
             transactionDao.delete(id);
-            holdingService.rebuildHolding(portfolioId, old.getStockId());
+            if (old.getStockId() != null && old.getStockId() > 0) {
+                holdingService.rebuildHolding(portfolioId, old.getStockId());
+            }
         });
         Map<String, String> result = new LinkedHashMap<>();
         result.put("status", "ok");
         return result;
+    }
+
+    private String getStockCurrency(long stockId) {
+        Stock s = stockDao.findById(stockId);
+        return s != null ? s.getCurrency() : "CNY";
     }
 
     // ── Dividends ───────────────────────────────────────────────────────────

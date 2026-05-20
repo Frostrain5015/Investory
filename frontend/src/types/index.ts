@@ -112,10 +112,13 @@ export interface DashboardResponse {
   totalMarketValue: number
   totalInvested: number
   totalPnl: number
+  realizedPnl: number
+  cumulativePnl: number
   totalReturnPct: number
   todayPnl: number
   todayPnlPct: number
   cashBalance: number
+  cashByCurrency: { currency: string; amount: number }[]
 }
 
 export interface HoldingsResponse {

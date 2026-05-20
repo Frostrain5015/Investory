@@ -3,10 +3,10 @@ import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
-  Briefcase, LogOut, TrendingUp, User, Search, Settings, Menu
+  LogOut, TrendingUp, User, Search, Menu
 } from 'lucide-react'
-import { useState } from 'react'
-import { searchStocks } from '@/services/api'
+import { useEffect, useState } from 'react'
+import { searchStocks, getPortfolios } from '@/services/api'
 import type { StockSearchItem } from '@/types'
 import { displaySymbol } from '@/lib/format'
 
@@ -19,12 +19,20 @@ const navItems = [
 ]
 
 export default function Layout() {
-  const { username, logout } = useAuth()
+  const { username, portfolioId, setPortfolioName, logout } = useAuth()
   const { positiveHex } = useSettings()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<StockSearchItem[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+
+  useEffect(() => {
+    if (!portfolioId) return
+    getPortfolios().then(list => {
+      const p = list.find(p => p.id === portfolioId)
+      if (p) setPortfolioName(p.name)
+    }).catch(() => {})
+  }, [portfolioId])
 
   async function handleSearch(q: string) {
     setQuery(q)
@@ -52,13 +60,12 @@ export default function Layout() {
         ))}
       </nav>
       <div className="p-3 border-t border-slate-800">
-        <NavLink to="/portfolio" onClick={() => setSidebarOpen(false)}
-          className={({ isActive }) => `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`} >
-          <Briefcase className="w-4 h-4" />投资组合
-        </NavLink>
         <NavLink to="/settings" onClick={() => setSidebarOpen(false)}
-          className={({ isActive }) => `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`} >
-          <Settings className="w-4 h-4" />设置
+          className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-slate-800/50 transition-colors">
+          <div className="w-7 h-7 rounded-full bg-slate-700 flex items-center justify-center shrink-0">
+            <User className="w-3.5 h-3.5 text-slate-300" />
+          </div>
+          <span className="text-sm text-slate-300 truncate">{username}</span>
         </NavLink>
         <NavLink to="/login" onClick={(e) => { e.preventDefault(); logout() }}
           className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:text-red-400 hover:bg-slate-800/50 transition-colors mt-0.5" >
@@ -105,12 +112,6 @@ export default function Layout() {
                 ))}
               </div>
             )}
-          </div>
-          <div className="flex items-center gap-2 lg:gap-3 shrink-0">
-            <div className="w-7 h-7 lg:w-8 lg:h-8 rounded-full bg-slate-100 flex items-center justify-center">
-              <User className="w-3.5 h-3.5 lg:w-4 lg:h-4 text-slate-500" />
-            </div>
-            <span className="text-sm font-medium text-slate-700 hidden sm:inline">{username}</span>
           </div>
         </header>
         <main className="flex-1 overflow-auto">

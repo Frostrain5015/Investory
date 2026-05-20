@@ -59,6 +59,8 @@ export default function Holdings() {
     }).catch(() => {})
   }
 
+  useEffect(() => { setItems([]); setSparkData({}); setLoading(true) }, [portfolioId])
+
   const load = useCallback(() => {
     if (!portfolioId) return
     Promise.all([

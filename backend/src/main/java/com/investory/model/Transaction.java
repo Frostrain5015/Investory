@@ -10,6 +10,8 @@ public class Transaction {
     private Long stockId;
     private String stockName;
     private String stockSymbol;
+    private String stockMarket;
+    private String currency;
     private String type;         // BUY / SELL
     private BigDecimal shares;
     private BigDecimal price;
@@ -30,6 +32,10 @@ public class Transaction {
     public void setStockName(String stockName) { this.stockName = stockName; }
     public String getStockSymbol() { return stockSymbol; }
     public void setStockSymbol(String stockSymbol) { this.stockSymbol = stockSymbol; }
+    public String getStockMarket() { return stockMarket; }
+    public void setStockMarket(String stockMarket) { this.stockMarket = stockMarket; }
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
     public String getType() { return type; }
     public void setType(String type) { this.type = type; }
     public BigDecimal getShares() { return shares; }

@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from '@/hooks/use-auth'
 import { SettingsProvider } from '@/hooks/use-settings'
+import { ThemeProvider } from '@/hooks/use-theme'
 import { ToastProvider } from '@/components/Toast'
 import Layout from '@/components/Layout'
 import Login from '@/pages/Login'
@@ -38,6 +39,7 @@ export default function App() {
   return (
     <AuthProvider>
       <SettingsProvider>
+      <ThemeProvider>
       <ToastProvider>
       <Routes>
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
@@ -58,6 +60,7 @@ export default function App() {
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
       </ToastProvider>
+      </ThemeProvider>
       </SettingsProvider>
     </AuthProvider>
   )

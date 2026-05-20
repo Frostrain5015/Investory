@@ -38,4 +38,13 @@ public class AuthService {
         if (user == null) return null;
         return BCrypt.checkpw(password, user.getPasswordHash()) ? user : null;
     }
+
+    public boolean changePassword(long userId, String oldPassword, String newPassword) {
+        if (newPassword == null || newPassword.length() < 6) return false;
+        User user = userDao.findById(userId);
+        if (user == null) return false;
+        if (!BCrypt.checkpw(oldPassword, user.getPasswordHash())) return false;
+        userDao.updatePassword(userId, BCrypt.hashpw(newPassword, BCrypt.gensalt()));
+        return true;
+    }
 }
