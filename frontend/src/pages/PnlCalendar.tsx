@@ -14,7 +14,12 @@ type PnlDisplay = 'amount' | 'pct'
 
 export default function PnlCalendar() {
   const { portfolioId } = useAuth()
-  const { formatCurrency } = useSettings()
+  const { convertCurrency } = useSettings()
+
+  function fmt(v: number): string {
+    const cv = convertCurrency(v)
+    return Math.abs(cv).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  }
   const [viewMode, setViewMode] = useState<ViewMode>('yearly')
   const [pnlDisplay, setPnlDisplay] = useState<PnlDisplay>('amount')
   const [year, setYear] = useState(new Date().getFullYear())
@@ -121,7 +126,7 @@ export default function PnlCalendar() {
           {periodTotalPnl.amt !== 0 && (
             <span className={`text-sm font-bold ${periodTotalPnl.amt >= 0 ? 'text-red-700' : 'text-emerald-700'}`}>
               {pnlDisplay === 'amount'
-                ? `${periodTotalPnl.amt >= 0 ? '+' : ''}${formatCurrency(Math.abs(periodTotalPnl.amt))}`
+                ? `${periodTotalPnl.amt >= 0 ? '+' : ''}${fmt(periodTotalPnl.amt)}`
                 : `${periodTotalPnl.pct >= 0 ? '+' : ''}${periodTotalPnl.pct.toFixed(1)}%`
               }
             </span>
@@ -163,11 +168,14 @@ export default function PnlCalendar() {
                   <div key={i}
                     className="h-24 flex flex-col items-center justify-center rounded-xl text-sm font-medium"
                     style={{ backgroundColor: s.bg }}
-                    title={noData ? MONTHS[i] : `${val >= 0 ? '+' : ''}${val.toFixed(2)}${pnlDisplay === 'pct' ? '%' : ''}`}>
+                    title={noData ? MONTHS[i] : pnlDisplay === 'amount' ? `${val >= 0 ? '+' : '-'}${fmt(val)}` : `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`}>
                     <span className="text-xs text-slate-400">{MONTHS[i]}</span>
                     {!noData && (
                       <span className={`text-lg font-bold mt-1 ${s.text}`}>
-                        {val >= 0 ? '+' : ''}{val.toFixed(pnlDisplay === 'pct' ? 1 : 0)}{pnlDisplay === 'pct' ? '%' : ''}
+                        {pnlDisplay === 'amount'
+                          ? `${val >= 0 ? '+' : '-'}${fmt(val)}`
+                          : `${val >= 0 ? '+' : ''}${val.toFixed(1)}%`
+                        }
                       </span>
                     )}
                   </div>
@@ -189,11 +197,14 @@ export default function PnlCalendar() {
                   <div key={i}
                     className="h-20 flex flex-col items-center justify-center rounded-xl text-xs font-medium"
                     style={{ backgroundColor: s.bg }}
-                    title={val !== 0 ? `${pnlDisplay === 'amount' ? '¥' : ''}${Number(val).toFixed(2)}${pnlDisplay === 'pct' ? '%' : ''}` : ''}>
+                    title={val !== 0 ? (pnlDisplay === 'amount' ? `${val >= 0 ? '+' : '-'}${fmt(val)}` : `${val >= 0 ? '+' : ''}${val.toFixed(2)}%`) : ''}>
                     <span className={`text-base font-bold ${s.text}`}>{dayOfMonth}</span>
                     {val !== 0 && (
                       <span className={`text-sm font-semibold mt-0.5 ${s.text}`}>
-                        {val > 0 ? '+' : ''}{Math.abs(val) < 10 ? val.toFixed(1) : Math.round(val)}{pnlDisplay === 'pct' ? '%' : ''}
+                        {pnlDisplay === 'amount'
+                          ? `${val >= 0 ? '+' : '-'}${fmt(val)}`
+                          : `${val > 0 ? '+' : ''}${Math.abs(val) < 10 ? val.toFixed(1) : Math.round(val)}%`
+                        }
                       </span>
                     )}
                   </div>

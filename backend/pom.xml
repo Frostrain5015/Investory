@@ -72,6 +72,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>com.investory.InvestoryApplication</mainClass>
+                    <jvmArguments>-DsocksProxyHost=127.0.0.1 -DsocksProxyPort=7897</jvmArguments>
                 </configuration>
             </plugin>
         </plugins>

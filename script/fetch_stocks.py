@@ -97,18 +97,14 @@ def upsert_prices(conn, rows: list) -> int:
     """
     if not rows:
         return 0
-    params = [
-        (sid, td, o, c, h, l, v,
-         o, c, h, l, v)
-        for sid, td, o, c, h, l, v in rows
-    ]
     cur = conn.cursor()
     cur.executemany(
         """INSERT INTO stock_prices (stock_id, trade_date, open, close, high, low, volume)
            VALUES (%s, %s, %s, %s, %s, %s, %s)
            ON DUPLICATE KEY UPDATE
-             open=%s, close=%s, high=%s, low=%s, volume=%s""",
-        params,
+             open=VALUES(open), close=VALUES(close), high=VALUES(high),
+             low=VALUES(low), volume=VALUES(volume)""",
+        rows,
     )
     conn.commit()
     n = cur.rowcount

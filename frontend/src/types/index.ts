@@ -2,7 +2,7 @@ export interface Stock {
   id: number
   symbol: string
   name: string
-  market: 'SH' | 'SZ'
+  market: 'SH' | 'SZ' | 'HK' | 'US' | 'JP' | 'KR' | 'GB' | 'DE' | 'FR' | 'TW' | 'SG' | 'IN' | 'AU' | 'CA' | 'BR' | 'IDX' | 'CMD' | 'CCY'
   currency: string
 }
 

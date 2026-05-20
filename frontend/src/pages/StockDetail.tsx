@@ -17,6 +17,8 @@ export default function StockDetail() {
   const [priceData, setPriceData] = useState<PriceData[]>([])
   const [days, setDays] = useState(180)
   const [loading, setLoading] = useState(true)
+  const [watching, setWatching] = useState(false)
+  const [watchId, setWatchId] = useState<number | null>(null)
 
   useEffect(() => {
     if (!symbol || !portfolioId) return
@@ -28,6 +30,12 @@ export default function StockDetail() {
       setData(detail)
       setPriceData(prices)
     }).finally(() => setLoading(false))
+    // Check watchlist status
+    fetch('/investory/api/watchlist', { credentials: 'include' })
+      .then(r => r.json()).then((list: any[]) => {
+        const found = list.find((w: any) => w.symbol === symbol)
+        if (found) { setWatching(true); setWatchId(found.id) }
+      }).catch(() => {})
   }, [symbol, portfolioId, days])
 
   if (loading) {
@@ -52,8 +60,10 @@ export default function StockDetail() {
         <div>
           <div className="flex items-baseline gap-3">
             <h2 className="text-xl font-bold text-slate-900">
-              {(() => { const m: string = stock?.market ?? ''; if (!m) return null; return (
-                <img src={`https://flagcdn.com/${m === 'SH' || m === 'SZ' ? 'cn' : m.toLowerCase()}.svg`}
+              {(() => { const m: string = stock?.market ?? ''; if (!m || m === 'IDX' || m === 'CMD' || m === 'CCY') return null;
+                const flag = m === 'SH' || m === 'SZ' ? 'cn' : m.toLowerCase()
+                return (
+                <img src={`https://flagcdn.com/${flag}.svg`}
                   alt={m} className="w-6 h-4 inline-block align-middle mr-2 rounded-sm" />
               )})()}
               {stock?.name}
@@ -61,7 +71,21 @@ export default function StockDetail() {
             {currentPrice != null && (
               <>
                 <span className={`text-3xl font-bold tabular-nums tracking-tight ${priceUp ? positiveClass : negativeClass}`}>
-                  {stock?.currency === 'CNY' ? '¥' : stock?.currency === 'HKD' ? 'HK$' : '$'}{currentPrice.toFixed(2)}
+                  {(() => {
+                    const sym = stock?.symbol || ''
+                    const mkt = stock?.market || ''
+                    // Commodities / crypto — show USD
+                    if (mkt === 'CMD' || mkt === 'CCY') return '$'
+                    // Markets that contain only indices (no individual stocks)
+                    if (mkt === 'JP' || mkt === 'KR' || mkt === 'GB' || mkt === 'DE' || mkt === 'FR'
+                        || mkt === 'TW' || mkt === 'SG' || mkt === 'IN' || mkt === 'AU' || mkt === 'CA'
+                        || mkt === 'BR' || mkt === 'IDX') return ''
+                    // The 9 index symbols inside SH/SZ/HK/US markets
+                    if (sym === '000001.SH' || sym === '399001.SZ' || sym === '399006.SZ'
+                        || sym === 'HSI.HK' || sym === 'HSCE.HK' || sym === 'HSTECH.HK'
+                        || sym === 'GSPC.US' || sym === 'DJI.US' || sym === 'IXIC.US') return ''
+                    return stock?.currency === 'CNY' ? '¥' : stock?.currency === 'HKD' ? 'HK$' : '$'
+                  })()}{currentPrice.toFixed(2)}
                 </span>
                 {changePct != null && (
                   <span className={`text-lg font-semibold tabular-nums ${changePct >= 0 ? positiveClass : negativeClass}`}>
@@ -83,19 +107,24 @@ export default function StockDetail() {
         <button onClick={async () => {
           const sym = params.get('symbol')
           if (!sym) return
-          const stocks = await searchStocks(sym)
-          if (stocks.length > 0) {
-            const form = new URLSearchParams({ stockId: stocks[0].id })
-            await fetch('/investory/api/watchlist', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
-            alert('已加入自选')
+          if (watching && watchId) {
+            await fetch(`/investory/api/watchlist/${stock?.id}`, { method: 'DELETE', credentials: 'include' })
+            setWatching(false); setWatchId(null)
+          } else {
+            const stocks = await searchStocks(sym)
+            if (stocks.length > 0) {
+              const form = new URLSearchParams({ stockId: stocks[0].id })
+              await fetch('/investory/api/watchlist', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
+              setWatching(true)
+            }
           }
         }}
-          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors">
-          添加自选
+          className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border text-xs font-medium transition-colors ${watching ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+          {watching ? '删除自选' : '添加自选'}
         </button>
         <Link to="/transactions/add"
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
-          买入/卖出
+          添加交易
         </Link>
       </div>
 
@@ -151,7 +180,7 @@ export default function StockDetail() {
                   label={{ value: `摊薄 ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
               )}
               <Tooltip />
-              <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} isAnimationActive={false} />
+              <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
               {transactions.map(t => (
                 <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={Number(t.price)}
                   r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}

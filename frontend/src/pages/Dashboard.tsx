@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
+import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
+import { useToast } from '@/components/Toast'
 import { useSettings } from '@/hooks/use-settings'
 import { chartAPI } from '@/services/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -27,6 +29,7 @@ const COLORS = ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8'
 export default function Dashboard() {
   const { portfolioId } = useAuth()
   const { positiveClass, negativeClass, positiveHex, negativeHex, formatCurrency, convertCurrency } = useSettings()
+  const toast = useToast()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0 })
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
@@ -38,7 +41,7 @@ export default function Dashboard() {
   const [refreshing, setRefreshing] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
+  const loadDashboard = useCallback(() => {
     if (!portfolioId) return
     Promise.all([
       getDashboard(),
@@ -59,6 +62,13 @@ export default function Dashboard() {
     }).catch((e) => console.error('Dashboard load error:', e))
     .finally(() => setLoading(false))
   }, [portfolioId, cumulativeDays])
+
+  useEffect(() => { loadDashboard() }, [loadDashboard])
+
+  const [lastRefresh, markRefreshed] = useTimedRefresh(() => {
+    fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' })
+    loadDashboard()
+  })
 
   useEffect(() => {
     if (!portfolioId) return
@@ -83,13 +93,22 @@ export default function Dashboard() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">{portfolioName || '总览'}</h2>
-        {snapshots.length > 0 && (
-          <button disabled={refreshing}
-            onClick={async () => { setRefreshing(true); await fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }); setTimeout(() => setRefreshing(false), 5000) }}
-            className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-50">
-            {refreshing ? '刷新中...' : '刷新行情'}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {lastRefresh && (
+            <span className="text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>
+          )}
+          {snapshots.length > 0 && (
+            <button disabled={refreshing}
+              onClick={async () => { setRefreshing(true); try { await fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }); toast('行情已刷新', true); loadDashboard() } catch { toast('刷新失败', false) } setRefreshing(false); markRefreshed() }}
+              className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-50">
+              {refreshing ? '刷新中...' : '刷新行情'}
+            </button>
+          )}
+          <Link to="/transactions/add"
+            className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
+            添加交易
+          </Link>
+        </div>
       </div>
 
       {snapshots.length === 0 ? (
@@ -101,7 +120,7 @@ export default function Dashboard() {
               </svg>
             </div>
             <h3 className="text-lg font-semibold text-slate-900 mb-2">开始你的投资之旅</h3>
-            <p className="text-sm text-slate-500 mb-6">添加第一笔交易记录，盈亏鉴将为你追踪持仓、计算盈亏。</p>
+            <p className="text-sm text-slate-500 mb-6">添加第一笔交易记录，Investory 将为你追踪持仓、计算盈亏。</p>
             <Link to="/transactions/add"
               className="inline-flex items-center gap-2 h-10 px-6 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
               添加第一笔交易
@@ -191,7 +210,7 @@ export default function Dashboard() {
                 return String(Math.round(cv))
               }} />
               <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
-              <Area type="monotone" dataKey="value" stroke={cumUp ? positiveHex : negativeHex} fill="url(#colorValue)" strokeWidth={2} isAnimationActive={false} />
+              <Area type="monotone" dataKey="value" stroke={cumUp ? positiveHex : negativeHex} fill="url(#colorValue)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>
@@ -282,12 +301,8 @@ export default function Dashboard() {
       {/* Holdings table */}
       {snapshots.length > 0 ? (
         <Card>
-          <CardHeader className="flex-row items-center justify-between">
+          <CardHeader>
             <CardTitle className="text-base">持仓明细</CardTitle>
-            <Link to="/transactions/add"
-              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
-              买入
-            </Link>
           </CardHeader>
           <CardContent className="p-0">
             <div className="overflow-auto">

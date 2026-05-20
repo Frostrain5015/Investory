@@ -20,61 +20,64 @@ import java.util.concurrent.*;
 @RequestMapping("/api/market")
 public class MarketIndexController {
 
+    // JVM SOCKS proxy configured via pom.xml spring-boot.run.jvmArguments
     private final HttpClient http = HttpClient.newHttpClient();
 
     @GetMapping("/indices")
-    public List<Map<String, Object>> getIndices() {
-        ExecutorService ex = Executors.newFixedThreadPool(21);
+    public Map<String, Object> getIndices() {
+        ExecutorService ex = Executors.newFixedThreadPool(25);
         List<Future<Map<String, Object>>> futures = new ArrayList<>();
-        // China → Shanghai
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 31.23, 121.47)));
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 31.23, 121.47)));
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 31.23, 121.47)));
-        // Hong Kong → 香港
-        futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 22.30, 114.17)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 22.30, 114.17)));
-        futures.add(ex.submit(() -> fetchYahooIndex("HSTECH.HK",  "恒生科技",  "HK", 22.30, 114.17)));
-        // US → San Francisco (Silicon Valley)
-        futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 37.77, -122.42)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 37.77, -122.42)));
-        futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 37.77, -122.42)));
-        // Japan → Tokyo
-        futures.add(ex.submit(() -> fetchYahooIndex("^N225",      "日经225",   "JP", 35.68, 139.76)));
-        // Korea → Seoul
-        futures.add(ex.submit(() -> fetchYahooIndex("^KS11",      "韩国KOSPI", "KR", 37.57, 126.98)));
-        // UK → London
-        futures.add(ex.submit(() -> fetchYahooIndex("^FTSE",      "富时100",   "GB", 51.51, -0.13)));
-        // Germany → Berlin
-        futures.add(ex.submit(() -> fetchYahooIndex("^GDAXI",     "德国DAX",   "DE", 52.52, 13.40)));
-        // France → Paris
-        futures.add(ex.submit(() -> fetchYahooIndex("^FCHI",      "法国CAC40", "FR", 48.86, 2.35)));
-        // Taiwan → Taipei
-        futures.add(ex.submit(() -> fetchYahooIndex("^TWII",      "台湾加权",   "TW", 25.03, 121.57)));
-        // Singapore
-        futures.add(ex.submit(() -> fetchYahooIndex("^STI",       "新加坡STI", "SG", 1.35, 103.82)));
-        // India → New Delhi
-        futures.add(ex.submit(() -> fetchYahooIndex("^BSESN",     "印度SENSEX","IN", 28.61, 77.23)));
-        // Australia → Canberra
-        futures.add(ex.submit(() -> fetchYahooIndex("^AXJO",      "澳洲ASX200","AU", -35.28, 149.13)));
-        // Canada → Toronto
-        futures.add(ex.submit(() -> fetchYahooIndex("^GSPTSE",    "加拿大TSX", "CA", 43.65, -79.38)));
-        // Brazil → Brasília
-        futures.add(ex.submit(() -> fetchYahooIndex("^BVSP",      "巴西Bovespa","BR", -15.80, -47.86)));
+        // ── Country indices ──────────────────────────────────────────
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 31.23, 121.47, "000001.SH")));
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 31.23, 121.47, "399001.SZ")));
+        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 31.23, 121.47, "399006.SZ")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 22.30, 114.17, "HSI.HK")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 22.30, 114.17, "HSCE.HK")));
+        futures.add(ex.submit(() -> fetchYahooIndex("HSTECH.HK",  "恒生科技",  "HK", 22.30, 114.17, "HSTECH.HK")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 40.71, -74.01, "GSPC.US")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 40.71, -74.01, "DJI.US")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 40.71, -74.01, "IXIC.US")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^N225",      "日经225",   "JP", 35.68, 139.76, "N225.JP")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^KS11",      "韩国KOSPI", "KR", 37.57, 126.98, "KS11.KR")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^FTSE",      "富时100",   "GB", 52.70, -1.80, "FTSE.GB")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^GDAXI",     "德国DAX",   "DE", 52.52, 13.40, "GDAXI.DE")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^FCHI",      "法国CAC40", "FR", 47.50, 4.00, "FCHI.FR")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^TWII",      "台湾加权",   "TW", 25.03, 121.57, "TWII.TW")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^STI",       "新加坡STI", "SG", 1.35, 103.82, "STI.SG")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^BSESN",     "印度SENSEX","IN", 28.61, 77.23, "BSESN.IN")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^AXJO",      "澳洲ASX200","AU", -35.28, 149.13, "AXJO.AU")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^GSPTSE",    "加拿大TSX", "CA", 49.28, -123.12, "GSPTSE.CA")));
+        futures.add(ex.submit(() -> fetchYahooIndex("^BVSP",      "巴西Bovespa","BR", -15.80, -47.86, "BVSP.BR")));
+        // ── Global indicators ───────────────────────────────────────
+        futures.add(ex.submit(() -> fetchYahooIndicator("DX-Y.NYB", "美元指数",  "DXY.IDX")));
+        futures.add(ex.submit(() -> fetchYahooIndicator("GC=F",     "黄金/美元", "XAU.CMD")));
+        futures.add(ex.submit(() -> fetchYahooIndicator("BTC-USD",  "比特币/美元","BTC.CCY")));
+        futures.add(ex.submit(() -> fetchYahooIndicator("CL=F",     "WTI 原油",  "CL.CMD")));
 
-        List<Map<String, Object>> result = new ArrayList<>();
+        List<Map<String, Object>> indices = new ArrayList<>();
+        List<Map<String, Object>> indicators = new ArrayList<>();
+        int i = 0;
         for (Future<Map<String, Object>> f : futures) {
-            try { result.add(f.get(4, TimeUnit.SECONDS)); } catch (Exception ignored) {}
+            try {
+                if (i < 20) indices.add(f.get(4, TimeUnit.SECONDS));
+                else indicators.add(f.get(4, TimeUnit.SECONDS));
+            } catch (Exception ignored) {}
+            i++;
         }
         ex.shutdownNow();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("indices", indices);
+        result.put("indicators", indicators);
         return result;
     }
 
-    private Map<String, Object> fetchSinaIndex(String code, String name, String flag, double lat, double lng) {
+    private Map<String, Object> fetchSinaIndex(String code, String name, String flag, double lat, double lng, String symbol) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", name);
         m.put("flag", flag);
         m.put("lat", lat);
         m.put("lng", lng);
+        m.put("symbol", symbol);
         try {
             String url = "https://hq.sinajs.cn/list=" + code;
             HttpRequest req = HttpRequest.newBuilder(URI.create(url))
@@ -93,19 +96,46 @@ public class MarketIndexController {
         return m;
     }
 
-    private Map<String, Object> fetchYahooIndex(String symbol, String name, String flag, double lat, double lng) {
+    private Map<String, Object> fetchYahooIndex(String symbol, String name, String flag, double lat, double lng, String dbSymbol) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", name);
         m.put("flag", flag);
         m.put("lat", lat);
         m.put("lng", lng);
+        m.put("symbol", dbSymbol);
         try {
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
             java.net.URL u = new java.net.URL(url);
+            // HttpURLConnection respects JVM -DsocksProxyHost / -DsocksProxyPort
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
             conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-            conn.setConnectTimeout(5000);
-            conn.setReadTimeout(5000);
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            String body = new String(conn.getInputStream().readAllBytes());
+            conn.disconnect();
+            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+            JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
+                .get(0).getAsJsonObject().getAsJsonObject("meta");
+            BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
+            BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
+            m.put("price", price);
+            m.put("change", price.subtract(prev));
+            m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+        } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
+        return m;
+    }
+
+    private Map<String, Object> fetchYahooIndicator(String yfSymbol, String name, String dbSymbol) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", name);
+        m.put("symbol", dbSymbol);
+        try {
+            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + yfSymbol + "?range=1d&interval=5m";
+            java.net.URL u = new java.net.URL(url);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
             String body = new String(conn.getInputStream().readAllBytes());
             conn.disconnect();
             JsonObject root = JsonParser.parseString(body).getAsJsonObject();

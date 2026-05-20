@@ -65,9 +65,10 @@ public class HoldingService {
             if (recent.size() >= 2 && price != null) {
                 BigDecimal prevClose = recent.get(recent.size() - 2).getClose();
                 if (prevClose != null && prevClose.compareTo(BigDecimal.ZERO) > 0) {
-                    BigDecimal change = price.subtract(prevClose);
-                    snap.setChangeToday(change);
-                    snap.setChangePctToday(change.divide(prevClose, 4, java.math.RoundingMode.HALF_UP)
+                    BigDecimal changePerShare = price.subtract(prevClose);
+                    BigDecimal changeValue = changePerShare.multiply(h.getTotalShares()).setScale(2, java.math.RoundingMode.HALF_UP);
+                    snap.setChangeToday(changeValue);
+                    snap.setChangePctToday(changePerShare.divide(prevClose, 4, java.math.RoundingMode.HALF_UP)
                             .multiply(new BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP));
                 }
             }

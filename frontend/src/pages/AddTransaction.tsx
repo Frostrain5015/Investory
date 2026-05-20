@@ -14,10 +14,11 @@ export default function AddTransaction() {
   const [stocks, setStocks] = useState<StockSearchItem[]>([])
   const [selectedStock, setSelectedStock] = useState<StockSearchItem | null>(null)
   const [showDropdown, setShowDropdown] = useState(false)
-  const [type, setType] = useState<'BUY' | 'SELL'>('BUY')
+  const [type, setType] = useState<'BUY' | 'SELL' | 'DIV'>('BUY')
   const [shares, setShares] = useState('')
   const [price, setPrice] = useState('')
   const [fee, setFee] = useState('')
+  const [dividendPerShare, setDividendPerShare] = useState('')
   const [tradeDate, setTradeDate] = useState(new Date().toISOString().slice(0, 10))
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -48,17 +49,27 @@ export default function AddTransaction() {
     e.preventDefault()
     if (!selectedStock) return
     setSubmitting(true)
-    const form = new URLSearchParams({
-      stockId: String(selectedStock.id), type, shares, price,
-      fee: fee || '', tradeDate, note: note || ''
-    })
-    const method = editId ? 'PUT' : 'POST'
-    const url = editId ? `/investory/api/transactions/${editId}` : '/investory/api/transactions'
-    await fetch(url, {
-      method, credentials: 'include',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: form.toString(),
-    })
+    if (type === 'DIV') {
+      const form = new URLSearchParams({
+        stockId: String(selectedStock.id), amountPerShare: dividendPerShare, recordDate: tradeDate,
+      })
+      await fetch('/investory/api/dividends', {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      })
+    } else {
+      const form = new URLSearchParams({
+        stockId: String(selectedStock.id), type, shares, price,
+        fee: fee || '', tradeDate, note: note || ''
+      })
+      const url = editId ? `/investory/api/transactions/${editId}` : '/investory/api/transactions'
+      await fetch(url, {
+        method: editId ? 'PUT' : 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: form.toString(),
+      })
+    }
     navigate('/transactions')
   }
 
@@ -93,38 +104,59 @@ export default function AddTransaction() {
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1.5">操作类型</label>
               <div className="flex gap-2">
-                {['BUY', 'SELL'].map(t => (
-                  <button key={t} type="button" onClick={() => setType(t as 'BUY' | 'SELL')}
-                    className={`flex-1 h-10 rounded-xl text-sm font-medium transition-colors ${type === t ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                    {t === 'BUY' ? '买入' : '卖出'}
+                {([
+                  ['BUY', '买入'],
+                  ['SELL', '卖出'],
+                  ['DIV', '股息/分红'],
+                ] as const).map(([val, label]) => (
+                  <button key={val} type="button" onClick={() => setType(val)}
+                    className={`flex-1 h-10 rounded-xl text-sm font-medium transition-colors ${type === val ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                    {label}
                   </button>
                 ))}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">股数</label>
-                <input type="number" step="any" value={shares} onChange={e => setShares(e.target.value)} required
-                  className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+            {type === 'DIV' ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">每股分红</label>
+                  <input type="number" step="any" value={dividendPerShare} onChange={e => setDividendPerShare(e.target.value)} required
+                    className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1.5">登记日期</label>
+                  <input type="date" value={tradeDate} onChange={e => setTradeDate(e.target.value)} required
+                    className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">价格</label>
-                <input type="number" step="any" value={price} onChange={e => setPrice(e.target.value)} required
-                  className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">手续费</label>
-                <input type="number" step="any" value={fee} onChange={e => setFee(e.target.value)}
-                  className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">交易日期</label>
-                <input type="date" value={tradeDate} onChange={e => setTradeDate(e.target.value)} required
-                  className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
-              </div>
-            </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">股数</label>
+                    <input type="number" step="any" value={shares} onChange={e => setShares(e.target.value)} required
+                      className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">价格</label>
+                    <input type="number" step="any" value={price} onChange={e => setPrice(e.target.value)} required
+                      className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">手续费</label>
+                    <input type="number" step="any" value={fee} onChange={e => setFee(e.target.value)}
+                      className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1.5">交易日期</label>
+                    <input type="date" value={tradeDate} onChange={e => setTradeDate(e.target.value)} required
+                      className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+                  </div>
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1.5">备注</label>
               <input type="text" value={note} onChange={e => setNote(e.target.value)}

@@ -51,10 +51,6 @@ export default function Transactions() {
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
             添加交易
           </Link>
-          <Link to="/dividends/add"
-            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border border-slate-200 text-slate-700 text-xs font-medium hover:bg-slate-50 transition-colors">
-            添加分红
-          </Link>
         </div>
       </div>
       <Card>

@@ -11,9 +11,8 @@ import { displaySymbol } from '@/lib/format'
 
 const navItems = [
   { to: '/dashboard', icon: LayoutDashboard, label: '总览' },
-  { to: '/market',    icon: TrendingUp,       label: '大盘' },
-  { to: '/watchlist', icon: Search,           label: '自选' },
-  { to: '/holdings', icon: Wallet, label: '持仓' },
+  { to: '/market',    icon: TrendingUp,       label: '市场' },
+  { to: '/holdings', icon: Wallet, label: '自选' },
   { to: '/transactions', icon: ArrowRightLeft, label: '交易' },
   { to: '/pnl-calendar', icon: CalendarDays, label: '盈亏日历' },
 ]
@@ -40,7 +39,7 @@ export default function Layout() {
           <div className="w-8 h-8 rounded-lg bg-emerald-500 flex items-center justify-center">
             <TrendingUp className="w-5 h-5 text-white" />
           </div>
-          <span className="text-lg font-bold text-white tracking-tight">盈亏鉴</span>
+          <span className="text-lg font-bold text-white tracking-tight">Investory</span>
         </a>
 
         <nav className="flex-1 px-3 py-4 space-y-0.5">

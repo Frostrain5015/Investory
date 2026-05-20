@@ -40,9 +40,9 @@ public class CrawlerScheduler {
         runScript("fetch_stocks.py", "港股", "-m", "hk");
     }
 
-    // ── US: 05:00 Tue-Sat (Yahoo Finance) ───────────────────────────
+    // ── US: 09:00 Tue-Sat (Yahoo Finance) ───────────────────────────
 
-    @Scheduled(cron = "0 0 5 * * TUE-SAT", zone = "Asia/Shanghai")
+    @Scheduled(cron = "0 0 9 * * TUE-SAT", zone = "Asia/Shanghai")
     public void syncUSStocks() {
         runScript("fetch_stocks.py", "美股", "-m", "us");
     }
