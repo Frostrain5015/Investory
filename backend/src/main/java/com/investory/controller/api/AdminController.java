@@ -86,6 +86,73 @@ public class AdminController {
         return result;
     }
 
+    // ── User management ──────────────────────────────────────────────────
+
+    @GetMapping("/users")
+    public List<Map<String, Object>> getUsers(HttpServletRequest req) {
+        if (!checkAdmin(req)) return List.of(Map.of("error", "unauthorized"));
+        return jdbc.queryForList("""
+            SELECT u.id, u.username, u.email, u.created_at,
+                   (SELECT COUNT(*) FROM transactions t
+                    JOIN portfolios p ON t.portfolio_id = p.id
+                    WHERE p.user_id = u.id) AS txn_count,
+                   (SELECT COUNT(*) FROM portfolios WHERE user_id = u.id) AS portfolio_count
+            FROM users u
+            ORDER BY u.id
+            """);
+    }
+
+    @PostMapping("/impersonate/{userId}")
+    public Map<String, Object> impersonate(@PathVariable long userId, HttpServletRequest req) {
+        if (!checkAdmin(req)) return Map.of("error", "unauthorized");
+        var userRow = jdbc.queryForList(
+            "SELECT id, username FROM users WHERE id = ?", userId);
+        if (userRow.isEmpty()) return Map.of("error", "user not found");
+        var portfolios = jdbc.queryForList(
+            "SELECT id FROM portfolios WHERE user_id = ? ORDER BY id LIMIT 1", userId);
+
+        HttpSession session = req.getSession();
+        session.setAttribute("userId", userId);
+        session.setAttribute("username", userRow.get(0).get("username"));
+        // Keep isAdmin = true so the sidebar nav link stays visible
+        if (!portfolios.isEmpty()) {
+            session.setAttribute("portfolioId", ((Number) portfolios.get(0).get("id")).longValue());
+        }
+        return Map.of("status", "ok", "username", userRow.get(0).get("username"));
+    }
+
+    @DeleteMapping("/users/{userId}")
+    public Map<String, Object> deleteUser(@PathVariable long userId, HttpServletRequest req) {
+        if (!checkAdmin(req)) return Map.of("error", "unauthorized");
+        // Don't allow deleting yourself
+        HttpSession session = req.getSession(false);
+        if (session != null && Long.valueOf(userId).equals(session.getAttribute("userId"))) {
+            return Map.of("error", "不能删除自己");
+        }
+        jdbc.update("DELETE FROM daily_portfolio_value WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM dividends WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM transactions WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM holdings WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM cash_balances WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM portfolios WHERE user_id = ?", userId);
+        jdbc.update("DELETE FROM users WHERE id = ?", userId);
+        return Map.of("status", "ok");
+    }
+
+    @GetMapping("/crawl-history")
+    public List<Map<String, Object>> getCrawlHistory(HttpServletRequest req) {
+        if (!checkAdmin(req)) return List.of(Map.of("error", "unauthorized"));
+        // Latest run per market
+        return jdbc.queryForList("""
+            SELECT m.market, m.started_at, m.ended_at, m.rows_written, m.stocks_failed, m.status
+            FROM crawl_history m
+            INNER JOIN (
+                SELECT market, MAX(id) AS max_id FROM crawl_history GROUP BY market
+            ) latest ON m.id = latest.max_id
+            ORDER BY m.market
+            """);
+    }
+
     @GetMapping("/crawl/{market}")
     public SseEmitter startCrawl(@PathVariable String market,
             @RequestParam(defaultValue = "") String start,

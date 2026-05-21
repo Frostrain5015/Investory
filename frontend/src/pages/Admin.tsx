@@ -1,13 +1,14 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Database, HardDrive, Play, RefreshCw, Terminal, Globe } from 'lucide-react'
+import { Database, HardDrive, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock } from 'lucide-react'
 
 interface MarketStat { market: string; stock_count: number; price_rows: number; latest_date: string; earliest_date: string }
-interface TableStat { table_name: string; data_mb: number; index_mb: number; total_mb: number; table_rows: number }
-interface DbStatus { markets: MarketStat[]; totals: { stock_count: number; price_rows: number }; tables: TableStat[] }
+interface DbStatus { markets: MarketStat[]; totals: { stock_count: number; price_rows: number } }
 interface ProgressData { current: number; total: number; pct: number; name: string }
 interface SseEvent { event: string; msg?: string; current?: number; total?: number; pct?: number; name?: string; market?: string }
+interface UserRow { id: number; username: string; email: string | null; created_at: string; txn_count: number; portfolio_count: number }
+interface CrawlHistoryRow { market: string; started_at: string; ended_at: string; rows_written: number; stocks_failed: number; status: string }
 
 const MARKET_LABELS: Record<string, string> = { SH: 'A股(沪)', SZ: 'A股(深)', HK: '港股', US: '美股' }
 
@@ -24,6 +25,8 @@ export default function Admin() {
   const [doneMsg, setDoneMsg] = useState<string | null>(null)
   const [dateStart, setDateStart] = useState(daysAgoStr(10))
   const [dateEnd, setDateEnd] = useState(todayStr())
+  const [users, setUsers] = useState<UserRow[]>([])
+  const [crawlHistory, setCrawlHistory] = useState<CrawlHistoryRow[]>([])
   const logEndRef = useRef<HTMLDivElement>(null)
 
   const fetchStatus = useCallback(() => {
@@ -34,7 +37,21 @@ export default function Admin() {
       .finally(() => setLoadingStatus(false))
   }, [])
 
-  useEffect(() => { fetchStatus() }, [fetchStatus])
+  const fetchUsers = useCallback(() => {
+    fetch('/investory/api/admin/users', { credentials: 'include' })
+      .then(r => r.json())
+      .then(setUsers)
+      .catch(() => {})
+  }, [])
+
+  const fetchCrawlHistory = useCallback(() => {
+    fetch('/investory/api/admin/crawl-history', { credentials: 'include' })
+      .then(r => r.json())
+      .then(setCrawlHistory)
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => { fetchStatus(); fetchUsers(); fetchCrawlHistory() }, [fetchStatus, fetchUsers, fetchCrawlHistory])
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -83,6 +100,20 @@ export default function Admin() {
     })
   }
 
+  async function impersonate(userId: number) {
+    if (!confirm('确认以该用户身份登录？你可以通过侧栏"管理后台"返回。')) return
+    await fetch(`/investory/api/admin/impersonate/${userId}`, { method: 'POST', credentials: 'include' })
+    window.location.href = '/investory/dashboard'
+  }
+
+  async function deleteUser(userId: number, username: string) {
+    if (!confirm(`确认注销用户 "${username}" 及其所有数据？此操作不可撤销。`)) return
+    const res = await fetch(`/investory/api/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
+    const data = await res.json()
+    if (data.error) { alert(data.error); return }
+    fetchUsers()
+  }
+
   if (!isAdmin) {
     return <div className="flex items-center justify-center h-screen bg-slate-50 text-slate-500">无权限</div>
   }
@@ -90,10 +121,7 @@ export default function Admin() {
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">管理后台</h2>
-          <p className="text-xs text-slate-400 mt-1">数据库状态 & 数据抓取控制</p>
-        </div>
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight">管理后台</h2>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs">
             <input type="date" value={dateStart} onChange={e => setDateStart(e.target.value)}
@@ -107,7 +135,7 @@ export default function Admin() {
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
             <Globe className="w-3.5 h-3.5" />全市场抓取
           </button>
-          <button onClick={fetchStatus} disabled={loadingStatus}
+          <button onClick={() => { fetchStatus(); fetchUsers() }} disabled={loadingStatus}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-100 text-slate-600 text-xs font-medium hover:bg-slate-200 transition-colors">
             <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />刷新
           </button>
@@ -148,47 +176,96 @@ export default function Admin() {
             ))}
           </div>
 
-          {/* Totals */}
           <div className="flex items-center gap-6 text-sm text-slate-500">
             <span className="flex items-center gap-1.5"><Database className="w-3.5 h-3.5" />总股票 {status.totals.stock_count.toLocaleString()} 只</span>
             <span className="flex items-center gap-1.5"><HardDrive className="w-3.5 h-3.5" />K线 {Number(status.totals.price_rows).toLocaleString()} 行</span>
-            <span className="flex items-center gap-1.5">
-              数据库占 {status.tables.reduce((s, t) => s + t.total_mb, 0).toFixed(1)} MB
-            </span>
           </div>
 
-          {/* Tables detail */}
-          <Card>
-            <CardHeader><CardTitle className="text-sm">数据表</CardTitle></CardHeader>
-            <CardContent className="p-0">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-slate-100">
-                    <th className="text-left font-medium text-slate-500 px-4 py-2">表名</th>
-                    <th className="text-right font-medium text-slate-500 px-3 py-2">数据(MB)</th>
-                    <th className="text-right font-medium text-slate-500 px-3 py-2">索引(MB)</th>
-                    <th className="text-right font-medium text-slate-500 px-3 py-2">合计(MB)</th>
-                    <th className="text-right font-medium text-slate-500 px-4 py-2">行数</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {status.tables.map(t => (
-                    <tr key={t.table_name} className="border-b border-slate-50">
-                      <td className="px-4 py-1.5 font-medium text-slate-700">{t.table_name}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{t.data_mb}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums">{t.index_mb}</td>
-                      <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{t.total_mb}</td>
-                      <td className="px-4 py-1.5 text-right tabular-nums">{t.table_rows != null ? Number(t.table_rows).toLocaleString() : '-'}</td>
+          {crawlHistory.length > 0 && (
+            <Card>
+              <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Clock className="w-3.5 h-3.5" />最近定时抓取</CardTitle></CardHeader>
+              <CardContent className="p-0">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      <th className="text-left font-medium text-slate-500 px-4 py-2">市场</th>
+                      <th className="text-left font-medium text-slate-500 px-3 py-2">开始时间</th>
+                      <th className="text-right font-medium text-slate-500 px-3 py-2">写入行</th>
+                      <th className="text-right font-medium text-slate-500 px-3 py-2">失败</th>
+                      <th className="text-center font-medium text-slate-500 px-4 py-2">状态</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </CardContent>
-          </Card>
+                  </thead>
+                  <tbody>
+                    {crawlHistory.map(h => {
+                      const started = h.started_at ? new Date(h.started_at) : null
+                      return (
+                        <tr key={h.market} className="border-b border-slate-50">
+                          <td className="px-4 py-2 font-medium text-slate-700">{MARKET_LABELS[h.market] ?? h.market}</td>
+                          <td className="px-3 py-2 text-slate-400">
+                            {started ? started.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">{Number(h.rows_written).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">{h.stocks_failed}</td>
+                          <td className="px-4 py-2 text-center">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${h.status === 'ok' ? 'bg-emerald-50 text-emerald-600' : h.status === 'running' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
+                              {h.status === 'ok' ? '成功' : h.status === 'running' ? '运行中' : '失败'}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
         </>
       ) : (
         <div className="text-center py-12 text-slate-400 text-sm">加载失败</div>
       )}
+
+      {/* User list */}
+      <Card>
+        <CardHeader><CardTitle className="text-sm">用户管理</CardTitle></CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="border-b border-slate-100">
+                <th className="text-left font-medium text-slate-500 px-4 py-2">ID</th>
+                <th className="text-left font-medium text-slate-500 px-3 py-2">用户名</th>
+                <th className="text-left font-medium text-slate-500 px-3 py-2 hidden sm:table-cell">注册时间</th>
+                <th className="text-right font-medium text-slate-500 px-3 py-2 hidden sm:table-cell">交易数</th>
+                <th className="text-right font-medium text-slate-500 px-4 py-2">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map(u => (
+                <tr key={u.id} className="border-b border-slate-50 hover:bg-slate-50/50">
+                  <td className="px-4 py-2 text-slate-400 tabular-nums">{u.id}</td>
+                  <td className="px-3 py-2 font-medium text-slate-700">{u.username}</td>
+                  <td className="px-3 py-2 text-slate-400 hidden sm:table-cell">{u.created_at?.slice(0, 10)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums hidden sm:table-cell">{Number(u.txn_count).toLocaleString()}</td>
+                  <td className="px-4 py-2 text-right">
+                    <div className="flex items-center gap-1.5 justify-end">
+                      <button onClick={() => impersonate(u.id)}
+                        className="inline-flex items-center gap-1 h-6 px-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 text-[10px] transition-colors">
+                        <LogIn className="w-3 h-3" />登录为
+                      </button>
+                      <button onClick={() => deleteUser(u.id, u.username)}
+                        className="inline-flex items-center gap-1 h-6 px-2 rounded-md bg-red-50 text-red-500 hover:bg-red-100 text-[10px] transition-colors">
+                        <UserX className="w-3 h-3" />注销
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {users.length === 0 && (
+                <tr><td colSpan={5} className="text-center py-8 text-slate-400">加载中...</td></tr>
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
 
       {/* Crawl progress & log */}
       {crawling && (
