@@ -7,6 +7,8 @@ interface IndexData { name: string; flag: string; lat: number; lng: number; pric
 
 interface IndicatorData { name: string; symbol: string; price: number; change: number; changePct: number; fetchedAt?: string }
 
+interface NewsItem { title: string; source: string; url: string; summary: string; category: string; score: number; country_code: string; published_at: string }
+
 const LEADING = ['上证指数', '恒生指数', '标普500']
 
 // Flag → GeoJSON country names + leading index for country coloring
@@ -25,6 +27,32 @@ const COUNTRY_MAP: Record<string, { lead: string; names: string[] }> = {
   BR: { lead: '巴西Bovespa', names: ['Brazil'] },
 }
 
+// [lng, lat] pairs for ECharts geo — first is primary, rest are fallback cities
+// All coords shifted 5° west to correct world.json eastward projection bias
+const NEWS_CITIES: Record<string, [number, number][]> = {
+  US: [[-100.7, 37.1], [-79.0, 40.7], [-123.2, 34.0], [-92.6, 41.9]],
+  CN: [[ 99.2, 35.9], [116.5, 31.2], [111.4, 39.9], [108.3, 23.1]],
+  GB: [[ -6.8, 52.7], [ -5.1, 51.5], [ -8.2, 55.9], [ -6.9, 52.5]],
+  FR: [[ -2.6, 46.6], [ -2.7, 48.9], [  0.4, 43.3]],
+  DE: [[  5.5, 51.2], [  8.4, 52.5], [  3.7, 50.1]],
+  JP: [[133.3, 36.5], [134.7, 35.7], [130.5, 34.7]],
+  AU: [[128.8,-25.7], [146.2,-33.9], [139.9,-37.8]],
+  CA: [[-101.8, 56.1], [-84.4, 43.7], [-128.1, 49.3]],
+  IN: [[ 73.9, 20.6], [ 67.9, 19.1], [ 83.4, 22.6], [72.2, 28.6]],
+  RU: [[ 55.0, 55.7], [ 32.6, 55.7], [ 25.3, 59.9]],
+  UA: [[ 26.2, 49.0], [ 25.5, 50.4]],
+  KR: [[122.8, 36.0], [122.0, 37.6], [124.1, 35.2]],
+  BR: [[-56.9,-14.2], [-51.6,-23.5], [-48.2,-22.9]],
+  IR: [[ 48.7, 32.4], [ 46.4, 35.7]],
+  IL: [[ 30.0, 31.5], [ 29.8, 32.1]],
+  SA: [[ 40.1, 23.9], [ 41.7, 24.7]],
+  TR: [[ 30.2, 39.0], [ 23.9, 41.0]],
+  MX: [[-107.6, 23.6], [-104.1, 19.4]],
+  SG: [[ 98.8,  1.4]],
+  TW: [[116.6, 25.0]],
+  HK: [[109.2, 22.3]],
+}
+
 function hexToRgb(hex: string): [number, number, number] {
   const v = parseInt(hex.slice(1), 16)
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
@@ -40,6 +68,7 @@ export default function Market() {
   const [indices, setIndices] = useState<IndexData[]>([])
   const [indicators, setIndicators] = useState<IndicatorData[]>([])
   const [loading, setLoading] = useState(true)
+  const [news, setNews] = useState<NewsItem[]>([])
   const chartRef = useRef<HTMLDivElement>(null)
 
   const loadIndices = useCallback(() => {
@@ -49,6 +78,9 @@ export default function Market() {
         setIndicators(data.indicators || [])
       })
       .finally(() => setLoading(false))
+    fetch('/investory/api/market/news', { credentials: 'include' })
+      .then(r => r.json()).then(data => setNews(Array.isArray(data) ? data : []))
+      .catch(() => {})
   }, [])
 
   useEffect(() => { loadIndices() }, [loadIndices])
@@ -88,6 +120,27 @@ export default function Market() {
     return Array.from(map.values())
   }, [indices])
 
+  const newsPoints = useMemo(() => {
+    const idxByCountry = new Map<string, number>()
+    return news
+      .filter(n => NEWS_CITIES[n.country_code])
+      .map(n => {
+        const cities = NEWS_CITIES[n.country_code]
+        const idx = idxByCountry.get(n.country_code) || 0
+        idxByCountry.set(n.country_code, idx + 1)
+        const [lng, lat] = cities[idx % cities.length]
+        return {
+          value: [lng, lat],
+          itemStyle: {
+            color: n.category === 'finance' ? '#6366f1' : '#f97316',
+            shadowBlur: 10,
+            shadowColor: n.category === 'finance' ? '#6366f180' : '#f9731680',
+          },
+          url: n.url, title: n.title, source: n.source, category: n.category, country_code: n.country_code,
+        }
+      })
+  }, [news])
+
   useEffect(() => {
     if (!chartRef.current || markers.length === 0) return
     const chart = echarts.init(chartRef.current, null, { renderer: 'svg' })
@@ -100,6 +153,7 @@ export default function Market() {
           backgroundColor: 'transparent',
           tooltip: {
             trigger: 'item',
+            confine: true,
             backgroundColor: '#fff',
             borderColor: '#e2e8f0',
             borderWidth: 1,
@@ -137,31 +191,68 @@ export default function Market() {
             itemStyle: { areaColor: '#f1f5f9', borderColor: '#cbd5e1', borderWidth: 0.5 },
             emphasis: { itemStyle: { areaColor: '#bfdbfe' }, label: { show: false } },
           },
-          series: [{
-            type: 'scatter', coordinateSystem: 'geo',
-            data: markers.map(group => {
-              const leader = group.find(d => LEADING.includes(d.name)) || group[0]
-              const valid = Number(leader.price) !== 0
-              const up = Number(leader.change) >= 0
-              const color = !valid ? '#9ca3af' : up ? positiveHex : negativeHex
-              return {
-                value: [group[0].lng, group[0].lat],
-                itemStyle: {
-                  color,
-                  shadowBlur: valid ? 12 : 0,
-                  shadowColor: valid ? (up ? positiveHex : negativeHex) + '80' : 'transparent',
+          series: [
+            {
+              type: 'scatter', coordinateSystem: 'geo',
+              data: markers.map(group => {
+                const leader = group.find(d => LEADING.includes(d.name)) || group[0]
+                const valid = Number(leader.price) !== 0
+                const up = Number(leader.change) >= 0
+                const color = !valid ? '#9ca3af' : up ? positiveHex : negativeHex
+                return {
+                  value: [group[0].lng, group[0].lat],
+                  itemStyle: {
+                    color,
+                    shadowBlur: valid ? 12 : 0,
+                    shadowColor: valid ? (up ? positiveHex : negativeHex) + '80' : 'transparent',
+                  },
+                }
+              }),
+              symbol: 'circle', symbolSize: 18,
+              emphasis: { scale: 1.6, itemStyle: { shadowBlur: 24 } },
+              label: { show: false },
+            },
+            {
+              type: 'scatter', coordinateSystem: 'geo',
+              data: newsPoints,
+              symbol: 'pin', symbolSize: 22, symbolOffset: [18, 0], z: 10,
+              emphasis: { scale: 1.3 },
+              label: { show: false },
+              tooltip: {
+                confine: true,
+                backgroundColor: '#fff', borderColor: '#e2e8f0',
+                borderWidth: 1, borderRadius: 16, padding: [12, 16],
+                textStyle: { color: '#334155', fontSize: 13 },
+                formatter: (params: any) => {
+                  const d = params.data
+                  const cc = d.category === 'finance' ? '#6366f1' : '#f97316'
+                  const cl = d.category === 'finance' ? '财经' : '地缘'
+                  const flag = (d.country_code || '').toLowerCase()
+                  const nameMap: Record<string, string> = { cn: '中国', hk: '中国香港', us: '美国', jp: '日本', kr: '韩国', gb: '英国', de: '德国', fr: '法国', tw: '中国台湾', sg: '新加坡', in: '印度', au: '澳大利亚', ca: '加拿大', br: '巴西', ua: '乌克兰', ru: '俄罗斯', ir: '伊朗', il: '以色列', tr: '土耳其', mx: '墨西哥', sa: '沙特阿拉伯' }
+                  return `<div style="max-width:300px">
+                    <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                      ${flag ? `<img src=\"https://flagcdn.com/${flag}.svg\" style=\"width:18px;height:12px;border-radius:2px\"/>` : ''}
+                      <span style="background:${cc};color:#fff;font-size:10px;padding:2px 7px;border-radius:4px">${cl}</span>
+                      <span style="font-size:10px;color:#64748b">${nameMap[d.country_code?.toLowerCase()] || d.country_code || ''}</span>
+                    </div>
+                    <div style="font-size:12px;font-weight:600;color:#1e293b;line-height:1.5;word-break:break-word;white-space:normal">${d.title}</div>
+                    <div style="font-size:11px;color:#94a3b8;margin-top:4px">${d.source}</div>
+                    <div style="font-size:10px;color:#3b82f6;margin-top:3px">点击查看原文 →</div>
+                  </div>`
                 },
-              }
-            }),
-            symbol: 'circle', symbolSize: 18,
-            emphasis: { scale: 1.6, itemStyle: { shadowBlur: 24 } },
-            label: { show: false },
-          }],
+              },
+            },
+          ],
         })
 
-        // Click on country → navigate to leading index detail page
+        // Click on country → navigate to leading index detail page; click on news pin → open URL
         chart.off('click')
         chart.on('click', (params: any) => {
+          if (params.seriesType === 'scatter' && params.seriesIndex === 1) {
+            const url = params.data?.url
+            if (url) window.open(url, '_blank', 'noopener')
+            return
+          }
           let flag: string | null = null
           if (params.seriesType === 'scatter' && params.dataIndex != null) {
             flag = markers[params.dataIndex]?.[0]?.flag
@@ -182,7 +273,7 @@ export default function Market() {
       })
 
     return () => chart.dispose()
-  }, [markers, countryRegions, positiveHex, negativeHex])
+  }, [markers, countryRegions, positiveHex, negativeHex, newsPoints])
 
   if (loading) return <div className="flex items-center justify-center h-screen">
     <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
@@ -221,8 +312,8 @@ export default function Market() {
           })}
         </div>
       )}
-      <div className="flex-1 min-h-0 px-2 pb-2">
-        <div ref={chartRef} className="w-full h-full" />
+      <div className="flex-1 min-h-0 px-2 pb-2 overflow-hidden">
+        <div ref={chartRef} className="w-full h-full" style={{ overflow: 'hidden' }} />
       </div>
     </div>
   )

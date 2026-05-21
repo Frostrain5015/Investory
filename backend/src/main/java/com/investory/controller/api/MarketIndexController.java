@@ -201,4 +201,16 @@ public class MarketIndexController {
                 .get("regularMarketPrice").getAsBigDecimal();
         } catch (Exception e) { return BigDecimal.ZERO; }
     }
+
+    @GetMapping("/news")
+    public List<Map<String, Object>> getNews() {
+        try {
+            return jdbc.queryForList(
+                "SELECT title, source, url, summary, category, score, country_code, published_at " +
+                "FROM world_news WHERE fetched_date = CURDATE() AND country_code IS NOT NULL " +
+                "ORDER BY score DESC LIMIT 20");
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
 }

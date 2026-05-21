@@ -12,9 +12,13 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.logging.Logger;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 /**
  * Schedules daily close-price syncs via external Python scripts.
@@ -68,6 +72,90 @@ public class CrawlerScheduler {
     @Scheduled(cron = "0 0 10 * * *", zone = "Asia/Shanghai")
     public void syncIndices() {
         runScript("fetch_stocks.py", "idx", "指数");
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────
+
+    // ── Exchange Rate Refresh ─────────────────────────────────────────
+
+    @Scheduled(cron = "0 30 9 * * *", zone = "Asia/Shanghai")
+    public void refreshExchangeRates() {
+        BigDecimal usdCny = fetchYahooRate("USDCNY=X");
+        BigDecimal usdHkd = fetchYahooRate("USDHKD=X");
+        if (usdCny == null || usdHkd == null) {
+            log.warning("汇率刷新失败：Yahoo Finance 无响应，保留现有数据");
+            return;
+        }
+        BigDecimal usdPerCny = BigDecimal.ONE.divide(usdCny, 8, RoundingMode.HALF_UP);
+        BigDecimal hkdPerCny = usdHkd.divide(usdCny, 8, RoundingMode.HALF_UP);
+        jdbc.update("DELETE FROM exchange_rates");
+        jdbc.update("INSERT INTO exchange_rates (currency, rate) VALUES ('USD', ?), ('HKD', ?)",
+                usdPerCny, hkdPerCny);
+        log.info(String.format("汇率刷新完成 USD=%.6f HKD=%.6f",
+                usdPerCny.doubleValue(), hkdPerCny.doubleValue()));
+    }
+
+    private BigDecimal fetchYahooRate(String symbol) {
+        try {
+            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
+            java.net.URL u = new java.net.URL(url);
+            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+            conn.setConnectTimeout(8000);
+            conn.setReadTimeout(8000);
+            String body = new String(conn.getInputStream().readAllBytes());
+            conn.disconnect();
+            JsonObject meta = JsonParser.parseString(body).getAsJsonObject()
+                    .getAsJsonObject("chart").getAsJsonArray("result")
+                    .get(0).getAsJsonObject().getAsJsonObject("meta");
+            return meta.get("regularMarketPrice").getAsBigDecimal();
+        } catch (Exception e) {
+            log.warning("fetchYahooRate(" + symbol + ") 失败: " + e.getMessage());
+            return null;
+        }
+    }
+
+    // ── News Sync ─────────────────────────────────────────────────────
+
+    @Scheduled(cron = "0 0 7 * * *", zone = "Asia/Shanghai")
+    public void syncNews() {
+        runScriptNoArgs("fetch_news.py", "news", "世界新闻");
+    }
+
+    private void runScriptNoArgs(String filename, String marketCode, String label) {
+        File script = new File(SCRIPT_DIR, filename);
+        if (!script.exists()) {
+            log.warning(label + " script not found: " + script.getAbsolutePath());
+            return;
+        }
+        log.info("Starting " + label + " sync: " + filename);
+        LocalDateTime startedAt = LocalDateTime.now();
+        jdbc.update("INSERT INTO crawl_history (market, started_at, status) VALUES (?, ?, 'running')",
+                marketCode, startedAt);
+        long historyId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+
+        StringBuilder logTail = new StringBuilder();
+        String status = "error";
+        try {
+            ProcessBuilder pb = new ProcessBuilder(pythonExecutable, script.getAbsolutePath());
+            pb.directory(script.getParentFile());
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(p.getInputStream(), "UTF-8"))) {
+                String line;
+                while ((line = reader.readLine()) != null) logTail.append(line).append("\n");
+            }
+            status = p.waitFor() == 0 ? "ok" : "error";
+        } catch (Exception e) {
+            logTail.append("Error: ").append(e.getMessage());
+            log.warning(label + " sync error: " + e.getMessage());
+        }
+
+        String tail = logTail.toString();
+        if (tail.length() > 2000) tail = tail.substring(tail.length() - 2000);
+        jdbc.update("UPDATE crawl_history SET ended_at=?, rows_written=0, stocks_failed=0, status=?, log_tail=? WHERE id=?",
+                LocalDateTime.now(), status, tail, historyId);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────

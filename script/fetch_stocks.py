@@ -692,10 +692,10 @@ _INDICES = [
     ('sina','sh000001','000001.SH','上证指数','SH','CNY'),
     ('sina','sz399001','399001.SZ','深证成指','SZ','CNY'),
     ('sina','sz399006','399006.SZ','创业板指','SZ','CNY'),
-    # 香港 — Yahoo
+    # 香港 — Yahoo / akshare (HSTECH: yfinance 无历史数据，改用 akshare 东方财富)
     ('yf','^HSI','HSI.HK','恒生指数','HK','HKD'),
     ('yf','^HSCE','HSCE.HK','国企指数','HK','HKD'),
-    ('yf','^HSTECH','HSTECH.HK','恒生科技','HK','HKD'),
+    ('ak','HSTECH','HSTECH.HK','恒生科技','HK','HKD'),
     # 美国 — Yahoo
     ('yf','^GSPC','GSPC.US','标普500','US','USD'),
     ('yf','^DJI','DJI.US','道琼斯工业','US','USD'),
@@ -808,10 +808,58 @@ def fetch_indices(cfg: dict, start: str, end: str, dry_run: bool, log: logging.L
                 continue
         return rows
 
+    def fetch_ak(symbol, start, end):
+        """akshare 东方财富港股指数日K线 (专用于 HSTECH 等 yfinance 无历史数据的指数)
+        东方财富为国内直连，调用前临时清除代理环境变量。
+        """
+        try:
+            import akshare as ak
+        except ImportError:
+            log.error("缺少依赖: pip install akshare")
+            return []
+        _proxy_keys = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy")
+        _saved = {k: os.environ.pop(k, None) for k in _proxy_keys}
+        try:
+            df = ak.stock_hk_index_daily_em(symbol=symbol)
+        finally:
+            for k, v in _saved.items():
+                if v is not None:
+                    os.environ[k] = v
+            if df.empty:
+                return []
+            rows = []
+            for _, row in df.iterrows():
+                try:
+                    d = row["date"].strftime("%Y-%m-%d")
+                    if not (start <= d <= end):
+                        continue
+                    o = round(float(row["open"]), 4)
+                    c = round(float(row["latest"]), 4)
+                    h = round(float(row["high"]), 4)
+                    l = round(float(row["low"]), 4)
+                    if any(math.isnan(x) for x in [o, c, h, l]):
+                        continue
+                    rows.append((d, o, c, h, l, 0))  # akshare HK指数不含成交量
+                except (ValueError, KeyError):
+                    continue
+            return rows
+        except Exception as e:
+            log.warning(f"akshare 抓取 {symbol} 失败: {e}")
+            return []
+
+    def _fetch_index(src, ticker, start, end):
+        if src == "yf":
+            return fetch_yf(ticker, start, end)
+        if src == "sina":
+            return fetch_sina(ticker, start, end)
+        if src == "ak":
+            return fetch_ak(ticker, start, end)
+        return []
+
     if dry_run:
         log.info(f"[dry-run] 测试 {len(_INDICES)} 个指数 K 线请求")
         for src, ticker, db_sym, name, mkt, cur in _INDICES[:5]:
-            rows = fetch_yf(ticker, start, end) if src == 'yf' else fetch_sina(ticker, start, end)
+            rows = _fetch_index(src, ticker, start, end)
             log.info(f"  {name}({db_sym}) → {len(rows)} 行")
         return
 
@@ -824,7 +872,7 @@ def fetch_indices(cfg: dict, start: str, end: str, dry_run: bool, log: logging.L
             errors += 1
             continue
         try:
-            rows = fetch_yf(ticker, start, end) if src == 'yf' else fetch_sina(ticker, start, end)
+            rows = _fetch_index(src, ticker, start, end)
             if rows:
                 db_rows = [(sid, r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
                 n = upsert_prices(conn, db_rows)
