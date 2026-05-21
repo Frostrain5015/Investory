@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Database, HardDrive, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock } from 'lucide-react'
 
 interface MarketStat { market: string; stock_count: number; price_rows: number; latest_date: string; earliest_date: string }
-interface DbStatus { markets: MarketStat[]; totals: { stock_count: number; price_rows: number } }
+interface DbStatus { markets: MarketStat[]; totals: { stock_count: number; price_rows: number }; tables: { total_mb: number }[] }
 interface ProgressData { current: number; total: number; pct: number; name: string }
 interface SseEvent { event: string; msg?: string; current?: number; total?: number; pct?: number; name?: string; market?: string }
 interface UserRow { id: number; username: string; email: string | null; created_at: string; txn_count: number; portfolio_count: number }
@@ -179,6 +179,7 @@ export default function Admin() {
           <div className="flex items-center gap-6 text-sm text-slate-500">
             <span className="flex items-center gap-1.5"><Database className="w-3.5 h-3.5" />总股票 {status.totals.stock_count.toLocaleString()} 只</span>
             <span className="flex items-center gap-1.5"><HardDrive className="w-3.5 h-3.5" />K线 {Number(status.totals.price_rows).toLocaleString()} 行</span>
+            <span className="flex items-center gap-1.5"><HardDrive className="w-3.5 h-3.5" />{status.tables.reduce((s, t) => s + (t.total_mb || 0), 0).toFixed(0)} MB</span>
           </div>
 
           {crawlHistory.length > 0 && (
