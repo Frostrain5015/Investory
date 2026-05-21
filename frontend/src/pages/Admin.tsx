@@ -69,23 +69,38 @@ export default function Admin() {
     const eventSource = new EventSource(`/investory/api/admin/crawl/${market}?start=${dateStart}&end=${dateEnd}`)
 
     eventSource.addEventListener('status', (e) => {
+      bump()
       const d: SseEvent = JSON.parse(e.data)
       setLogs(prev => [...prev, `[状态] ${d.msg}`])
     })
     eventSource.addEventListener('progress', (e) => {
+      bump()
       const d: SseEvent = JSON.parse(e.data)
       setProgress({ current: d.current!, total: d.total!, pct: d.pct!, name: d.name! })
-      setLogs(prev => [...prev, `[${d.current}/${d.total} ${d.pct}%] ${d.name}`])
     })
     eventSource.addEventListener('info', (e) => {
+      bump()
       const d: SseEvent = JSON.parse(e.data)
       setLogs(prev => [...prev, `[信息] ${d.msg}`])
     })
     eventSource.addEventListener('log', (e) => {
+      bump()
       const d: SseEvent = JSON.parse(e.data)
       setLogs(prev => [...prev, d.msg!])
     })
+    let lastEventTime = Date.now()
+    const bump = () => { lastEventTime = Date.now() }
+    const heartbeat = setInterval(() => {
+      if (Date.now() - lastEventTime > 15000) {
+        setLogs(prev => [...prev, '✗ 连接超时'])
+        setCrawling(null)
+        eventSource.close()
+        clearInterval(heartbeat)
+      }
+    }, 3000)
+
     eventSource.addEventListener('done', (e) => {
+      clearInterval(heartbeat)
       const d: SseEvent = JSON.parse(e.data)
       setDoneMsg(d.msg!)
       setLogs(prev => [...prev, `✓ ${d.msg}`])
@@ -94,13 +109,8 @@ export default function Admin() {
       fetchStatus()
       eventSource.close()
     })
-    eventSource.addEventListener('error', (e) => {
-      let msg = '连接错误'
-      try { msg = JSON.parse((e as any).data)?.msg || msg } catch {}
-      setLogs(prev => [...prev, `✗ ${msg}`])
-      setCrawling(null)
-      eventSource.close()
-    })
+
+    eventSource.onerror = () => { /* ignore — EventSource auto-reconnects */ }
   }
 
   async function impersonate(userId: number) {

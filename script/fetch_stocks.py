@@ -100,7 +100,7 @@ def get_conn(cfg: dict):
     return pymysql.connect(
         host=cfg["db_host"],
         port=cfg["db_port"],
-        db=cfg["db_name"],
+        database=cfg["db_name"],
         user=cfg["db_user"],
         password=cfg["db_password"],
         charset="utf8mb4",
@@ -870,6 +870,14 @@ def main():
             log.error(f"DB 连接失败: {e}")
             log.error("请检查 config.ini 中的数据库配置，或使用 --dry-run 跳过 DB 验证")
             sys.exit(1)
+
+    # 管理后台手动抓取时清除断点，确保从头开始
+    if args.start and not args.dry_run:
+        for m in ["a", "hk", "us", "idx"]:
+            cf = CHECKPOINT_DIR / f"{m}.txt"
+            if cf.exists():
+                cf.unlink()
+                log.info(f"已清除 {m} 断点续传记录")
 
     t0 = time.time()
 
