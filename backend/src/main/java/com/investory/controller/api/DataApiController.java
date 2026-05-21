@@ -201,6 +201,32 @@ public class DataApiController {
 
     // ── Transactions ────────────────────────────────────────────────────────
 
+    @GetMapping("/transactions/{id}")
+    public Map<String, Object> getTransaction(@PathVariable long id, HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        Transaction t = transactionDao.findById(id);
+        if (t == null || t.getPortfolioId() != portfolioId) return Map.of("error", "Not found");
+        String currency = null;
+        if (t.getStockId() != null && t.getStockId() > 0) {
+            Stock s = stockDao.findById(t.getStockId());
+            currency = s != null ? s.getCurrency() : "CNY";
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id",            t.getId());
+        m.put("stockId",       t.getStockId());
+        m.put("stockName",     t.getStockName());
+        m.put("stockSymbol",   t.getStockSymbol());
+        m.put("stockMarket",   t.getStockMarket());
+        m.put("currency",      currency);
+        m.put("date",          t.getTradeDate().toString());
+        m.put("type",          t.getType());
+        m.put("shares",        t.getShares());
+        m.put("price",         t.getPrice());
+        m.put("fee",           t.getFee());
+        m.put("note",          t.getNote());
+        return m;
+    }
+
     @GetMapping("/transactions")
     public List<Map<String, Object>> getTransactions(HttpServletRequest req) {
         long portfolioId = getPortfolioId(req);

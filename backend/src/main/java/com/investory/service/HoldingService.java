@@ -88,10 +88,11 @@ public class HoldingService {
             snap.setTotalInvested(h.getTotalInvested().multiply(rate).setScale(2, RoundingMode.HALF_UP));
             snap.setTotalDividends(h.getTotalDividends().multiply(rate).setScale(2, RoundingMode.HALF_UP));
 
-            java.time.LocalDate yesterday = java.time.LocalDate.now().minusDays(7);
-            java.util.List<StockPrice> recent = stockPriceDao.findRange(h.getStockId(), yesterday, java.time.LocalDate.now());
-            if (recent.size() >= 2 && price != null) {
-                BigDecimal prevClose = recent.get(recent.size() - 2).getClose();
+            // Last trading day's close from DB (the most recent close before today's live price)
+            StockPrice latestInDb = stockPriceDao.findLatest(h.getStockId());
+            if (latestInDb != null && latestInDb.getClose() != null && price != null
+                    && latestInDb.getClose().compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal prevClose = latestInDb.getClose();
                 if (prevClose != null && prevClose.compareTo(BigDecimal.ZERO) > 0) {
                     BigDecimal changePerShare = price.subtract(prevClose);
                     BigDecimal changeValue = changePerShare.multiply(h.getTotalShares()).multiply(rate).setScale(2, RoundingMode.HALF_UP);

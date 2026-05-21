@@ -31,6 +31,7 @@ export default function AddTransaction() {
   const [selectedStock, setSelectedStock] = useState<StockSearchItem | null>(null)
   const [showDropdown, setShowDropdown] = useState(false)
   const [type, setType] = useState<TxType>(initType)
+  const [txStockId, setTxStockId] = useState<number>(0)
   const [currency, setCurrency] = useState('CNY')
   const [shares, setShares] = useState('')
   const [price, setPrice] = useState('')
@@ -52,19 +53,22 @@ export default function AddTransaction() {
 
   useEffect(() => {
     if (!editId) return
-    fetch(`/investory/api/transactions`, { credentials: 'include' })
+    fetch(`/investory/api/transactions/${editId}`, { credentials: 'include' })
       .then(r => r.json())
-      .then(items => {
-        const item = items.find((i: { id: number }) => i.id === Number(editId))
-        if (!item) return
+      .then(item => {
+        if (!item || item.error) return
         setType(item.type)
+        setTxStockId(item.stockId || 0)
         setShares(String(item.shares || ''))
         setPrice(String(item.price || ''))
         setFee(String(item.fee || ''))
         setTradeDate(item.date)
         setNote(item.note || '')
-        setStockQuery(item.stockName)
-        setSelectedStock({ id: '0', symbol: item.stockSymbol, name: item.stockName, market: '', currency: 'CNY', price: 0 })
+        setCurrency(item.currency || 'CNY')
+        if (item.stockSymbol) {
+          setStockQuery(item.stockName || '')
+          setSelectedStock({ id: String(item.stockId || 0), symbol: item.stockSymbol, name: item.stockName, market: item.stockMarket || '', currency: item.currency || 'CNY', price: 0 })
+        }
       })
   }, [editId])
 
@@ -97,7 +101,7 @@ export default function AddTransaction() {
       })
     } else if (selectedStock) {
       const form = new URLSearchParams({
-        stockId: String(selectedStock.id), type, shares, price,
+        stockId: String(editId ? txStockId : selectedStock.id), type, shares, price,
         fee: fee || '', tradeDate, note: note || ''
       })
       const url = editId ? `/investory/api/transactions/${editId}` : '/investory/api/transactions'

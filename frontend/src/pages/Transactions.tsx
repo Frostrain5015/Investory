@@ -109,8 +109,14 @@ export default function Transactions() {
                           {item.type === 'DIV' && '+'}{amount}
                         </td>
                         <td className="pr-6 text-right">
-                          <button onClick={() => handleDelete(item.id, item.type)}
-                            className="text-xs text-slate-400 hover:text-red-500 transition-colors">删除</button>
+                          <div className="flex items-center gap-2 justify-end">
+                            {item.type !== 'DIV' && (
+                              <Link to={`/transactions/add?edit=${item.id}`}
+                                className="text-xs text-slate-400 hover:text-blue-500 transition-colors">编辑</Link>
+                            )}
+                            <button onClick={() => handleDelete(item.id, item.type)}
+                              className="text-xs text-slate-400 hover:text-red-500 transition-colors">删除</button>
+                          </div>
                         </td>
                       </tr>
                     )

@@ -33,6 +33,15 @@ public class TransactionDao extends BaseDao {
         return t;
     }
 
+    public Transaction findById(long id) {
+        List<Transaction> result = query("""
+            SELECT t.*, s.name AS stock_name, s.symbol AS stock_symbol, s.market AS stock_market
+            FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
+            WHERE t.id = ?
+            """, this::map, id);
+        return result.isEmpty() ? null : result.get(0);
+    }
+
     public List<Transaction> findByPortfolio(long portfolioId) {
         return query("""
             SELECT t.*, s.name AS stock_name, s.symbol AS stock_symbol, s.market AS stock_market
