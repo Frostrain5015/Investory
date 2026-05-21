@@ -89,6 +89,7 @@ def clear_checkpoint(market: str):
 def setup_logging(verbose: bool) -> logging.Logger:
     fmt   = "[%(asctime)s] %(levelname)s %(message)s"
     level = logging.DEBUG if verbose else logging.INFO
+    sys.stdout.reconfigure(line_buffering=True)  # flush per line when piped to Java ProcessBuilder
     logging.basicConfig(format=fmt, datefmt="%H:%M:%S", level=level, stream=sys.stdout)
     return logging.getLogger("fetch")
 
@@ -131,10 +132,33 @@ def upsert_prices(conn, rows: list) -> int:
     return n
 
 
+def build_skip_set(conn, stock_ids: list, start: str, end: str) -> set:
+    """
+    一次 SQL 查出 [start, end] 范围内已有完整数据的 stock_id 集合。
+    判定标准：MAX(trade_date) >= end 往前推 3 天（兼容周末/节假日）。
+    """
+    if not stock_ids:
+        return set()
+    threshold = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=3)).strftime("%Y-%m-%d")
+    fmt = ",".join(["%s"] * len(stock_ids))
+    cur = conn.cursor()
+    cur.execute(
+        f"SELECT stock_id FROM stock_prices "
+        f"WHERE stock_id IN ({fmt}) AND trade_date >= %s "
+        f"GROUP BY stock_id HAVING MAX(trade_date) >= %s",
+        stock_ids + [start, threshold],
+    )
+    skip = {row[0] for row in cur.fetchall()}
+    cur.close()
+    return skip
+
+
 # ─── A股 (BaoStock) ───────────────────────────────────────────────────────────
 
-def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.Logger) -> None:
-    log.info(f"=== A股 (BaoStock) | {start} ~ {end} ===")
+def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.Logger,
+                   market_filter: str | None = None, checkpoint_key: str = "a") -> None:
+    label = {"SH": "沪市", "SZ": "深市"}.get(market_filter, "沪深")
+    log.info(f"=== A股/{label} (BaoStock) | {start} ~ {end} ===")
 
     try:
         import baostock as bs
@@ -142,6 +166,10 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
     except ImportError:
         log.error("缺少依赖: pip install baostock pandas")
         return
+
+    # BaoStock connects to Chinese mainland servers — must not go through any proxy
+    for _k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
+        os.environ.pop(_k, None)
 
     lg = bs.login()
     if lg.error_code != "0":
@@ -160,8 +188,9 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
             raw.append(rs.get_row_data())
         df = pd.DataFrame(raw, columns=rs.fields)
 
+        prefix = {"SH": ("sh.",), "SZ": ("sz.",)}.get(market_filter, ("sh.", "sz."))
         df = df[
-            df["code"].str.startswith(("sh.", "sz.")) &
+            df["code"].str.startswith(prefix) &
             (df["type"] == "1") &
             (df["outDate"] == "")
         ].copy()
@@ -198,7 +227,10 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
         total     = len(df)
         total_rows = 0
         errors    = []
-        checkpoint = load_checkpoint("a")
+        skip_ids  = set() if dry_run else build_skip_set(conn, list(df["stock_id"].astype(int)), start, end)
+        if skip_ids:
+            log.info(f"已有完整数据，跳过 {len(skip_ids)} 只，剩余 {total - len(skip_ids)} 只")
+        checkpoint = load_checkpoint(checkpoint_key)
         skipped    = checkpoint is not None
 
         for seq, (_, row) in enumerate(df.iterrows(), 1):
@@ -209,6 +241,9 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
                 if bs_code != checkpoint:
                     continue
                 skipped = False
+                continue
+
+            if not dry_run and stock_id in skip_ids:
                 continue
 
             rs2 = bs.query_history_k_data_plus(
@@ -243,13 +278,13 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
                 n = upsert_prices(conn, price_rows)
                 total_rows += n
 
-            save_checkpoint("a", bs_code)
+            save_checkpoint(checkpoint_key, bs_code)
             pct = seq / total * 100
             log.info(f"  [{seq}/{total} {pct:.1f}%] {row['name']}({bs_code}) → {n}行")
             time.sleep(cfg["delay_a"])
 
-        clear_checkpoint("a")
-        log.info(f"A股完成: 写入 {total_rows} 行，失败 {len(errors)} 只")
+        clear_checkpoint(checkpoint_key)
+        log.info(f"A股/{label}完成: 写入 {total_rows} 行，失败 {len(errors)} 只")
         for sym, nm, msg in errors[:10]:
             log.warning(f"  ✗ {sym} {nm}: {msg}")
         if len(errors) > 10:
@@ -396,6 +431,9 @@ def fetch_hk_stocks(
     cur.close()
     log.info(f"DB 中港股: {len(stocks)} 只")
 
+    skip_ids = build_skip_set(conn, [s[0] for s in stocks], start, end)
+    if skip_ids:
+        log.info(f"已有完整数据，跳过 {len(skip_ids)} 只，剩余 {len(stocks) - len(skip_ids)} 只")
     total_rows = 0
     no_data    = 0
     checkpoint = load_checkpoint("hk")
@@ -408,6 +446,9 @@ def fetch_hk_stocks(
             if code5d != checkpoint:
                 continue
             skipped = False
+            continue
+
+        if stock_id in skip_ids:
             continue
 
         # Yahoo Finance HK ticker: 4-digit zero-padded format (00001 → 0001.HK)
@@ -508,12 +549,16 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
 
     conn   = None if dry_run else get_conn(cfg)
     id_map: dict[str, int] = {}  # symbol(.US) → stock_id
+    skip_ids: set = set()
 
     if not dry_run:
         cur = conn.cursor()
         cur.execute("SELECT id, symbol FROM stocks WHERE market='US'")
         id_map = {row[1]: row[0] for row in cur.fetchall()}
         cur.close()
+        skip_ids = build_skip_set(conn, list(id_map.values()), start, end)
+        if skip_ids:
+            log.info(f"已有完整数据，跳过 {len(skip_ids)} 只")
         # DB 有记录就用 DB，否则用内置列表（以 DB 为主，避免重复抓取无人关注的股票）
         tickers = list(_US_TICKERS_BUILTIN)
     else:
@@ -587,6 +632,9 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
         stock_id = ensure_stock(ticker)
         if stock_id is None:
             errors.append((ticker, "无法获取 stock_id"))
+            continue
+
+        if not dry_run and stock_id in skip_ids:
             continue
 
         try:
@@ -803,9 +851,9 @@ def parse_args():
     )
     p.add_argument(
         "-m", "--market",
-        choices=["a", "hk", "us", "idx", "all", "auto"],
+        choices=["a", "sh", "sz", "hk", "us", "idx", "all", "auto"],
         default="auto",
-        help="抓取市场 (默认: auto，按当前时间自动判断)",
+        help="抓取市场 (默认: auto，按当前时间自动判断；sh/sz 单独抓沪/深)",
     )
     p.add_argument(
         "--days", type=int, default=None,
@@ -851,10 +899,11 @@ def main():
         end   = datetime.today().strftime("%Y-%m-%d")
 
     market = args.market if args.market != "auto" else auto_market()
-    do_a   = market in ("a",  "all")
+    do_sh  = market in ("sh", "a", "all")
+    do_sz  = market in ("sz", "a", "all")
     do_hk  = market in ("hk", "all")
     do_us  = market in ("us", "all")
-    do_idx = market in ("idx","all")
+    do_idx = market in ("idx", "all")
 
     mode = "[DRY-RUN] " if args.dry_run else ""
     log.info(f"{mode}抓取市场: {market.upper()} | 区间: {start} ~ {end}")
@@ -871,18 +920,18 @@ def main():
             log.error("请检查 config.ini 中的数据库配置，或使用 --dry-run 跳过 DB 验证")
             sys.exit(1)
 
-    # 管理后台手动抓取时清除断点，确保从头开始
-    if args.start and not args.dry_run:
-        for m in ["a", "hk", "us", "idx"]:
-            cf = CHECKPOINT_DIR / f"{m}.txt"
-            if cf.exists():
-                cf.unlink()
-                log.info(f"已清除 {m} 断点续传记录")
-
     t0 = time.time()
 
-    if do_a:
-        fetch_a_shares(cfg, start, end, args.dry_run, log)
+    if do_sh and do_sz:
+        # 沪深一起抓，checkpoint key = "a"（与定时任务兼容）
+        fetch_a_shares(cfg, start, end, args.dry_run, log,
+                       market_filter=None, checkpoint_key="a")
+    elif do_sh:
+        fetch_a_shares(cfg, start, end, args.dry_run, log,
+                       market_filter="SH", checkpoint_key="sh")
+    elif do_sz:
+        fetch_a_shares(cfg, start, end, args.dry_run, log,
+                       market_filter="SZ", checkpoint_key="sz")
 
     if do_hk:
         fetch_hk_stocks(cfg, start, end, args.dry_run, args.discover, log)

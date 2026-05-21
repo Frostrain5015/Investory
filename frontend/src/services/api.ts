@@ -138,7 +138,9 @@ export function deletePortfolio(id: number): Promise<Response> {
 // ── Charts ─────────────────────────────────────────────────────────────
 
 export const chartAPI = {
-  price(symbol: string, days: number): Promise<PriceData[]> {
+  price(symbol: string, days: number, start?: string, end?: string): Promise<PriceData[]> {
+    if (start && end)
+      return request<PriceData[]>(`/api/chart?type=price&symbol=${encodeURIComponent(symbol)}&start=${start}&end=${end}`)
     return request<PriceData[]>(`/api/chart?type=price&symbol=${encodeURIComponent(symbol)}&days=${days}`)
   },
   allocation(portfolioId: number): Promise<AllocationItem[]> {
@@ -147,7 +149,9 @@ export const chartAPI = {
   pnlCalendar(portfolioId: number, year: number): Promise<PnlCalendarItem[]> {
     return request<PnlCalendarItem[]>(`/api/chart?type=pnl_calendar&portfolioId=${portfolioId}&year=${year}`)
   },
-  cumulativeReturn(portfolioId: number, days: number): Promise<CumulativeReturnItem[]> {
+  cumulativeReturn(portfolioId: number, days: number, start?: string, end?: string): Promise<CumulativeReturnItem[]> {
+    if (start && end)
+      return request<CumulativeReturnItem[]>(`/api/chart?type=cumulative_return&portfolioId=${portfolioId}&start=${start}&end=${end}`)
     return request<CumulativeReturnItem[]>(`/api/chart?type=cumulative_return&portfolioId=${portfolioId}&days=${days}`)
   },
 }

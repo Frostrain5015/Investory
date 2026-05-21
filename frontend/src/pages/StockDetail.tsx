@@ -14,8 +14,13 @@ export default function StockDetail() {
   const { portfolioId } = useAuth()
   const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
   const [data, setData] = useState<StockDetailResponse | null>(null)
+  type Period = '1M' | '6M' | '1Y' | 'all' | 'custom'
+  interface ChartParams { days: number; start?: string; end?: string }
   const [priceData, setPriceData] = useState<PriceData[]>([])
-  const [days, setDays] = useState(730)
+  const [period, setPeriod] = useState<Period>('1Y')
+  const [chartParams, setChartParams] = useState<ChartParams>({ days: 365 })
+  const [customStart, setCustomStart] = useState('')
+  const [customEnd, setCustomEnd] = useState('')
   const [loading, setLoading] = useState(true)
   const [watching, setWatching] = useState(false)
   const [watchId, setWatchId] = useState<number | null>(null)
@@ -25,7 +30,7 @@ export default function StockDetail() {
     setLoading(true)
     Promise.all([
       getStockDetail(symbol),
-      chartAPI.price(symbol, days),
+      chartAPI.price(symbol, chartParams.days, chartParams.start, chartParams.end),
     ]).then(([detail, prices]) => {
       setData(detail)
       setPriceData(prices)
@@ -36,7 +41,7 @@ export default function StockDetail() {
         const found = list.find((w: any) => w.symbol === symbol)
         if (found) { setWatching(true); setWatchId(found.id) }
       }).catch(() => {})
-  }, [symbol, portfolioId, days])
+  }, [symbol, portfolioId, chartParams])
 
   if (loading) {
     return <div className="flex items-center justify-center h-96"><div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /></div>
@@ -178,15 +183,40 @@ export default function StockDetail() {
 
       {/* Price chart */}
       <Card>
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader className="flex-row items-center justify-between flex-wrap gap-y-2">
           <CardTitle className="text-base">股价走势</CardTitle>
-          <div className="flex items-center gap-1">
-            {[30, 180, 365, 730].map(d => (
-              <button key={d} onClick={() => setDays(d)}
-                className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${days === d ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                {d === 30 ? '1M' : d === 180 ? '6M' : d === 365 ? '1Y' : '2Y'}
-              </button>
-            ))}
+          <div className="flex items-center gap-2 flex-wrap gap-y-1.5">
+            <div className="flex items-center gap-1">
+              {(['1M', '6M', '1Y', '全部', '自定义'] as const).map(label => {
+                const p: Period = label === '全部' ? 'all' : label === '自定义' ? 'custom' : label as Period
+                return (
+                  <button key={label} onClick={() => {
+                    setPeriod(p)
+                    if (p !== 'custom') {
+                      const daysMap: Record<string, number> = { '1M': 30, '6M': 180, '1Y': 365, 'all': 0 }
+                      setChartParams({ days: daysMap[p] ?? 365 })
+                    }
+                  }}
+                    className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${period === p ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                    {label}
+                  </button>
+                )
+              })}
+            </div>
+            {period === 'custom' && (
+              <div className="flex items-center gap-1.5">
+                <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)}
+                  className="h-7 px-2 rounded-md border border-slate-200 text-xs text-slate-700 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400" />
+                <span className="text-xs text-slate-400">—</span>
+                <input type="date" value={customEnd} onChange={e => setCustomEnd(e.target.value)}
+                  className="h-7 px-2 rounded-md border border-slate-200 text-xs text-slate-700 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400" />
+                <button onClick={() => { if (customStart && customEnd) setChartParams({ days: 0, start: customStart, end: customEnd }) }}
+                  disabled={!customStart || !customEnd}
+                  className="h-7 px-2.5 rounded-md bg-slate-900 text-white text-xs font-medium disabled:opacity-40 hover:bg-slate-700 transition-colors">
+                  查询
+                </button>
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -200,8 +230,8 @@ export default function StockDetail() {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
               <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8"
-                tickFormatter={(v: string) => days <= 180 ? v.substring(5) : v.substring(0, 7)}
-                interval={days <= 60 ? 0 : 'preserveStartEnd'} />
+                tickFormatter={(v: string) => period === '1M' ? v.substring(5) : v.substring(0, 7)}
+                interval="preserveStartEnd" />
               <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" domain={['auto', 'auto']} />
               {holding?.dilutedCost && Number(holding.dilutedCost) > 0 && (
                 <ReferenceLine y={Number(holding.dilutedCost)} stroke="#0ea5e9" strokeDasharray="6 4" strokeWidth={1.5}

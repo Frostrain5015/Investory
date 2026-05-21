@@ -60,6 +60,10 @@ export default function Admin() {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [logs])
 
+  function marketToScript(market: string): string {
+    return market.toLowerCase()  // sh/sz/hk/us/idx pass through directly
+  }
+
   function startCrawl(market: string) {
     setCrawling(market)
     setProgress(null)
@@ -110,6 +114,14 @@ export default function Admin() {
       eventSource.close()
     })
 
+    eventSource.addEventListener('error', (e) => {
+      bump()
+      const d: SseEvent = JSON.parse((e as MessageEvent).data)
+      setLogs(prev => [...prev, `✗ ${d.msg}`])
+      setCrawling(null)
+      eventSource.close()
+      clearInterval(heartbeat)
+    })
     eventSource.onerror = () => { /* ignore — EventSource auto-reconnects */ }
   }
 
@@ -157,7 +169,7 @@ export default function Admin() {
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
             <Globe className="w-3.5 h-3.5" />全市场抓取
           </button>
-          <button onClick={() => { fetchStatus(); fetchUsers() }} disabled={loadingStatus}
+          <button onClick={() => { fetchStatus(); fetchUsers(); fetchCrawlHistory() }} disabled={loadingStatus}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-100 text-slate-600 text-xs font-medium hover:bg-slate-200 transition-colors">
             <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />刷新
           </button>
@@ -178,7 +190,7 @@ export default function Admin() {
                       <img src={`https://flagcdn.com/${MARKET_FLAGS[m.market] ?? m.market}.svg`} alt="" className="w-4 h-3 rounded-sm" />
                       {MARKET_LABELS[m.market] ?? m.market}
                     </span>
-                    <button onClick={() => startCrawl(m.market.toLowerCase())}
+                    <button onClick={() => startCrawl(marketToScript(m.market))}
                       disabled={crawling !== null}
                       className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-slate-900 text-white text-[10px] font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
                       <Play className="w-3 h-3" />抓取

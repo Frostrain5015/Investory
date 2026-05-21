@@ -59,17 +59,20 @@ public class HoldingService {
             snap.setCurrency(stock.getCurrency());
             snap.setTotalShares(h.getTotalShares());
 
+            // Fetch T-1 and T-2 closes once; reused for both price fallback and change calculation
+            List<StockPrice> latestTwo = stockPriceDao.findLatestTwo(h.getStockId());
+            StockPrice t1 = latestTwo.size() > 0 ? latestTwo.get(0) : null;
+            StockPrice t2 = latestTwo.size() > 1 ? latestTwo.get(1) : null;
+
             // Get price (before any conversion)
             Quote quote = quoteService.getQuote(stock);
-            BigDecimal price = quote != null ? quote.price() : null;
-            if (quote != null) {
-                snap.setPriceTimestamp(quote.fetchedAt().toString()); // ISO-8601 → "实时 HH:mm"
-            } else {
-                StockPrice latest = stockPriceDao.findLatest(h.getStockId());
-                if (latest != null) {
-                    price = latest.getClose();
-                    snap.setPriceTimestamp(latest.getTradeDate().toString()); // "YYYY-MM-DD" → "收盘价"
-                }
+            boolean hasLivePrice = quote != null;
+            BigDecimal price = hasLivePrice ? quote.price() : null;
+            if (hasLivePrice) {
+                snap.setPriceTimestamp(quote.fetchedAt().toString());
+            } else if (t1 != null) {
+                price = t1.getClose();
+                snap.setPriceTimestamp(t1.getTradeDate().toString());
             }
             price = price != null ? price : h.getAvgCost();
 
@@ -88,18 +91,17 @@ public class HoldingService {
             snap.setTotalInvested(h.getTotalInvested().multiply(rate).setScale(2, RoundingMode.HALF_UP));
             snap.setTotalDividends(h.getTotalDividends().multiply(rate).setScale(2, RoundingMode.HALF_UP));
 
-            // Last trading day's close from DB (the most recent close before today's live price)
-            StockPrice latestInDb = stockPriceDao.findLatest(h.getStockId());
-            if (latestInDb != null && latestInDb.getClose() != null && price != null
-                    && latestInDb.getClose().compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal prevClose = latestInDb.getClose();
-                if (prevClose != null && prevClose.compareTo(BigDecimal.ZERO) > 0) {
-                    BigDecimal changePerShare = price.subtract(prevClose);
-                    BigDecimal changeValue = changePerShare.multiply(h.getTotalShares()).multiply(rate).setScale(2, RoundingMode.HALF_UP);
-                    snap.setChangeToday(changeValue);
-                    snap.setChangePctToday(changePerShare.divide(prevClose, 4, RoundingMode.HALF_UP)
-                            .multiply(new BigDecimal("100")).setScale(2, RoundingMode.HALF_UP));
-                }
+            // Today's change:
+            // - Market open (live price available): live vs T-1 close
+            // - Market closed (no live price):       T-1 close vs T-2 close
+            BigDecimal currentForChange = hasLivePrice ? price : (t1 != null ? t1.getClose() : null);
+            BigDecimal prevClose        = hasLivePrice ? (t1 != null ? t1.getClose() : null)
+                                                       : (t2 != null ? t2.getClose() : null);
+            if (currentForChange != null && prevClose != null && prevClose.compareTo(BigDecimal.ZERO) > 0) {
+                BigDecimal changePerShare = currentForChange.subtract(prevClose);
+                snap.setChangeToday(changePerShare.multiply(h.getTotalShares()).multiply(rate).setScale(2, RoundingMode.HALF_UP));
+                snap.setChangePctToday(changePerShare.divide(prevClose, 4, RoundingMode.HALF_UP)
+                        .multiply(new BigDecimal("100")).setScale(2, RoundingMode.HALF_UP));
             }
 
             snapshots.add(snap);

@@ -40,6 +40,8 @@ public class ChartDataController {
     public String chart(@RequestParam(required = false) String type,
                         @RequestParam(required = false) String symbol,
                         @RequestParam(required = false) Integer days,
+                        @RequestParam(required = false) String start,
+                        @RequestParam(required = false) String end,
                         @RequestParam(required = false) Long portfolioId,
                         @RequestParam(required = false) Integer year,
                         HttpServletRequest req, HttpServletResponse resp) throws Exception {
@@ -51,11 +53,11 @@ public class ChartDataController {
         long pid = resolvePortfolioId(portfolioId, session);
         try {
             return switch (type != null ? type : "") {
-                case "price"             -> priceData(symbol, days != null ? days : 180);
+                case "price"             -> priceData(symbol, days != null ? days : 180, start, end);
                 case "allocation"        -> allocationData(pid);
                 case "pnl_rank"          -> pnlRankData(pid);
                 case "pnl_calendar"      -> pnlCalendarData(pid, year);
-                case "cumulative_return" -> cumulativeReturnData(pid, days != null ? days : 365);
+                case "cumulative_return" -> cumulativeReturnData(pid, days != null ? days : 365, start, end);
                 default -> "{\"error\":\"unknown type\"}";
             };
         } catch (Exception e) {
@@ -64,11 +66,23 @@ public class ChartDataController {
         }
     }
 
-    private String priceData(String symbol, int days) {
+    private String priceData(String symbol, int days, String startStr, String endStr) {
         Stock stock = stockDao.findBySymbol(symbol);
         if (stock == null) return "[]";
-        LocalDate to   = LocalDate.now();
-        LocalDate from = to.minusDays(days);
+        LocalDate to, from;
+        if (startStr != null && endStr != null) {
+            from = LocalDate.parse(startStr);
+            to   = LocalDate.parse(endStr);
+        } else if (days == 0) {
+            to = LocalDate.now();
+            java.sql.Date earliest = jdbc.queryForObject(
+                "SELECT MIN(trade_date) FROM stock_prices WHERE stock_id = ?",
+                java.sql.Date.class, stock.getId());
+            from = earliest != null ? earliest.toLocalDate() : to.minusYears(1);
+        } else {
+            to   = LocalDate.now();
+            from = to.minusDays(days);
+        }
         List<StockPrice> prices = stockPriceDao.findRange(stock.getId(), from, to);
         List<Map<String, Object>> result = new ArrayList<>();
         for (StockPrice p : prices) {
@@ -137,9 +151,18 @@ public class ChartDataController {
         return JsonUtil.toJson(result);
     }
 
-    private String cumulativeReturnData(long portfolioId, int days) {
-        LocalDate to   = LocalDate.now();
-        LocalDate from = to.minusDays(days);
+    private String cumulativeReturnData(long portfolioId, int days, String startStr, String endStr) {
+        LocalDate to, from;
+        if (startStr != null && endStr != null) {
+            from = LocalDate.parse(startStr);
+            to   = LocalDate.parse(endStr);
+        } else if (days == 0) {
+            to   = LocalDate.now();
+            from = LocalDate.of(1990, 1, 1); // firstTx guard below will tighten this
+        } else {
+            to   = LocalDate.now();
+            from = to.minusDays(days);
+        }
         List<Map<String, Object>> result = new ArrayList<>();
 
         // Don't show curve before first transaction
@@ -222,11 +245,21 @@ public class ChartDataController {
             divByDate.merge(d.getRecordDate(), d.getTotalAmount(), BigDecimal::add);
         }
 
+        // Pre-load all prices for every stock in the portfolio over [from, to] — one query per stock
+        // instead of one query per (stock × day), reducing N×M SQL calls to N calls.
+        Set<Long> allStockIds = new HashSet<>();
+        for (Map<Long, BigDecimal[]> m : holdingsByDate.values()) allStockIds.addAll(m.keySet());
+        Map<Long, Map<LocalDate, BigDecimal>> priceCache = new HashMap<>();
+        for (Long sid : allStockIds) {
+            Map<LocalDate, BigDecimal> dateMap = new HashMap<>();
+            for (StockPrice p : stockPriceDao.findRange(sid, from, to))
+                dateMap.put(p.getTradeDate(), p.getClose());
+            priceCache.put(sid, dateMap);
+        }
+
         // Walk day by day with time-based holdings, exclude transfers from P&L
         Map<Long, BigDecimal> lastPrice = new HashMap<>();
         Map<Long, BigDecimal[]> currentHolding = null;
-        BigDecimal prevTotal = null;
-        BigDecimal curveValue = null;
         LocalDate cursor = from;
         while (!cursor.isAfter(to)) {
             if (holdingsByDate.containsKey(cursor)) currentHolding = holdingsByDate.get(cursor);
@@ -244,9 +277,7 @@ public class ChartDataController {
                 BigDecimal inv = shInv[1] != null ? shInv[1] : BigDecimal.ZERO;
                 BigDecimal r = stockRate.containsKey(sid) ? stockRate.get(sid) : BigDecimal.ONE;
 
-                BigDecimal close = null;
-                List<StockPrice> prices = stockPriceDao.findRange(sid, cursor, cursor);
-                if (!prices.isEmpty()) close = prices.get(0).getClose();
+                BigDecimal close = priceCache.getOrDefault(sid, Collections.emptyMap()).get(cursor);
                 if (close == null) close = lastPrice.get(sid);
                 if (close != null) {
                     lastPrice.put(sid, close);

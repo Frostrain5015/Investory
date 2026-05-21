@@ -2,6 +2,7 @@ package com.investory.controller.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -174,7 +175,11 @@ public class AdminController {
     public SseEmitter startCrawl(@PathVariable String market,
             @RequestParam(defaultValue = "") String start,
             @RequestParam(defaultValue = "") String end,
-            HttpServletRequest req) {
+            HttpServletRequest req,
+            HttpServletResponse response) {
+        // Tell nginx/CDN not to buffer this streaming response
+        response.setHeader("X-Accel-Buffering", "no");
+        response.setHeader("Cache-Control", "no-cache");
         SseEmitter emitter = new SseEmitter(0L);
 
         if (!checkAdmin(req)) {
@@ -183,21 +188,28 @@ public class AdminController {
             return emitter;
         }
 
-        if (!List.of("a", "hk", "us", "idx", "all").contains(market)) {
+        if (!List.of("a", "sh", "sz", "hk", "us", "idx", "all").contains(market)) {
             emit(emitter, "error", Map.of("msg", "无效市场: " + market));
             emitter.complete();
             return emitter;
         }
 
-        String label = market.equals("all") ? "全市场" : market.toUpperCase();
+        Map<String, String> LABELS = Map.of(
+            "all", "全市场", "a", "A股", "sh", "A股(沪)", "sz", "A股(深)",
+            "hk", "港股", "us", "美股", "idx", "指数"
+        );
+        String label = LABELS.getOrDefault(market, market.toUpperCase());
         // Use custom date range if provided; fallback to 10 days
         final String startDate = start.isBlank() ? java.time.LocalDate.now().minusDays(10).toString() : start;
         final String endDate = end.isBlank() ? java.time.LocalDate.now().toString() : end;
 
+        System.err.println("[SSE] market=" + market + " start=" + startDate + " end=" + endDate + " python=" + pythonExecutable);
         executor.submit(() -> {
             try {
+                System.err.println("[SSE] task started");
                 emit(emitter, "status", Map.of("msg",
                     String.format("启动 %s 抓取 (%s ~ %s)...", label, startDate, endDate), "market", market));
+                System.err.println("[SSE] status emitted");
                 // Try multiple paths: working dir/script (cloud), then ../script (local dev)
                 File script = new File("script/fetch_stocks.py");
                 if (!script.exists()) {
@@ -211,11 +223,12 @@ public class AdminController {
                 File scriptDir = script.getParentFile();
 
                 ProcessBuilder pb = new ProcessBuilder(
-                    pythonExecutable, script.getAbsolutePath(),
+                    pythonExecutable, "-u", script.getAbsolutePath(),
                     "-m", market, "--start", startDate, "--end", endDate
                 );
                 pb.directory(scriptDir);
                 pb.redirectErrorStream(true);
+                pb.environment().put("PYTHONUNBUFFERED", "1");
 
                 Process p = pb.start();
                 try (BufferedReader reader = new BufferedReader(
@@ -257,6 +270,8 @@ public class AdminController {
         try {
             String jsonStr = json.writeValueAsString(data);
             emitter.send(SseEmitter.event().name(event).data(jsonStr));
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            System.err.println("[SSE] emit failed event=" + event + " error=" + e.getMessage());
+        }
     }
 }

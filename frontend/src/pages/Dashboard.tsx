@@ -42,8 +42,13 @@ export default function Dashboard() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
+  type Period = '1M' | '6M' | '1Y' | 'all' | 'custom'
+  interface ChartParams { days: number; start?: string; end?: string }
   const [cumulative, setCumulative] = useState<CumulativeReturnItem[]>([])
-  const [cumulativeDays, setCumulativeDays] = useState(365)
+  const [cumulativePeriod, setCumulativePeriod] = useState<Period>('1Y')
+  const [cumParams, setCumParams] = useState<ChartParams>({ days: 365 })
+  const [cumCustomStart, setCumCustomStart] = useState('')
+  const [cumCustomEnd, setCumCustomEnd] = useState('')
   const [rankMode, setRankMode] = useState<'cumulative' | 'today'>('cumulative')
   const [allocChart, setAllocChart] = useState<'pie' | 'cloud'>('pie')
   const [priceMode, setPriceMode] = useState<'base' | 'native'>('base')
@@ -67,7 +72,7 @@ export default function Dashboard() {
     if (!portfolioId) return
     Promise.all([
       getDashboard(),
-      chartAPI.cumulativeReturn(portfolioId, cumulativeDays),
+      chartAPI.cumulativeReturn(portfolioId, cumParams.days, cumParams.start, cumParams.end),
     ]).then(([dash, cum]) => {
       setSnapshots(dash.snapshots || [])
       setTotals({
@@ -86,7 +91,7 @@ export default function Dashboard() {
       setCumulative(cum || [])
     }).catch((e) => console.error('Dashboard load error:', e))
     .finally(() => setLoading(false))
-  }, [portfolioId, cumulativeDays])
+  }, [portfolioId, cumParams])
 
   useEffect(() => {
     if (!portfolioId) return
@@ -233,17 +238,40 @@ export default function Dashboard() {
 
       {/* Total asset curve */}
       <Card>
-        <CardHeader className="flex-row items-baseline justify-between">
-          <div className="flex items-center gap-3">
+        <CardHeader className="flex-row items-baseline justify-between flex-wrap gap-y-2">
+          <div className="flex items-center gap-3 flex-wrap gap-y-2">
             <CardTitle className="text-base">总资产曲线</CardTitle>
             <div className="flex bg-slate-100 rounded-lg p-0.5">
-              {([30, 180, 365, 730] as const).map(days => (
-                <button key={days} onClick={() => setCumulativeDays(days)}
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${cumulativeDays === days ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-                  {days === 30 ? '1M' : days === 180 ? '6M' : days === 365 ? '1Y' : '2Y'}
-                </button>
-              ))}
+              {(['1M', '6M', '1Y', '全部', '自定义'] as const).map(label => {
+                const p: Period = label === '全部' ? 'all' : label === '自定义' ? 'custom' : label as Period
+                return (
+                  <button key={label} onClick={() => {
+                    setCumulativePeriod(p)
+                    if (p !== 'custom') {
+                      const daysMap: Record<string, number> = { '1M': 30, '6M': 180, '1Y': 365, 'all': 0 }
+                      setCumParams({ days: daysMap[p] ?? 365 })
+                    }
+                  }}
+                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${cumulativePeriod === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                    {label}
+                  </button>
+                )
+              })}
             </div>
+            {cumulativePeriod === 'custom' && (
+              <div className="flex items-center gap-1.5">
+                <input type="date" value={cumCustomStart} onChange={e => setCumCustomStart(e.target.value)}
+                  className="h-7 px-2 rounded-md border border-slate-200 text-xs text-slate-700 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400" />
+                <span className="text-xs text-slate-400">—</span>
+                <input type="date" value={cumCustomEnd} onChange={e => setCumCustomEnd(e.target.value)}
+                  className="h-7 px-2 rounded-md border border-slate-200 text-xs text-slate-700 bg-white focus:outline-none focus:ring-1 focus:ring-slate-400" />
+                <button onClick={() => { if (cumCustomStart && cumCustomEnd) setCumParams({ days: 0, start: cumCustomStart, end: cumCustomEnd }) }}
+                  disabled={!cumCustomStart || !cumCustomEnd}
+                  className="h-7 px-2.5 rounded-md bg-slate-900 text-white text-xs font-medium disabled:opacity-40 hover:bg-slate-700 transition-colors">
+                  查询
+                </button>
+              </div>
+            )}
           </div>
           {cumulative.length > 1 && (() => { const useExTransfer = cumulative[0].valueExTransfer != null; const s = useExTransfer ? Number(cumulative[0].valueExTransfer) : Number(cumulative[0].value); const e = useExTransfer ? Number(cumulative[cumulative.length - 1].valueExTransfer) : Number(cumulative[cumulative.length - 1].value); const chg = e - s; return (
             <span className={`text-lg font-bold tabular-nums tracking-tight ${chg >= 0 ? positiveClass : negativeClass}`}>
@@ -262,7 +290,7 @@ export default function Dashboard() {
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#f1f5f9'} />
               <XAxis dataKey="date" tick={{ fontSize: 11, fill: isDark ? '#64748b' : '#94a3b8' }} stroke={isDark ? '#334155' : '#94a3b8'}
-                tickFormatter={(v: string) => cumulativeDays <= 180 ? v.substring(5) : v} />
+                tickFormatter={(v: string) => cumulativePeriod === '1M' ? v.substring(5) : v.substring(0, 7)} />
               <YAxis tick={{ fontSize: 11, fill: isDark ? '#64748b' : '#94a3b8' }} stroke={isDark ? '#334155' : '#94a3b8'} domain={['auto', 'auto']} tickFormatter={(v: number) => {
                 const cv = convertCurrency(Number(v))
                 if (Math.abs(cv) >= 10000) return (cv / 10000).toFixed(0) + '万'

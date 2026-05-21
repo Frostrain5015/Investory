@@ -11,7 +11,10 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.net.URI;
+import java.time.DayOfWeek;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -37,8 +40,33 @@ public class RealtimeQuoteService {
 
     @Autowired private StockDao stockDao;
 
+    /** Returns true if the given stock's market is currently in a trading session (weekday + session hours). */
+    private boolean isMarketOpen(Stock stock) {
+        String market = stock.getMarket();
+        ZonedDateTime now = switch (market) {
+            case "SH", "SZ" -> ZonedDateTime.now(ZoneId.of("Asia/Shanghai"));
+            case "HK"        -> ZonedDateTime.now(ZoneId.of("Asia/Hong_Kong"));
+            case "US"        -> ZonedDateTime.now(ZoneId.of("America/New_York"));
+            default          -> null;
+        };
+        if (now == null) return false;
+        DayOfWeek day = now.getDayOfWeek();
+        if (day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY) return false;
+        int t = now.getHour() * 60 + now.getMinute();
+        return switch (market) {
+            // A-shares: 09:30-11:30, 13:00-15:00 CST
+            case "SH", "SZ" -> (t >= 570 && t <= 690) || (t >= 780 && t <= 900);
+            // HK: 09:30-12:00, 13:00-16:00 HKT
+            case "HK"        -> (t >= 570 && t <= 720) || (t >= 780 && t <= 960);
+            // US: 09:30-16:00 ET
+            case "US"        -> t >= 570 && t <= 960;
+            default          -> false;
+        };
+    }
+
     /** Get the best available real-time price with fetch timestamp. Returns null if all sources fail. */
     public Quote getQuote(Stock stock) {
+        if (!isMarketOpen(stock)) return null;
         List<Callable<Quote>> tasks = List.of(
             () -> new Quote(fetchFromEastMoney(stock), Instant.now()),
             () -> new Quote(fetchFromSina(stock), Instant.now()),

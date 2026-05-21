@@ -33,6 +33,12 @@ public class StockPriceDao extends BaseDao {
             this::map, stockId);
     }
 
+    public List<StockPrice> findLatestTwo(long stockId) {
+        return query(
+            "SELECT * FROM stock_prices WHERE stock_id = ? ORDER BY trade_date DESC LIMIT 2",
+            this::map, stockId);
+    }
+
     public List<StockPrice> findRange(long stockId, LocalDate from, LocalDate to) {
         return query(
             "SELECT * FROM stock_prices WHERE stock_id = ? AND trade_date BETWEEN ? AND ? ORDER BY trade_date",
