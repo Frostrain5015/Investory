@@ -697,7 +697,7 @@ def main():
     do_us  = market in ("us", "all")
 
     mode = "[DRY-RUN] " if args.dry_run else ""
-    log.info(f"{mode}抓取市场: {market.upper()} | 区间: {start} ~ {end}（近{days_back}天）")
+    log.info(f"{mode}抓取市场: {market.upper()} | 区间: {start} ~ {end}")
 
     if not args.dry_run:
         # 快速验证 DB 连通性，避免抓完数据才发现写不进去
