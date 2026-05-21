@@ -25,12 +25,13 @@ public class StockSearchApiController {
         List<Map<String, Object>> result = new ArrayList<>();
         for (Stock s : stocks) {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id",     s.getId());
-            m.put("symbol", s.getSymbol());
-            m.put("name",   s.getName());
-            m.put("market", s.getMarket());
+            m.put("id",       s.getId());
+            m.put("symbol",   s.getSymbol());
+            m.put("name",     s.getName());
+            m.put("market",   s.getMarket());
+            m.put("currency", s.getCurrency() != null ? s.getCurrency() : "CNY");
             BigDecimal price = stockPriceDao.findLatestClose(s.getId());
-            m.put("price",  price != null ? price : BigDecimal.ZERO);
+            m.put("price",    price != null ? price : BigDecimal.ZERO);
             result.add(m);
         }
         return JsonUtil.toJson(result);

@@ -162,6 +162,7 @@ export interface StockSearchItem {
   symbol: string
   name: string
   market: string
+  currency: string
   price: number
 }
 

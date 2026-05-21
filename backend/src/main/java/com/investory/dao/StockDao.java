@@ -1,6 +1,7 @@
 package com.investory.dao;
 
 import com.investory.model.Stock;
+import com.investory.util.PinyinUtil;
 import org.springframework.stereotype.Repository;
 
 import java.sql.ResultSet;
@@ -29,9 +30,43 @@ public class StockDao extends BaseDao {
     }
 
     public List<Stock> search(String keyword) {
-        String q = "%" + keyword + "%";
-        return query("SELECT * FROM stocks WHERE name LIKE ? OR symbol LIKE ? ORDER BY market, name LIMIT 20",
-                this::map, q, q);
+        String k = keyword.trim();
+        String contains = "%" + k + "%";
+        String starts   = k + "%";
+
+        // Pure ASCII letters → also search pinyin abbreviation column
+        if (k.matches("[a-zA-Z]+")) {
+            String py = k.toLowerCase();
+            String pyStarts   = py + "%";
+            String pyContains = "%" + py + "%";
+            return query("""
+                SELECT * FROM stocks
+                WHERE symbol LIKE ? OR name LIKE ?
+                   OR (name_pinyin IS NOT NULL AND name_pinyin LIKE ?)
+                ORDER BY CASE
+                  WHEN symbol = ?      THEN 1
+                  WHEN symbol LIKE ?   THEN 2
+                  WHEN name   LIKE ?   THEN 3
+                  WHEN name_pinyin LIKE ? THEN 4
+                  WHEN name   LIKE ?   THEN 5
+                  WHEN name_pinyin LIKE ? THEN 6
+                  ELSE 7 END, name LIMIT 8
+                """, this::map,
+                contains, contains, pyContains,
+                k, starts, starts, pyStarts, contains, pyContains);
+        }
+        return query("""
+            SELECT * FROM stocks
+            WHERE symbol LIKE ? OR name LIKE ?
+            ORDER BY CASE
+              WHEN symbol = ?    THEN 1
+              WHEN symbol LIKE ? THEN 2
+              WHEN name   LIKE ? THEN 3
+              WHEN name   LIKE ? THEN 4
+              ELSE 5 END, name LIMIT 8
+            """, this::map,
+            contains, contains,
+            k, starts, starts, contains);
     }
 
     public List<Stock> findAll() {
@@ -41,7 +76,9 @@ public class StockDao extends BaseDao {
     public long upsert(Stock stock) {
         Stock existing = findBySymbol(stock.getSymbol());
         if (existing != null) return existing.getId();
-        return insert("INSERT INTO stocks (symbol, name, market, currency) VALUES (?, ?, ?, ?)",
-                stock.getSymbol(), stock.getName(), stock.getMarket(), stock.getCurrency());
+        String pinyin = PinyinUtil.toAbbr(stock.getName());
+        return insert("INSERT INTO stocks (symbol, name, market, currency, name_pinyin) VALUES (?, ?, ?, ?, ?)",
+                stock.getSymbol(), stock.getName(), stock.getMarket(), stock.getCurrency(),
+                pinyin.isEmpty() ? null : pinyin);
     }
 }

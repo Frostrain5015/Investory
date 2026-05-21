@@ -152,6 +152,17 @@ export const chartAPI = {
   },
 }
 
+// ── Cash balances ──────────────────────────────────────────────────────
+
+export interface CashBalance {
+  currency: string
+  amount: number
+}
+
+export function getCashBalances(): Promise<{ balances: CashBalance[] }> {
+  return request<{ balances: CashBalance[] }>('/api/cash')
+}
+
 // ── Stock search ───────────────────────────────────────────────────────
 
 export function searchStocks(q: string): Promise<StockSearchItem[]> {

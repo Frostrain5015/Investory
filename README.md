@@ -1,6 +1,6 @@
 # 盈亏鉴 Investory
 
-个人股票投资组合管理工具。支持多市场持仓追踪、成本计算、盈亏日历、K 线走势等功能。
+个人股票投资组合管理工具，支持 A 股、港股、美股多市场持仓追踪与盈亏分析。
 
 ## 技术栈
 
@@ -9,100 +9,65 @@
 | 后端 | Java 17, Spring Boot 3.3.5, Spring MVC, JdbcTemplate |
 | 前端 | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts |
 | 数据库 | MySQL 8+ |
-| 数据源 | BaoStock, Yahoo Finance (yfinance), 腾讯财经, 东方财富, 新浪财经 |
-
-## 项目结构
-
-```
-investory/
-├── backend/                     # Spring Boot 后端
-│   ├── pom.xml
-│   └── src/main/java/com/investory/
-│       ├── InvestoryApplication.java
-│       ├── controller/          # REST API 控制器
-│       │   ├── SpaController.java
-│       │   └── api/             # 数据 API
-│       ├── dao/                 # 数据访问层
-│       ├── service/             # 业务逻辑
-│       ├── crawler/             # 数据抓取与调度
-│       ├── model/               # 数据模型
-│       └── web/                 # 拦截器与配置
-├── frontend/                    # React 前端
-│   ├── src/
-│   │   ├── components/          # UI 组件
-│   │   ├── pages/               # 页面
-│   │   ├── hooks/               # React Hooks
-│   │   ├── services/            # API 调用
-│   │   └── lib/                 # 工具函数
-│   └── package.json
-└── script/                      # Python 数据抓取脚本
-    ├── fetch_a_stock.py         # A股（BaoStock）
-    ├── fetch_hk_stock.py        # 港股（腾讯财经）
-    └── fetch_us_stock_yf.py     # 美股（Yahoo Finance）
-```
+| 实时报价 | 东方财富、新浪财经、Yahoo Finance 三源并发 |
+| 历史数据 | BaoStock（A 股）、腾讯财经（港股）、Yahoo Finance（美股）|
 
 ## 功能
 
-- **总览**：总资产曲线、持仓占比（扇形/云图）、盈亏排行
-- **持仓明细**：实时市价、平均/摊薄成本、浮动盈亏
-- **交易记录**：买卖与分红统一时间线，支持增删改
-- **个股详情**：K 线走势、成本线、BS 点标记、国旗标识
-- **盈亏日历**：年度月度视图，金额/涨跌幅切换
-- **组合管理**：多组合创建与切换
-- **设置**：红涨绿跌/绿涨红跌、本位币（CNY/HKD/USD）、账户管理
-- **实时报价**：东财/新浪/Yahoo 三源并发赛马，0.5 秒响应
-- **全市场搜索**：A 股 + 港股 + 美股，5200+ 股票
+### 总览仪表盘
+- 总资产曲线，支持 1M / 3M / 6M / 1Y / 全部 时间范围切换
+- 持仓占比扇形图与词云图
+- 盈亏排行：涨跌幅最大的持仓一览
 
-## 快速开始
+### 持仓明细
+- 实时市价（0.5 秒响应，三数据源赛马取最快）
+- 平均成本、摊薄成本、浮动盈亏金额与百分比
+- 支持 CNY / HKD / USD 统一换算展示
 
-### 环境要求
+### 交易记录
+- 买入、卖出、股息/分红、转入资金、转出资金统一时间线
+- 支持增删改；买入时自动校验现金余额
+- 搜索股票支持拼音缩写（如 `gzmt` → 贵州茅台）
 
-- JDK 17+
-- Node.js 18+
-- MySQL 8+
-- Python 3.10+（数据抓取脚本）
+### 个股详情
+- 日 K 线走势图，叠加成本线
+- 买入/卖出标记点
+- 国旗标识区分市场
 
-### 数据库
+### 盈亏日历
+- 年度 / 月度视图
+- 金额与涨跌幅两种模式切换
 
-创建数据库并导入表结构：
+### 投资组合
+- 创建多个组合并随时切换
+- 每个组合独立记账
 
-```sql
-CREATE DATABASE investory CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-```
+### 设置
+- 颜色偏好：红涨绿跌 / 绿涨红跌
+- 本位币：CNY / HKD / USD
+- 修改密码
 
-表结构参考 `backend/src/main/resources/db/schema.sql`。
+## 使用指南
 
-### 后端配置
+### 第一步：转入资金
 
-编辑 `backend/src/main/resources/application.properties`：
+点击「交易记录」→「添加交易」，选择操作类型「转入」，填写金额与币种，完成初始资金入账。
 
-```properties
-spring.datasource.url=jdbc:mysql://localhost:3306/investory?...
-spring.datasource.username=root
-spring.datasource.password=your_password
-```
+### 第二步：添加买入记录
 
-### 启动
+搜索股票（支持股票代码、中文名称或拼音缩写），选中后填写股数、价格、手续费和交易日期，确认提交。若当前币种现金余额不足，系统会提示先转入资金。
 
-```bash
-# 前端构建 + 后端打包
-cd backend && mvn package -DskipTests
+### 第三步：查看持仓与曲线
 
-# 启动
-java -jar backend/target/investory.jar
-```
+返回首页「总览」查看总资产曲线与持仓占比；点击「持仓」查看每只股票的实时盈亏。
 
-访问 `http://localhost:8080/investory`
+### 卖出 / 股息
 
-### 数据抓取
+与买入操作相同入口，切换操作类型为「卖出」或「股息/分红」。
 
-历史数据导入后，每日收盘价由 Python 脚本自动更新（Java 调度器触发）：
+### 多组合管理
 
-| 脚本 | 时间 | 数据源 |
-|------|------|--------|
-| `fetch_a_stock.py` | 15:30 CST | BaoStock |
-| `fetch_hk_stock.py` | 16:30 CST | 腾讯财经 |
-| `fetch_us_stock_yf.py` | 05:00 CST | Yahoo Finance |
+在「投资组合」页面创建新组合，点击切换后所有数据视角随之切换。
 
 ## License
 

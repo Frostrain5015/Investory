@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { searchStocks } from '@/services/api'
+import { searchStocks, getCashBalances } from '@/services/api'
 import type { StockSearchItem } from '@/types'
 import { displaySymbol } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
+
+const CURRENCY_SYMBOL: Record<string, string> = { CNY: '¥', HKD: 'HK$', USD: '$' }
 
 export default function AddTransaction() {
   const navigate = useNavigate()
@@ -23,6 +25,16 @@ export default function AddTransaction() {
   const [tradeDate, setTradeDate] = useState(new Date().toISOString().slice(0, 10))
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [cashBalances, setCashBalances] = useState<Record<string, number>>({})
+
+  useEffect(() => {
+    getCashBalances().then(r => {
+      const map: Record<string, number> = {}
+      for (const b of r.balances) map[b.currency] = b.amount
+      setCashBalances(map)
+    }).catch(() => {})
+  }, [])
 
   // Load existing transaction for editing
   useEffect(() => {
@@ -30,7 +42,7 @@ export default function AddTransaction() {
     fetch(`/investory/api/transactions`, { credentials: 'include' })
       .then(r => r.json())
       .then(items => {
-        const item = items.find((i: any) => i.id === Number(editId))
+        const item = items.find((i: { id: number }) => i.id === Number(editId))
         if (!item) return
         setType(item.type)
         setShares(String(item.shares || ''))
@@ -39,8 +51,7 @@ export default function AddTransaction() {
         setTradeDate(item.date)
         setNote(item.note || '')
         setStockQuery(item.stockName)
-        // Create a mock selected stock with available fields
-        setSelectedStock({ id: '0', symbol: item.stockSymbol, name: item.stockName, market: '', price: 0 })
+        setSelectedStock({ id: '0', symbol: item.stockSymbol, name: item.stockName, market: '', currency: 'CNY', price: 0 })
       })
   }, [editId])
 
@@ -50,6 +61,7 @@ export default function AddTransaction() {
     e.preventDefault()
     if (type !== 'TRANSFER_IN' && type !== 'TRANSFER_OUT' && !selectedStock) return
     setSubmitting(true)
+    setSubmitError(null)
     if (type === 'TRANSFER_IN' || type === 'TRANSFER_OUT') {
       const form = new URLSearchParams({
         stockId: '0', type, shares, price: '0', tradeDate, currency, note: note || '',
@@ -74,14 +86,35 @@ export default function AddTransaction() {
         fee: fee || '', tradeDate, note: note || ''
       })
       const url = editId ? `/investory/api/transactions/${editId}` : '/investory/api/transactions'
-      await fetch(url, {
+      const res = await fetch(url, {
         method: editId ? 'PUT' : 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString(),
       })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        if (body.error === 'INSUFFICIENT_CASH') {
+          const cur = selectedStock.currency || 'CNY'
+          const sym = CURRENCY_SYMBOL[cur] ?? cur
+          const bal = typeof body.balance === 'number' ? body.balance.toFixed(2) : Number(body.balance).toFixed(2)
+          const req = typeof body.required === 'number' ? body.required.toFixed(2) : Number(body.required).toFixed(2)
+          setSubmitError(`现金余额不足：${sym}${bal}，本次需要 ${sym}${req}，请先转入资金`)
+        } else {
+          setSubmitError('提交失败，请稍后重试')
+        }
+        setSubmitting(false)
+        return
+      }
     }
     navigate('/transactions')
   }
+
+  const selectedCurrency = selectedStock?.currency ?? 'CNY'
+  const cashHint = type === 'BUY' && selectedStock
+    ? (cashBalances[selectedCurrency] != null
+        ? `${CURRENCY_SYMBOL[selectedCurrency] ?? selectedCurrency}${Number(cashBalances[selectedCurrency]).toFixed(2)} 可用`
+        : null)
+    : null
 
   return (
     <div className="p-6 max-w-lg mx-auto space-y-6">
@@ -193,6 +226,9 @@ export default function AddTransaction() {
                       className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
                   </div>
                 </div>
+                {cashHint && (
+                  <p className="text-xs text-slate-400">当前可用现金：{cashHint}</p>
+                )}
               </>
             )}
             <div>
@@ -200,6 +236,9 @@ export default function AddTransaction() {
               <input type="text" value={note} onChange={e => setNote(e.target.value)}
                 className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
             </div>
+            {submitError && (
+              <p className="text-sm text-red-600 bg-red-50 rounded-xl px-4 py-2.5">{submitError}</p>
+            )}
             <div className="flex gap-3">
               <button type="button" onClick={() => navigate('/transactions')}
                 className="flex-1 h-10 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">取消</button>

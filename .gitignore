@@ -8,5 +8,6 @@ frontend/node_modules/
 *.iml
 .DS_Store
 .claude/
+CLAUDE.md
 .vscode/
 __pycache__/

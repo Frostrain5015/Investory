@@ -11,6 +11,7 @@ import com.investory.service.PortfolioValueCalculator;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
 
@@ -156,6 +157,16 @@ public class DataApiController {
         return result;
     }
 
+    // ── Cash balances ────────────────────────────────────────────────────────
+
+    @GetMapping("/cash")
+    public Map<String, Object> getCash(HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        List<Map<String, Object>> balances = jdbc.queryForList(
+            "SELECT currency, amount FROM cash_balances WHERE portfolio_id=?", portfolioId);
+        return Map.of("balances", balances);
+    }
+
     // ── Password ─────────────────────────────────────────────────────────
 
     @PostMapping("/password")
@@ -228,7 +239,7 @@ public class DataApiController {
     }
 
     @PostMapping("/transactions")
-    public Map<String, Object> createTransaction(
+    public ResponseEntity<Map<String, Object>> createTransaction(
             @RequestParam long stockId, @RequestParam String type,
             @RequestParam BigDecimal shares, @RequestParam BigDecimal price,
             @RequestParam(required = false) String fee, @RequestParam String tradeDate,
@@ -255,7 +266,7 @@ public class DataApiController {
             valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate));
             Map<String, Object> result = new LinkedHashMap<>();
             result.put("id", id);
-            return result;
+            return ResponseEntity.ok(result);
         }
 
         Stock stock = stockDao.findById(stockId);
@@ -264,26 +275,19 @@ public class DataApiController {
 
         if ("BUY".equals(type)) cost = shares.multiply(price).add(feeVal);
 
-        // Auto-inject cash if buying without sufficient balance
+        // Guard: block BUY if cash balance is insufficient
         if ("BUY".equals(type) && stock != null) {
             List<BigDecimal> rows = jdbc.queryForList(
                 "SELECT amount FROM cash_balances WHERE portfolio_id=? AND currency=?", BigDecimal.class, portfolioId, cur);
             BigDecimal balance = rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
             if (balance == null) balance = BigDecimal.ZERO;
             if (balance.compareTo(cost) < 0) {
-                BigDecimal needed = cost.subtract(balance);
-                jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
-                    portfolioId, cur, needed, needed);
-                Transaction autoTx = new Transaction();
-                autoTx.setPortfolioId(portfolioId);
-                autoTx.setStockId(null);
-                autoTx.setType("TRANSFER_IN");
-                autoTx.setShares(needed);
-                autoTx.setPrice(BigDecimal.ZERO);
-                autoTx.setFee(BigDecimal.ZERO);
-                autoTx.setTradeDate(LocalDate.parse(tradeDate));
-                autoTx.setNote("自动入金（买入 " + stock.getSymbol() + "）");
-                transactionDao.insert(autoTx);
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("error", "INSUFFICIENT_CASH");
+                err.put("balance", balance);
+                err.put("required", cost);
+                err.put("currency", cur);
+                return ResponseEntity.badRequest().body(err);
             }
         }
 
@@ -313,7 +317,7 @@ public class DataApiController {
         }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("id", id);
-        return result;
+        return ResponseEntity.ok(result);
     }
 
     @PutMapping("/transactions/{id}")

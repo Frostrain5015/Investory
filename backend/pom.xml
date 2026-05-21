@@ -57,6 +57,13 @@
             <artifactId>jbcrypt</artifactId>
             <version>0.4</version>
         </dependency>
+
+        <!-- Pinyin4j for Chinese → pinyin conversion (stock search) -->
+        <dependency>
+            <groupId>net.sourceforge.pinyin4j</groupId>
+            <artifactId>pinyin4j</artifactId>
+            <version>2.5.0</version>
+        </dependency>
     </dependencies>
 
     <build>
