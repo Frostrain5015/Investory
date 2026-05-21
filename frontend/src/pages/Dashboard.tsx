@@ -1,4 +1,6 @@
 import { useEffect, useState, useCallback } from 'react'
+import { useCountUp } from '@/hooks/use-count-up'
+import { useTheme } from '@/hooks/use-theme'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
@@ -12,7 +14,7 @@ import {
   AreaChart, Area, Tooltip, ResponsiveContainer
 } from 'recharts'
 import { getDashboard, getPortfolios } from '@/services/api'
-import { displaySymbol, fmtQuoteTime } from '@/lib/format'
+import { displaySymbol, fmtPriceTs } from '@/lib/format'
 import CloudChart from '@/components/CloudChart'
 import ClosedPositions from '@/components/ClosedPositions'
 
@@ -26,12 +28,16 @@ interface Snapshot {
   priceTimestamp?: string
 }
 
-const COLORS = ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1',
-  '#0369a1', '#0284c7', '#0ea5e9', '#38bdf8', '#7dd3fc', '#06b6d4', '#0891b2']
+const COLORS = [
+  '#1e3a5f', '#e07a5f', '#2a9d8f', '#e9c46a', '#7c6fae',
+  '#d67ba8', '#6b7b8c', '#52b788', '#f4a261', '#457b9d',
+  '#e76f51', '#2ec4b6', '#9b5de5', '#00bbf9',
+]
 
 export default function Dashboard() {
   const { portfolioId, portfolioName, setPortfolioName } = useAuth()
   const { positiveClass, negativeClass, positiveHex, negativeHex, formatCurrency, convertCurrency } = useSettings()
+  const { isDark } = useTheme()
   const toast = useToast()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
@@ -97,6 +103,12 @@ export default function Dashboard() {
     loadDashboard()
   })
 
+  const animTotalAsset    = useCountUp(totals.totalMarketValue + totals.cashBalance)
+  const animMarketValue   = useCountUp(totals.totalMarketValue)
+  const animTodayPnl      = useCountUp(totals.todayPnl)
+  const animHoldingPnl    = useCountUp(totals.totalPnl)
+  const animCumulativePnl = useCountUp(totals.cumulativePnl)
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -153,7 +165,7 @@ export default function Dashboard() {
           <CardContent className="pt-6">
             <p className="text-xs text-slate-500 font-medium">总资产</p>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
-              {formatCurrency(totals.totalMarketValue + totals.cashBalance)}
+              {formatCurrency(animTotalAsset)}
             </p>
           </CardContent>
         </Card>
@@ -162,7 +174,7 @@ export default function Dashboard() {
             <p className="text-xs text-slate-500 font-medium">{cashCardMode === 'mv' ? '总市值' : '现金余额'}</p>
             {cashCardMode === 'mv' ? (<>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
-              {formatCurrency(totals.totalMarketValue)}
+              {formatCurrency(animMarketValue)}
             </p>
             {(totals.totalMarketValue + totals.cashBalance) > 0 && (
               <p className="text-xs font-medium text-slate-400 mt-0.5">
@@ -191,14 +203,14 @@ export default function Dashboard() {
             <p className="text-xs text-slate-500 font-medium">{pnlCardMode === 'today' ? '今日盈亏' : '持仓盈亏'}</p>
             {pnlCardMode === 'today' ? (<>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.todayPnl >= 0 ? positiveClass : negativeClass}`}>
-              {totals.todayPnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(totals.todayPnl))}
+              {animTodayPnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(animTodayPnl))}
             </p>
             <p className={`text-xs font-medium mt-0.5 ${totals.todayPnl >= 0 ? positiveClass : negativeClass}`}>
               {totals.todayPnlPct >= 0 ? '+' : ''}{totals.todayPnlPct}%
             </p>
             </>) : (<>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.totalPnl >= 0 ? positiveClass : negativeClass}`}>
-              {totals.totalPnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(totals.totalPnl))}
+              {animHoldingPnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(animHoldingPnl))}
             </p>
             <p className={`text-xs font-medium mt-0.5 ${totals.totalPnl >= 0 ? positiveClass : negativeClass}`}>
               {totals.totalPnl >= 0 ? '+' : '-'}{Math.abs(totals.totalReturnPct).toFixed(2)}%
@@ -210,7 +222,7 @@ export default function Dashboard() {
           <CardContent className="pt-6">
             <p className="text-xs text-slate-500 font-medium">累计盈亏</p>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.cumulativePnl >= 0 ? positiveClass : negativeClass}`}>
-              {totals.cumulativePnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(totals.cumulativePnl))}
+              {animCumulativePnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(animCumulativePnl))}
             </p>
             <p className={`text-xs font-medium mt-0.5 ${totals.totalReturnPct >= 0 ? positiveClass : negativeClass}`}>
               {totals.totalReturnPct >= 0 ? '+' : '-'}{Math.abs(totals.totalReturnPct).toFixed(2)}%
@@ -248,15 +260,16 @@ export default function Dashboard() {
                   <stop offset="95%" stopColor={cumUp ? positiveHex : negativeHex} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8"
+              <CartesianGrid strokeDasharray="3 3" stroke={isDark ? '#334155' : '#f1f5f9'} />
+              <XAxis dataKey="date" tick={{ fontSize: 11, fill: isDark ? '#64748b' : '#94a3b8' }} stroke={isDark ? '#334155' : '#94a3b8'}
                 tickFormatter={(v: string) => cumulativeDays <= 180 ? v.substring(5) : v} />
-              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" domain={['auto', 'auto']} tickFormatter={(v: number) => {
+              <YAxis tick={{ fontSize: 11, fill: isDark ? '#64748b' : '#94a3b8' }} stroke={isDark ? '#334155' : '#94a3b8'} domain={['auto', 'auto']} tickFormatter={(v: number) => {
                 const cv = convertCurrency(Number(v))
                 if (Math.abs(cv) >= 10000) return (cv / 10000).toFixed(0) + '万'
                 return String(Math.round(cv))
               }} />
-              <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
+              <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))}
+                contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0', color: isDark ? '#f8fafc' : '#0f172a' }} />
               <Area type="monotone" dataKey="value" stroke={cumUp ? positiveHex : negativeHex} fill="url(#colorValue)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
@@ -293,7 +306,8 @@ export default function Dashboard() {
                       <Cell key={i} fill={COLORS[i % COLORS.length]} />
                     ))}
                   </Pie>
-                  <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))} />
+                  <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))}
+                    contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0', color: isDark ? '#f8fafc' : '#0f172a' }} />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
@@ -363,7 +377,8 @@ export default function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            <div className="overflow-auto">
+            {/* Desktop table */}
+            <div className="hidden lg:block overflow-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-100">
@@ -403,7 +418,7 @@ export default function Dashboard() {
                       <td className="px-3 py-3 text-right tabular-nums">{s.totalShares}</td>
                       <td className="px-3 py-3 text-right tabular-nums">
                         <div>{fmtVal(price)}</div>
-                        {s.priceTimestamp && <div className="text-[10px] text-slate-400">{fmtQuoteTime(s.priceTimestamp)}</div>}
+                        {s.priceTimestamp && <div className="text-[10px] text-slate-400">{fmtPriceTs(s.priceTimestamp)}</div>}
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums">{fmtVal(cost)}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{fmtVal(diluted)}</td>
@@ -418,6 +433,47 @@ export default function Dashboard() {
                   )})}
                 </tbody>
               </table>
+            </div>
+            {/* Mobile cards */}
+            <div className="lg:hidden divide-y divide-slate-50">
+              {[...snapshots].sort((a, b) => (b.marketValue || 0) - (a.marketValue || 0)).map(s => {
+                const native = priceMode === 'native' && s.currency !== 'CNY'
+                const mv = native ? (s.nativeMarketValue || s.marketValue) : s.marketValue
+                const pnl = native ? (s.nativeUnrealizedPnl || s.unrealizedPnl) : s.unrealizedPnl
+                const cost = native ? (s.nativeAvgCost || s.avgCost) : s.avgCost
+                const diluted = native ? s.dilutedCost : s.dilutedCost
+                const invested = s.totalInvested
+                const fmtNative = (v: number) => v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                const fmtVal = (v: number) => native ? fmtNative(v) : fmtNative(convertCurrency(v))
+                return (
+                  <div key={s.stockId} className="px-4 py-3">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <Link to={`/stock?symbol=${encodeURIComponent(s.stockSymbol)}`}
+                          className="font-medium text-slate-900 hover:text-blue-600 transition-colors">{s.stockName}</Link>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{s.market}</span>
+                      </div>
+                      <span className={`text-sm font-semibold tabular-nums ${s.unrealizedPnlPct >= 0 ? positiveClass : negativeClass}`}>
+                        {s.unrealizedPnlPct >= 0 ? '+' : ''}{s.unrealizedPnlPct}%
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-sm text-slate-600 mb-1">
+                      <span className="text-xs text-slate-400">{s.totalShares} 股</span>
+                      <span className="tabular-nums font-medium text-slate-800">{fmtVal(mv)}</span>
+                    </div>
+                    <details className="mt-1">
+                      <summary className="text-xs text-slate-400 cursor-pointer select-none">更多</summary>
+                      <div className="mt-2 space-y-1 text-xs text-slate-500">
+                        <div className="flex justify-between"><span>浮盈</span><span className={`tabular-nums ${pnl >= 0 ? positiveClass : negativeClass}`}>{pnl >= 0 ? '+' : ''}{fmtVal(Math.abs(pnl))}</span></div>
+                        <div className="flex justify-between"><span>平均成本</span><span className="tabular-nums">{fmtVal(cost)}</span></div>
+                        <div className="flex justify-between"><span>摊薄成本</span><span className="tabular-nums">{fmtVal(diluted)}</span></div>
+                        <div className="flex justify-between"><span>累计投入</span><span className="tabular-nums">{fmtVal(invested)}</span></div>
+                        <div className="flex justify-between"><span>累计分红</span><span className="tabular-nums text-sky-600">{fmtVal(s.totalDividends)}</span></div>
+                      </div>
+                    </details>
+                  </div>
+                )
+              })}
             </div>
           </CardContent>
         </Card>

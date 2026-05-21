@@ -5,7 +5,7 @@ import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
 import { searchStocks, chartAPI } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/card'
-import { displaySymbol, fmtQuoteTime } from '@/lib/format'
+import { displaySymbol, fmtPriceTs } from '@/lib/format'
 import Sparkline from '@/components/Sparkline'
 import type { StockSearchItem, PriceData } from '@/types'
 import { Search, X, Plus, GripVertical } from 'lucide-react'
@@ -211,7 +211,7 @@ export default function Holdings() {
                         </td>
                         <td className="px-3 py-3 text-right tabular-nums">
                           <div>{valid ? Number(item.price).toFixed(2) : '—'}</div>
-                          {item.priceTimestamp && <div className="text-[10px] text-slate-400">{fmtQuoteTime(item.priceTimestamp)}</div>}
+                          {item.priceTimestamp && <div className="text-[10px] text-slate-400">{fmtPriceTs(item.priceTimestamp)}</div>}
                         </td>
                         <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
                           {valid ? `${up ? '+' : ''}${chg.toFixed(2)}` : '—'}

@@ -31,7 +31,7 @@ export default function Dividends() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">分红记录</h2>
-        <Link to="/dividends/add"
+        <Link to="/transactions/add?type=DIV"
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
           添加分红
         </Link>

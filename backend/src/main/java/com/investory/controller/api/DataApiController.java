@@ -452,8 +452,13 @@ public class DataApiController {
         result.put("transactions", transactionDao.findByPortfolioAndStock(portfolioId, stock.getId()));
         result.put("dividends",    dividendDao.findByPortfolioAndStock(portfolioId, stock.getId()));
         Quote liveQuote = quoteService.getQuote(stock);
-        result.put("livePrice",   liveQuote != null ? liveQuote.price() : null);
-        result.put("livePriceTs", liveQuote != null ? liveQuote.fetchedAt().toString() : null);
+        result.put("livePrice", liveQuote != null ? liveQuote.price() : null);
+        if (liveQuote != null) {
+            result.put("livePriceTs", liveQuote.fetchedAt().toString());
+        } else {
+            StockPrice latest = stockPriceDao.findLatest(stock.getId());
+            result.put("livePriceTs", latest != null ? latest.getTradeDate().toString() : null);
+        }
         return result;
     }
 
@@ -478,6 +483,165 @@ public class DataApiController {
         if (stock == null) return Map.of("error", "Stock not found");
         quoteService.getPrice(stock); // fire-and-forget real-time fetch
         return Map.of("status", "ok");
+    }
+
+    // ── Daily detail ─────────────────────────────────────────────────────────
+
+    @GetMapping("/daily-detail")
+    public Map<String, Object> getDailyDetail(@RequestParam String date, HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        LocalDate day = LocalDate.parse(date);
+        LocalDate prevDay = day.minusDays(1);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("date", date);
+
+        // Load exchange rates
+        Map<String, java.math.BigDecimal> toCny = new java.util.HashMap<>();
+        toCny.put("CNY", java.math.BigDecimal.ONE);
+        try {
+            List<Map<String, Object>> rates = jdbc.queryForList("SELECT currency, rate FROM exchange_rates");
+            for (Map<String, Object> r : rates) {
+                String curr = (String) r.get("currency");
+                java.math.BigDecimal rate = (java.math.BigDecimal) r.get("rate");
+                if (rate != null && rate.compareTo(java.math.BigDecimal.ZERO) > 0)
+                    toCny.put(curr, java.math.BigDecimal.ONE.divide(rate, 8, java.math.RoundingMode.HALF_UP));
+            }
+        } catch (Exception ignored) {}
+
+        // Compute per-stock shares held on `day` (accumulate BUY/SELL up to and including day)
+        List<Map<String, Object>> allTxns = jdbc.queryForList(
+            "SELECT stock_id, type, shares FROM transactions WHERE portfolio_id=? AND type IN ('BUY','SELL') AND trade_date <= ? ORDER BY trade_date",
+            portfolioId, java.sql.Date.valueOf(day));
+        Map<Long, java.math.BigDecimal> sharesMap = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> t : allTxns) {
+            long sid = ((Number) t.get("stock_id")).longValue();
+            java.math.BigDecimal shares = (java.math.BigDecimal) t.get("shares");
+            if (shares == null) continue;
+            java.math.BigDecimal cur = sharesMap.getOrDefault(sid, java.math.BigDecimal.ZERO);
+            sharesMap.put(sid, "BUY".equals(t.get("type")) ? cur.add(shares) : cur.subtract(shares));
+        }
+
+        // Per-holding P&L = (close_day - close_prev) * shares * fxRate
+        List<Map<String, Object>> holdings = new ArrayList<>();
+        java.math.BigDecimal totalPnl = java.math.BigDecimal.ZERO;
+        for (Map.Entry<Long, java.math.BigDecimal> entry : sharesMap.entrySet()) {
+            long sid = entry.getKey();
+            java.math.BigDecimal sh = entry.getValue();
+            if (sh.compareTo(java.math.BigDecimal.ZERO) <= 0) continue;
+            Stock stock = stockDao.findById(sid);
+            if (stock == null) continue;
+            java.math.BigDecimal rate = toCny.getOrDefault(stock.getCurrency(), java.math.BigDecimal.ONE);
+            List<StockPrice> todayPrices = stockPriceDao.findRange(sid, day, day);
+            List<StockPrice> prevPrices = stockPriceDao.findRange(sid, prevDay, prevDay);
+            if (todayPrices.isEmpty() || prevPrices.isEmpty()) continue;
+            java.math.BigDecimal closeToday = todayPrices.get(0).getClose();
+            java.math.BigDecimal closePrev  = prevPrices.get(0).getClose();
+            if (closeToday == null || closePrev == null) continue;
+            java.math.BigDecimal pnl = closeToday.subtract(closePrev).multiply(sh).multiply(rate)
+                .setScale(2, java.math.RoundingMode.HALF_UP);
+            java.math.BigDecimal pct = closePrev.compareTo(java.math.BigDecimal.ZERO) > 0
+                ? closeToday.subtract(closePrev).divide(closePrev, 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(new java.math.BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP)
+                : java.math.BigDecimal.ZERO;
+            Map<String, Object> h = new LinkedHashMap<>();
+            h.put("stockName", stock.getName());
+            h.put("symbol", stock.getSymbol());
+            h.put("pnl", pnl);
+            h.put("priceChange", pct);
+            holdings.add(h);
+            totalPnl = totalPnl.add(pnl);
+        }
+        result.put("totalPnl", totalPnl.setScale(2, java.math.RoundingMode.HALF_UP));
+        result.put("holdings", holdings);
+
+        // Transactions on that day
+        List<Map<String, Object>> txns = jdbc.queryForList("""
+            SELECT t.type, s.name AS stockName, t.shares, t.price
+            FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
+            WHERE t.portfolio_id=? AND t.trade_date=?
+            """, portfolioId, java.sql.Date.valueOf(day));
+        result.put("transactions", txns);
+        return result;
+    }
+
+    @GetMapping("/monthly-detail")
+    public Map<String, Object> getMonthlyDetail(@RequestParam int year, @RequestParam int month, HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        LocalDate startOfMonth = LocalDate.of(year, month, 1);
+        LocalDate endOfMonth = startOfMonth.withDayOfMonth(startOfMonth.lengthOfMonth());
+        LocalDate endOfPrevMonth = startOfMonth.minusDays(1);
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("year", year);
+        result.put("month", month);
+
+        // Exchange rates
+        Map<String, java.math.BigDecimal> toCny = new java.util.HashMap<>();
+        toCny.put("CNY", java.math.BigDecimal.ONE);
+        try {
+            List<Map<String, Object>> rates = jdbc.queryForList("SELECT currency, rate FROM exchange_rates");
+            for (Map<String, Object> r : rates) {
+                String curr = (String) r.get("currency");
+                java.math.BigDecimal rate = (java.math.BigDecimal) r.get("rate");
+                if (rate != null && rate.compareTo(java.math.BigDecimal.ZERO) > 0)
+                    toCny.put(curr, java.math.BigDecimal.ONE.divide(rate, 8, java.math.RoundingMode.HALF_UP));
+            }
+        } catch (Exception ignored) {}
+
+        // Shares held at start of month (transactions up to end of prev month)
+        List<Map<String, Object>> allTxns = jdbc.queryForList(
+            "SELECT stock_id, type, shares FROM transactions WHERE portfolio_id=? AND type IN ('BUY','SELL') AND trade_date <= ? ORDER BY trade_date",
+            portfolioId, java.sql.Date.valueOf(endOfPrevMonth));
+        Map<Long, java.math.BigDecimal> sharesMap = new java.util.LinkedHashMap<>();
+        for (Map<String, Object> t : allTxns) {
+            long sid = ((Number) t.get("stock_id")).longValue();
+            java.math.BigDecimal shares = (java.math.BigDecimal) t.get("shares");
+            if (shares == null) continue;
+            java.math.BigDecimal cur = sharesMap.getOrDefault(sid, java.math.BigDecimal.ZERO);
+            sharesMap.put(sid, "BUY".equals(t.get("type")) ? cur.add(shares) : cur.subtract(shares));
+        }
+
+        // Per-holding monthly P&L: (lastClose_thisMonth - lastClose_prevMonth) * shares * fxRate
+        List<Map<String, Object>> holdings = new ArrayList<>();
+        java.math.BigDecimal totalPnl = java.math.BigDecimal.ZERO;
+        for (Map.Entry<Long, java.math.BigDecimal> entry : sharesMap.entrySet()) {
+            long sid = entry.getKey();
+            java.math.BigDecimal sh = entry.getValue();
+            if (sh.compareTo(java.math.BigDecimal.ZERO) <= 0) continue;
+            Stock stock = stockDao.findById(sid);
+            if (stock == null) continue;
+            java.math.BigDecimal rate = toCny.getOrDefault(stock.getCurrency(), java.math.BigDecimal.ONE);
+            List<StockPrice> prevPrices = stockPriceDao.findRange(sid, endOfPrevMonth.minusDays(30), endOfPrevMonth);
+            if (prevPrices.isEmpty()) continue;
+            java.math.BigDecimal prevClose = prevPrices.get(prevPrices.size() - 1).getClose();
+            List<StockPrice> thisPrices = stockPriceDao.findRange(sid, startOfMonth, endOfMonth);
+            if (thisPrices.isEmpty()) continue;
+            java.math.BigDecimal thisClose = thisPrices.get(thisPrices.size() - 1).getClose();
+            if (prevClose == null || thisClose == null) continue;
+            java.math.BigDecimal pnl = thisClose.subtract(prevClose).multiply(sh).multiply(rate)
+                .setScale(2, java.math.RoundingMode.HALF_UP);
+            java.math.BigDecimal pct = prevClose.compareTo(java.math.BigDecimal.ZERO) > 0
+                ? thisClose.subtract(prevClose).divide(prevClose, 4, java.math.RoundingMode.HALF_UP)
+                    .multiply(new java.math.BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP)
+                : java.math.BigDecimal.ZERO;
+            Map<String, Object> h = new LinkedHashMap<>();
+            h.put("stockName", stock.getName());
+            h.put("symbol", stock.getSymbol());
+            h.put("pnl", pnl);
+            h.put("priceChange", pct);
+            holdings.add(h);
+            totalPnl = totalPnl.add(pnl);
+        }
+        result.put("totalPnl", totalPnl.setScale(2, java.math.RoundingMode.HALF_UP));
+        result.put("holdings", holdings);
+
+        // Transactions for the month
+        List<Map<String, Object>> txns = jdbc.queryForList("""
+            SELECT t.type, s.name AS stockName, t.shares, t.price
+            FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
+            WHERE t.portfolio_id=? AND t.trade_date BETWEEN ? AND ?
+            """, portfolioId, java.sql.Date.valueOf(startOfMonth), java.sql.Date.valueOf(endOfMonth));
+        result.put("transactions", txns);
+        return result;
     }
 
     @PostMapping("/portfolio/refresh")

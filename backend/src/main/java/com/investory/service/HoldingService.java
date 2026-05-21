@@ -62,9 +62,16 @@ public class HoldingService {
             // Get price (before any conversion)
             Quote quote = quoteService.getQuote(stock);
             BigDecimal price = quote != null ? quote.price() : null;
-            if (price == null) price = stockPriceDao.findLatestClose(h.getStockId());
+            if (quote != null) {
+                snap.setPriceTimestamp(quote.fetchedAt().toString()); // ISO-8601 → "实时 HH:mm"
+            } else {
+                StockPrice latest = stockPriceDao.findLatest(h.getStockId());
+                if (latest != null) {
+                    price = latest.getClose();
+                    snap.setPriceTimestamp(latest.getTradeDate().toString()); // "YYYY-MM-DD" → "收盘价"
+                }
+            }
             price = price != null ? price : h.getAvgCost();
-            if (quote != null) snap.setPriceTimestamp(quote.fetchedAt().toString());
 
             // Native values (original currency, before CNY conversion)
             snap.setNativePrice(price);

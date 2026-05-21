@@ -9,3 +9,82 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* ── Design tokens ──────────────────────────────────────────────────────── */
+@layer base {
+  :root {
+    --bg-page:       #f8fafc;
+    --bg-surface:    #ffffff;
+    --bg-elevated:   #ffffff;
+    --border-default:#e2e8f0;
+    --border-subtle: #f1f5f9;
+    --text-primary:  #0f172a;
+    --text-secondary:#475569;
+    --text-tertiary: #94a3b8;
+  }
+
+  .dark {
+    --bg-page:       #0f172a;
+    --bg-surface:    #1e293b;
+    --bg-elevated:   #334155;
+    --border-default:#334155;
+    --border-subtle: #1e293b;
+    --text-primary:  #f8fafc;
+    --text-secondary:#cbd5e1;
+    --text-tertiary: #64748b;
+  }
+}
+
+/* ── Global dark overrides ──────────────────────────────────────────────── */
+.dark body {
+  background-color: var(--bg-page);
+  color: var(--text-primary);
+}
+
+/* Page background */
+.dark .bg-slate-50 { background-color: var(--bg-page) !important; }
+.dark .bg-white    { background-color: var(--bg-surface) !important; }
+
+/* Card */
+.dark [data-slot="card"] {
+  background-color: var(--bg-surface);
+  border-color: var(--border-default);
+}
+
+/* Text */
+.dark .text-slate-900 { color: var(--text-primary) !important; }
+.dark .text-slate-700 { color: var(--text-secondary) !important; }
+.dark .text-slate-600 { color: var(--text-secondary) !important; }
+.dark .text-slate-500 { color: var(--text-tertiary) !important; }
+.dark .text-slate-400 { color: var(--text-tertiary) !important; }
+
+/* Borders */
+.dark .border-slate-200 { border-color: var(--border-default) !important; }
+.dark .border-slate-100 { border-color: var(--border-subtle) !important; }
+.dark .border-slate-50  { border-color: var(--border-subtle) !important; }
+
+/* Table */
+.dark table th { color: var(--text-tertiary); border-color: var(--border-subtle); }
+.dark table td { border-color: var(--border-subtle); }
+.dark table tr:hover td { background-color: rgba(255,255,255,0.03); }
+
+/* Inputs & selects */
+.dark input:not([type="checkbox"]):not([type="radio"]),
+.dark select,
+.dark textarea {
+  background-color: var(--bg-elevated);
+  border-color: var(--border-default);
+  color: var(--text-primary);
+}
+
+/* Hover surfaces */
+.dark .hover\:bg-slate-50:hover  { background-color: rgba(255,255,255,0.04) !important; }
+.dark .hover\:bg-slate-100:hover { background-color: rgba(255,255,255,0.06) !important; }
+.dark .bg-slate-100 { background-color: var(--bg-elevated) !important; }
+
+/* Recharts tooltip */
+.dark .recharts-tooltip-wrapper .recharts-default-tooltip {
+  background-color: var(--bg-surface) !important;
+  border-color: var(--border-default) !important;
+  color: var(--text-primary) !important;
+}

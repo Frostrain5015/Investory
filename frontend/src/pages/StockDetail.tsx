@@ -6,7 +6,7 @@ import { useSettings } from '@/hooks/use-settings'
 import type { StockDetailResponse, Transaction, Dividend, PriceData } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts'
-import { displaySymbol, fmtQuoteTime } from '@/lib/format'
+import { displaySymbol, fmtPriceTs } from '@/lib/format'
 
 export default function StockDetail() {
   const [params] = useSearchParams()
@@ -100,7 +100,7 @@ export default function StockDetail() {
                 )}
                 {data?.livePriceTs && (
                   <span className="text-xs text-slate-400 self-end mb-0.5">
-                    实时 · {fmtQuoteTime(data.livePriceTs)}
+                    {fmtPriceTs(data.livePriceTs)}
                   </span>
                 )}
               </>

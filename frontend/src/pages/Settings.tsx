@@ -10,7 +10,7 @@ const CURRENCY_LABELS: Record<BaseCurrency, string> = { CNY: '人民币 (¥)', H
 export default function Settings() {
   const { username, logout } = useAuth()
   const { colorScheme, toggleColorScheme, positiveClass, negativeClass, baseCurrency, setBaseCurrency } = useSettings()
-  const { theme, toggleTheme } = useTheme()
+  const { pref, setPref } = useTheme()
   const fileRef = useRef<HTMLInputElement>(null)
   const [avatar, setAvatar] = useState(() => localStorage.getItem('investory_avatar') || '')
   const [oldPw, setOldPw] = useState('')
@@ -82,14 +82,16 @@ export default function Settings() {
       <Card>
         <CardHeader><CardTitle className="text-base">主题</CardTitle></CardHeader>
         <CardContent>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {theme === 'light' ? <Sun className="w-5 h-5 text-amber-500" /> : <Moon className="w-5 h-5 text-indigo-500" />}
-              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{theme === 'light' ? '亮色模式' : '暗色模式'}</span>
-            </div>
-            <button onClick={toggleTheme} className="relative w-12 h-7 rounded-full bg-slate-200 hover:bg-slate-300 transition-colors">
-              <span className="absolute top-0.5 w-6 h-6 rounded-full bg-white shadow-sm transition-all duration-200" style={{ left: theme === 'light' ? '2px' : '22px' }} />
-            </button>
+          <div className="flex gap-2">
+            {([['system', '跟随系统'], ['light', '亮色'], ['dark', '暗色']] as const).map(([val, label]) => (
+              <button key={val} onClick={() => setPref(val)}
+                className={`flex-1 h-10 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-1.5
+                  ${pref === val ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                {val === 'light' && <Sun className="w-3.5 h-3.5" />}
+                {val === 'dark' && <Moon className="w-3.5 h-3.5" />}
+                {label}
+              </button>
+            ))}
           </div>
         </CardContent>
       </Card>
