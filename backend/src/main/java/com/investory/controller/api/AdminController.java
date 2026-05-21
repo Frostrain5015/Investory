@@ -45,6 +45,9 @@ public class AdminController {
     public Map<String, Object> getStatus(HttpServletRequest req) {
         if (!checkAdmin(req)) return Map.of("error", "unauthorized");
 
+        // Refresh InnoDB stats for accurate row counts and disk sizes
+        jdbc.execute("ANALYZE TABLE stock_prices");
+
         Map<String, Object> result = new LinkedHashMap<>();
 
         List<Map<String, Object>> markets = jdbc.queryForList("""
