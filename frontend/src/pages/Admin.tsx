@@ -27,6 +27,7 @@ export default function Admin() {
   const [dateEnd, setDateEnd] = useState(todayStr())
   const [users, setUsers] = useState<UserRow[]>([])
   const [crawlHistory, setCrawlHistory] = useState<CrawlHistoryRow[]>([])
+  const [verbose, setVerbose] = useState(false)
   const logEndRef = useRef<HTMLDivElement>(null)
 
   const fetchStatus = useCallback(() => {
@@ -275,6 +276,10 @@ export default function Admin() {
             <CardTitle className="text-sm flex items-center gap-2">
               <Terminal className="w-3.5 h-3.5" />
               正在抓取 {crawling === 'all' ? '全市场' : crawling.toUpperCase()}
+              <button onClick={() => setVerbose(!verbose)}
+                className={`h-6 px-2 rounded-md text-[10px] font-medium ml-2 transition-colors ${verbose ? 'bg-slate-200 text-slate-600' : 'bg-slate-100 text-slate-500'}`}>
+                {verbose ? '简略' : '详细'}
+              </button>
               {progress && (
                 <span className="ml-auto text-xs font-normal text-slate-400">
                   {progress.current}/{progress.total} ({progress.pct.toFixed(1)}%)
@@ -294,6 +299,7 @@ export default function Admin() {
                 </div>
               </div>
             )}
+            {verbose && (
             <div className="bg-slate-900 rounded-xl p-4 max-h-80 overflow-auto font-mono text-xs">
               {logs.map((line, i) => (
                 <div key={i} className={`py-0.5 ${line.startsWith('✓') ? 'text-emerald-400' : line.startsWith('✗') ? 'text-red-400' : line.startsWith('[状态]') ? 'text-sky-400' : line.startsWith('[信息]') ? 'text-slate-400' : 'text-slate-300'}`}>
@@ -303,6 +309,7 @@ export default function Admin() {
               {logs.length === 0 && <div className="text-slate-500">等待输出...</div>}
               <div ref={logEndRef} />
             </div>
+            )}
           </CardContent>
         </Card>
       )}
