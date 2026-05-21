@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Database, HardDrive, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock } from 'lucide-react'
+import { AnimatePresence, motion } from 'framer-motion'
 
 interface MarketStat { market: string; stock_count: number; price_rows: number; latest_date: string; earliest_date: string }
 interface DbStatus { markets: MarketStat[]; totals: { stock_count: number; price_rows: number }; tables: { total_mb: number }[] }
@@ -10,7 +11,8 @@ interface SseEvent { event: string; msg?: string; current?: number; total?: numb
 interface UserRow { id: number; username: string; email: string | null; created_at: string; txn_count: number; portfolio_count: number }
 interface CrawlHistoryRow { market: string; started_at: string; ended_at: string; rows_written: number; stocks_failed: number; status: string }
 
-const MARKET_LABELS: Record<string, string> = { SH: 'A股(沪)', SZ: 'A股(深)', HK: '港股', US: '美股' }
+const MARKET_LABELS: Record<string, string> = { SH: 'A股(沪)', SZ: 'A股(深)', HK: '港股', US: '美股', IDX: '全球指数' }
+const MARKET_FLAGS: Record<string, string> = { SH: 'cn', SZ: 'cn', HK: 'hk', US: 'us', IDX: 'un' }
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
 function daysAgoStr(n: number) { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10) }
@@ -125,12 +127,21 @@ export default function Admin() {
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">管理后台</h2>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs">
-            <input type="date" value={dateStart} onChange={e => setDateStart(e.target.value)}
-              className="h-8 rounded-lg border border-slate-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+            <input type="text" value={dateStart} onChange={e => { const v = e.target.value.replace(/[^0-9-]/g, '').slice(0, 10); setDateStart(v) }}
+              onBlur={e => { if (!/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) setDateStart(daysAgoStr(10)) }}
+              placeholder="YYY-MM-DD" style={{ width: 110 }}
+              className="h-8 rounded-lg border border-slate-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10 font-mono" />
             <span className="text-slate-400">—</span>
-            <input type="date" value={dateEnd} onChange={e => setDateEnd(e.target.value)}
-              className="h-8 rounded-lg border border-slate-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+            <input type="text" value={dateEnd} onChange={e => { const v = e.target.value.replace(/[^0-9-]/g, '').slice(0, 10); setDateEnd(v) }}
+              onBlur={e => { if (!/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) setDateEnd(todayStr()) }}
+              placeholder="YYY-MM-DD" style={{ width: 110 }}
+              className="h-8 rounded-lg border border-slate-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10 font-mono" />
           </div>
+          <button onClick={() => startCrawl('idx')}
+            disabled={crawling !== null}
+            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors disabled:opacity-40">
+            指数抓取
+          </button>
           <button onClick={() => startCrawl('all')}
             disabled={crawling !== null}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
@@ -153,7 +164,10 @@ export default function Admin() {
               <Card key={m.market}>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm flex items-center justify-between">
-                    <span>{MARKET_LABELS[m.market] ?? m.market}</span>
+                    <span className="flex items-center gap-1.5">
+                      <img src={`https://flagcdn.com/${MARKET_FLAGS[m.market] ?? m.market}.svg`} alt="" className="w-4 h-3 rounded-sm" />
+                      {MARKET_LABELS[m.market] ?? m.market}
+                    </span>
                     <button onClick={() => startCrawl(m.market.toLowerCase())}
                       disabled={crawling !== null}
                       className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-slate-900 text-white text-[10px] font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
@@ -226,6 +240,78 @@ export default function Admin() {
         <div className="text-center py-12 text-slate-400 text-sm">加载失败</div>
       )}
 
+      {/* Crawl progress & log */}
+      <AnimatePresence>
+        {crawling && (
+          <motion.div
+            initial={{ opacity: 0, y: -12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.25 }}>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <Terminal className="w-3.5 h-3.5" />
+                  正在抓取 {crawling === 'all' ? '全市场' : crawling.toUpperCase()}
+                  <button onClick={() => setVerbose(!verbose)}
+                    className={`h-6 px-2 rounded-md text-[10px] font-medium ml-2 transition-colors ${verbose ? 'bg-slate-200 text-slate-600' : 'bg-slate-100 text-slate-500'}`}>
+                    {verbose ? '简略' : '详细'}
+                  </button>
+                  {progress && (
+                    <span className="ml-auto text-xs font-normal text-slate-400">
+                      {progress.current}/{progress.total} ({progress.pct.toFixed(1)}%)
+                    </span>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {progress && (
+                  <div className="mb-3">
+                    <div className="flex justify-between text-xs text-slate-500 mb-1">
+                      <span className="truncate max-w-[300px]">{progress.name}</span>
+                      <span>{progress.pct.toFixed(1)}%</span>
+                    </div>
+                    <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                      <div className="bg-slate-900 h-full rounded-full transition-all duration-300" style={{ width: `${progress.pct}%` }} />
+                    </div>
+                  </div>
+                )}
+                <AnimatePresence>
+                  {verbose && (
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="bg-slate-900 rounded-xl p-4 max-h-80 overflow-auto font-mono text-xs">
+                      {logs.map((line, i) => (
+                        <div key={i} className={`py-0.5 ${line.startsWith('✓') ? 'text-emerald-400' : line.startsWith('✗') ? 'text-red-400' : line.startsWith('[状态]') ? 'text-sky-400' : line.startsWith('[信息]') ? 'text-slate-400' : 'text-slate-300'}`}>
+                          {line}
+                        </div>
+                      ))}
+                      {logs.length === 0 && <div className="text-slate-500">等待输出...</div>}
+                      <div ref={logEndRef} />
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {doneMsg && !crawling && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="bg-emerald-50 text-emerald-700 rounded-xl px-4 py-3 text-sm">
+            {doneMsg}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* User list */}
       <Card>
         <CardHeader><CardTitle className="text-sm">用户管理</CardTitle></CardHeader>
@@ -268,55 +354,6 @@ export default function Admin() {
           </table>
         </CardContent>
       </Card>
-
-      {/* Crawl progress & log */}
-      {crawling && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm flex items-center gap-2">
-              <Terminal className="w-3.5 h-3.5" />
-              正在抓取 {crawling === 'all' ? '全市场' : crawling.toUpperCase()}
-              <button onClick={() => setVerbose(!verbose)}
-                className={`h-6 px-2 rounded-md text-[10px] font-medium ml-2 transition-colors ${verbose ? 'bg-slate-200 text-slate-600' : 'bg-slate-100 text-slate-500'}`}>
-                {verbose ? '简略' : '详细'}
-              </button>
-              {progress && (
-                <span className="ml-auto text-xs font-normal text-slate-400">
-                  {progress.current}/{progress.total} ({progress.pct.toFixed(1)}%)
-                </span>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {progress && (
-              <div className="mb-3">
-                <div className="flex justify-between text-xs text-slate-500 mb-1">
-                  <span className="truncate max-w-[300px]">{progress.name}</span>
-                  <span>{progress.pct.toFixed(1)}%</span>
-                </div>
-                <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                  <div className="bg-slate-900 h-full rounded-full transition-all duration-300" style={{ width: `${progress.pct}%` }} />
-                </div>
-              </div>
-            )}
-            {verbose && (
-            <div className="bg-slate-900 rounded-xl p-4 max-h-80 overflow-auto font-mono text-xs">
-              {logs.map((line, i) => (
-                <div key={i} className={`py-0.5 ${line.startsWith('✓') ? 'text-emerald-400' : line.startsWith('✗') ? 'text-red-400' : line.startsWith('[状态]') ? 'text-sky-400' : line.startsWith('[信息]') ? 'text-slate-400' : 'text-slate-300'}`}>
-                  {line}
-                </div>
-              ))}
-              {logs.length === 0 && <div className="text-slate-500">等待输出...</div>}
-              <div ref={logEndRef} />
-            </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {doneMsg && !crawling && (
-        <div className="bg-emerald-50 text-emerald-700 rounded-xl px-4 py-3 text-sm">{doneMsg}</div>
-      )}
     </div>
   )
 }

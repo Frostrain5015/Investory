@@ -59,6 +59,20 @@ public class AdminController {
             GROUP BY s.market
             ORDER BY FIELD(s.market,'SH','SZ','HK','US')
             """);
+        // Add index stats separately (aggregate across JP/KR/GB/.../CMD/CCY)
+        Map<String, Object> idxStats = jdbc.queryForMap("""
+            SELECT 'IDX' AS market,
+                   COUNT(DISTINCT s.id) AS stock_count,
+                   COUNT(sp.id)          AS price_rows,
+                   COALESCE(MAX(sp.trade_date), '-') AS latest_date,
+                   COALESCE(MIN(sp.trade_date), '-') AS earliest_date
+            FROM stocks s
+            LEFT JOIN stock_prices sp ON sp.stock_id = s.id
+            WHERE s.market IN ('JP','KR','GB','DE','FR','TW','SG','IN','AU','CA','BR','IDX','CMD','CCY')
+            """);
+        if (idxStats != null) {
+            markets.add(idxStats);
+        }
         result.put("markets", markets);
 
         Map<String, Object> totals = new LinkedHashMap<>();
@@ -166,7 +180,7 @@ public class AdminController {
             return emitter;
         }
 
-        if (!List.of("a", "hk", "us", "all").contains(market)) {
+        if (!List.of("a", "hk", "us", "idx", "all").contains(market)) {
             emit(emitter, "error", Map.of("msg", "无效市场: " + market));
             emitter.complete();
             return emitter;

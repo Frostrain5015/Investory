@@ -63,6 +63,13 @@ public class CrawlerScheduler {
         runScript("fetch_stocks.py", "us", "美股");
     }
 
+    // ── Indices: 10:00 daily (Yahoo + Sina) ──────────────────────────
+
+    @Scheduled(cron = "0 0 10 * * *", zone = "Asia/Shanghai")
+    public void syncIndices() {
+        runScript("fetch_stocks.py", "idx", "指数");
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────
 
     private boolean isWeekend() {

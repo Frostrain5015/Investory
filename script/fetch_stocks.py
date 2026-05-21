@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """
-Investory 三市场日K线统一抓取脚本
+Investory 全市场日K线统一抓取脚本
 
 数据源:
   A股  → BaoStock        (大陆直连，前复权)
-  港股  → 腾讯财经 API    (大陆直连，前复权)
-  美股  → Yahoo Finance   (需在 config.ini 配置代理)
+  港股  → Yahoo Finance   (需代理)
+  美股  → Yahoo Finance   (需代理)
+  指数  → Yahoo Finance + Sina (全球指数/商品/汇率)
 
 用法:
     python fetch_stocks.py                  # 按当前时间自动选市场
     python fetch_stocks.py -m a             # 仅 A 股
     python fetch_stocks.py -m hk            # 仅港股
     python fetch_stocks.py -m us            # 仅美股
+    python fetch_stocks.py -m idx           # 仅指数
     python fetch_stocks.py -m all           # 全部
     python fetch_stocks.py -m all --dry-run # 不写 DB（测试用）
-    python fetch_stocks.py -m hk --discover # 扫描新港股
 
 配置:
     脚本同目录的 config.ini（参考 config.ini.example）
@@ -25,6 +26,7 @@ import argparse
 import configparser
 import json
 import logging
+import math
 import os
 import re
 import sys
@@ -635,6 +637,163 @@ def auto_market() -> str:
     return "all"
 
 
+# ─── 指数/商品/汇率 (Yahoo Finance + Sina) ─────────────────────────────────
+
+_INDICES = [
+    # 中国 — Sina
+    ('sina','sh000001','000001.SH','上证指数','SH','CNY'),
+    ('sina','sz399001','399001.SZ','深证成指','SZ','CNY'),
+    ('sina','sz399006','399006.SZ','创业板指','SZ','CNY'),
+    # 香港 — Yahoo
+    ('yf','^HSI','HSI.HK','恒生指数','HK','HKD'),
+    ('yf','^HSCE','HSCE.HK','国企指数','HK','HKD'),
+    ('yf','^HSTECH','HSTECH.HK','恒生科技','HK','HKD'),
+    # 美国 — Yahoo
+    ('yf','^GSPC','GSPC.US','标普500','US','USD'),
+    ('yf','^DJI','DJI.US','道琼斯工业','US','USD'),
+    ('yf','^IXIC','IXIC.US','纳斯达克综合','US','USD'),
+    # 全球 — Yahoo
+    ('yf','^N225','N225.JP','日经225','JP','JPY'),
+    ('yf','^KS11','KS11.KR','韩国KOSPI','KR','KRW'),
+    ('yf','^FTSE','FTSE.GB','富时100','GB','GBP'),
+    ('yf','^GDAXI','GDAXI.DE','德国DAX','DE','EUR'),
+    ('yf','^FCHI','FCHI.FR','法国CAC40','FR','EUR'),
+    ('yf','^TWII','TWII.TW','台湾加权','TW','TWD'),
+    ('yf','^STI','STI.SG','新加坡STI','SG','SGD'),
+    ('yf','^BSESN','BSESN.IN','印度SENSEX','IN','INR'),
+    ('yf','^AXJO','AXJO.AU','澳洲ASX200','AU','AUD'),
+    ('yf','^GSPTSE','GSPTSE.CA','加拿大TSX','CA','CAD'),
+    ('yf','^BVSP','BVSP.BR','巴西Bovespa','BR','BRL'),
+    # 商品/汇率 — Yahoo
+    ('yf','DX-Y.NYB','DXY.IDX','美元指数','IDX','USD'),
+    ('yf','GC=F','XAU.CMD','黄金/美元','CMD','USD'),
+    ('yf','BTC-USD','BTC.CCY','比特币/美元','CCY','USD'),
+    ('yf','CL=F','CL.CMD','WTI原油','CMD','USD'),
+]
+
+
+def fetch_indices(cfg: dict, start: str, end: str, dry_run: bool, log: logging.Logger) -> None:
+    log.info(f"=== 指数/商品 (Yahoo+Sina) | {start} ~ {end} ===")
+
+    proxy_url = cfg.get("proxy_url", "").strip()
+    if proxy_url:
+        os.environ["HTTP_PROXY"] = proxy_url
+        os.environ["HTTPS_PROXY"] = proxy_url
+
+    conn = None if dry_run else get_conn(cfg)
+
+    def ensure_stock(db_symbol, name, market, currency):
+        if dry_run:
+            return -1
+        cur = conn.cursor()
+        cur.execute("SELECT id FROM stocks WHERE symbol=%s", (db_symbol,))
+        row = cur.fetchone()
+        if row:
+            cur.close()
+            return row[0]
+        try:
+            cur.execute(
+                "INSERT IGNORE INTO stocks (symbol, name, market, currency) VALUES (%s,%s,%s,%s)",
+                (db_symbol, name, market, currency))
+            conn.commit()
+        except Exception:
+            pass
+        cur.execute("SELECT id FROM stocks WHERE symbol=%s", (db_symbol,))
+        row = cur.fetchone()
+        cur.close()
+        return row[0] if row else None
+
+    def fetch_sina(code, start, end):
+        """Sina K-line via JSON API"""
+        import urllib.request, json
+        url = (f"https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
+               f"CN_MarketData.getKLineData?symbol={code}&scale=240&ma=no&datalen=5000")
+        for attempt in range(3):
+            try:
+                req = urllib.request.Request(url, headers={
+                    'User-Agent': 'Mozilla/5.0',
+                    'Referer': 'https://finance.sina.com.cn/',
+                })
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    data = json.loads(resp.read().decode('utf-8'))
+                if not isinstance(data, list):
+                    raise ValueError(f"Unexpected response")
+                rows = []
+                for item in data:
+                    d = item['day']
+                    if start <= d <= end:
+                        rows.append((
+                            d,
+                            round(float(item['open']), 4),
+                            round(float(item['close']), 4),
+                            round(float(item['high']), 4),
+                            round(float(item['low']), 4),
+                            int(float(item['volume'])),
+                        ))
+                return rows
+            except Exception:
+                if attempt < 2:
+                    time.sleep(2)
+                else:
+                    raise
+        return []
+
+    def fetch_yf(ticker, start, end):
+        """Yahoo Finance K-line, returns same format as fetch_us_stocks"""
+        import yfinance as yf
+        t = yf.Ticker(ticker)
+        hist = t.history(start=start, end=end, interval="1d", auto_adjust=True)
+        if hist.empty:
+            return []
+        rows = []
+        for dt, row in hist.iterrows():
+            try:
+                o = float(row["Open"])
+                c = float(row["Close"])
+                h = float(row["High"])
+                l = float(row["Low"])
+                v = int(float(row["Volume"]))
+                if any(math.isnan(x) for x in [o, c, h, l]):
+                    continue
+                rows.append((dt.strftime("%Y-%m-%d"), round(o,4), round(c,4), round(h,4), round(l,4), v))
+            except (ValueError, KeyError):
+                continue
+        return rows
+
+    if dry_run:
+        log.info(f"[dry-run] 测试 {len(_INDICES)} 个指数 K 线请求")
+        for src, ticker, db_sym, name, mkt, cur in _INDICES[:5]:
+            rows = fetch_yf(ticker, start, end) if src == 'yf' else fetch_sina(ticker, start, end)
+            log.info(f"  {name}({db_sym}) → {len(rows)} 行")
+        return
+
+    total_rows = 0
+    errors = 0
+    import yfinance as yf
+    for seq, (src, ticker, db_sym, name, mkt, cur) in enumerate(_INDICES, 1):
+        sid = ensure_stock(db_sym, name, mkt, cur)
+        if not sid:
+            errors += 1
+            continue
+        try:
+            rows = fetch_yf(ticker, start, end) if src == 'yf' else fetch_sina(ticker, start, end)
+            if rows:
+                db_rows = [(sid, r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
+                n = upsert_prices(conn, db_rows)
+                total_rows += n
+                log.info(f"  [{seq}/{len(_INDICES)}] {name}({db_sym}) → {n}行")
+            else:
+                log.info(f"  [{seq}/{len(_INDICES)}] {name}({db_sym}) → 无数据")
+        except Exception as e:
+            errors += 1
+            log.info(f"  [{seq}/{len(_INDICES)}] {name}({db_sym}) → 错误: {e}")
+        time.sleep(0.3)
+
+    if conn:
+        conn.close()
+    log.info(f"指数完成: 写入 {total_rows} 行，错误 {errors}")
+
+
 # ─── 入口 ─────────────────────────────────────────────────────────────────────
 
 def parse_args():
@@ -644,7 +803,7 @@ def parse_args():
     )
     p.add_argument(
         "-m", "--market",
-        choices=["a", "hk", "us", "all", "auto"],
+        choices=["a", "hk", "us", "idx", "all", "auto"],
         default="auto",
         help="抓取市场 (默认: auto，按当前时间自动判断)",
     )
@@ -695,6 +854,7 @@ def main():
     do_a   = market in ("a",  "all")
     do_hk  = market in ("hk", "all")
     do_us  = market in ("us", "all")
+    do_idx = market in ("idx","all")
 
     mode = "[DRY-RUN] " if args.dry_run else ""
     log.info(f"{mode}抓取市场: {market.upper()} | 区间: {start} ~ {end}")
@@ -721,6 +881,9 @@ def main():
 
     if do_us:
         fetch_us_stocks(cfg, start, end, args.dry_run, log)
+
+    if do_idx:
+        fetch_indices(cfg, start, end, args.dry_run, log)
 
     elapsed = time.time() - t0
     log.info(f"全部完成，耗时 {elapsed:.1f}s")
