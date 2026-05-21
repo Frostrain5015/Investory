@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { shortSymbol } from '@/lib/format'
+import { Plus } from 'lucide-react'
 
 interface Div { id: number; stockName?: string; stockSymbol?: string; amountPerShare: number; sharesHeld: number; totalAmount: number; recordDate: string }
 
@@ -33,7 +34,7 @@ export default function Dividends() {
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">分红记录</h2>
         <Link to="/transactions/add?type=DIV"
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
-          添加分红
+          <Plus className="w-3.5 h-3.5" />添加分红
         </Link>
       </div>
       <Card>

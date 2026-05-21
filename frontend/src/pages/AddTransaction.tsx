@@ -53,21 +53,34 @@ export default function AddTransaction() {
 
   useEffect(() => {
     if (!editId) return
-    fetch(`/investory/api/transactions/${editId}`, { credentials: 'include' })
+    const isDiv = initType === 'DIV'
+    const url = isDiv
+      ? `/investory/api/dividends/${editId}`
+      : `/investory/api/transactions/${editId}`
+    fetch(url, { credentials: 'include' })
       .then(r => r.json())
       .then(item => {
         if (!item || item.error) return
-        setType(item.type)
-        setTxStockId(item.stockId || 0)
-        setShares(String(item.shares || ''))
-        setPrice(String(item.price || ''))
-        setFee(String(item.fee || ''))
-        setTradeDate(item.date)
-        setNote(item.note || '')
-        setCurrency(item.currency || 'CNY')
-        if (item.stockSymbol) {
+        if (isDiv) {
+          setType('DIV')
+          setTxStockId(item.stockId || 0)
+          setDividendPerShare(String(item.amountPerShare || ''))
+          setTradeDate(item.date)
           setStockQuery(item.stockName || '')
-          setSelectedStock({ id: String(item.stockId || 0), symbol: item.stockSymbol, name: item.stockName, market: item.stockMarket || '', currency: item.currency || 'CNY', price: 0 })
+          setSelectedStock({ id: String(item.stockId || 0), symbol: item.stockSymbol, name: item.stockName, market: '', currency: 'CNY', price: 0 })
+        } else {
+          setType(item.type)
+          setTxStockId(item.stockId || 0)
+          setShares(String(item.shares || ''))
+          setPrice(String(item.price || ''))
+          setFee(String(item.fee || ''))
+          setTradeDate(item.date)
+          setNote(item.note || '')
+          setCurrency(item.currency || 'CNY')
+          if (item.stockSymbol) {
+            setStockQuery(item.stockName || '')
+            setSelectedStock({ id: String(item.stockId || 0), symbol: item.stockSymbol, name: item.stockName, market: item.stockMarket || '', currency: item.currency || 'CNY', price: 0 })
+          }
         }
       })
   }, [editId])
@@ -85,17 +98,29 @@ export default function AddTransaction() {
       const form = new URLSearchParams({
         stockId: '0', type, shares, price: '0', tradeDate, currency, note: note || '',
       })
-      await fetch('/investory/api/transactions', {
-        method: 'POST', credentials: 'include',
+      const url = editId ? `/investory/api/transactions/${editId}` : '/investory/api/transactions'
+      const res = await fetch(url, {
+        method: editId ? 'PUT' : 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString(),
       })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        if (body.error === 'INSUFFICIENT_CASH') {
+          setSubmitError(`现金余额不足：${CURRENCY_SYMBOL[currency] ?? currency}${Number(body.balance).toFixed(2)}，本次需要 ${CURRENCY_SYMBOL[currency] ?? currency}${Number(body.required).toFixed(2)}，请先转入资金`)
+        } else {
+          setSubmitError('提交失败，请稍后重试')
+        }
+        setSubmitting(false)
+        return
+      }
     } else if (type === 'DIV' && selectedStock) {
       const form = new URLSearchParams({
-        stockId: String(selectedStock.id), amountPerShare: dividendPerShare, recordDate: tradeDate,
+        stockId: String(editId ? txStockId : selectedStock.id), amountPerShare: dividendPerShare, recordDate: tradeDate,
       })
-      await fetch('/investory/api/dividends', {
-        method: 'POST', credentials: 'include',
+      const url = editId ? `/investory/api/dividends/${editId}` : '/investory/api/dividends'
+      await fetch(url, {
+        method: editId ? 'PUT' : 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: form.toString(),
       })

@@ -63,6 +63,24 @@ public class DividendDao extends BaseDao {
             Date.valueOf(d.getRecordDate()));
     }
 
+    public Dividend findById(long id) {
+        List<Dividend> result = query("""
+            SELECT d.*, s.name AS stock_name, s.symbol AS stock_symbol
+            FROM dividends d JOIN stocks s ON d.stock_id = s.id
+            WHERE d.id = ?
+            """, this::map, id);
+        return result.isEmpty() ? null : result.get(0);
+    }
+
+    public void update(Dividend d) {
+        update("""
+            UPDATE dividends SET amount_per_share=?, shares_held=?, total_amount=?, record_date=?
+            WHERE id=?
+            """,
+            d.getAmountPerShare(), d.getSharesHeld(), d.getTotalAmount(),
+            Date.valueOf(d.getRecordDate()), d.getId());
+    }
+
     public void delete(long id) {
         update("DELETE FROM dividends WHERE id = ?", id);
     }

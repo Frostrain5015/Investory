@@ -348,13 +348,79 @@ public class DataApiController {
     }
 
     @PutMapping("/transactions/{id}")
-    public Map<String, String> updateTransaction(@PathVariable long id,
+    public ResponseEntity<Map<String, Object>> updateTransaction(@PathVariable long id,
             @RequestParam long stockId, @RequestParam String type,
             @RequestParam BigDecimal shares, @RequestParam BigDecimal price,
             @RequestParam(required = false) String fee, @RequestParam String tradeDate,
+            @RequestParam(required = false) String currency,
             @RequestParam(required = false) String note, HttpServletRequest req) {
         long portfolioId = getPortfolioId(req);
         BigDecimal feeVal = (fee != null && !fee.isBlank()) ? new BigDecimal(fee) : BigDecimal.ZERO;
+
+        // Find old transaction and reverse its cash effect
+        Transaction old = transactionDao.findById(id);
+        if (old == null || old.getPortfolioId() != portfolioId) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Not found"));
+        }
+        reverseCashEffect(portfolioId, old);
+
+        // Determine currency for the new values
+        String cur = currency;
+        if ((cur == null || cur.isBlank()) && stockId > 0) {
+            cur = getStockCurrency(stockId);
+        }
+        if (cur == null || cur.isBlank()) cur = "CNY";
+
+        // Guard: check cash balance for BUY
+        if ("BUY".equals(type)) {
+            BigDecimal cost = shares.multiply(price).add(feeVal);
+            List<BigDecimal> rows = jdbc.queryForList(
+                "SELECT amount FROM cash_balances WHERE portfolio_id=? AND currency=?", BigDecimal.class, portfolioId, cur);
+            BigDecimal balance = rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
+            if (balance == null) balance = BigDecimal.ZERO;
+            if (balance.compareTo(cost) < 0) {
+                // Reverse the reversal (re-apply old cash effect) so state is consistent
+                applyCashEffect(portfolioId, old);
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("error", "INSUFFICIENT_CASH");
+                err.put("balance", balance);
+                err.put("required", cost);
+                err.put("currency", cur);
+                return ResponseEntity.badRequest().body(err);
+            }
+        }
+
+        // Apply new cash effect
+        if ("BUY".equals(type)) {
+            BigDecimal cost = shares.multiply(price).add(feeVal);
+            jdbc.update("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?",
+                cost, portfolioId, cur);
+        } else if ("SELL".equals(type)) {
+            BigDecimal proceeds = shares.multiply(price).subtract(feeVal);
+            jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                portfolioId, cur, proceeds, proceeds);
+        } else if ("TRANSFER_IN".equals(type)) {
+            jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                portfolioId, cur, shares, shares);
+        } else if ("TRANSFER_OUT".equals(type)) {
+            BigDecimal transferAmount = shares;
+            List<BigDecimal> rows = jdbc.queryForList(
+                "SELECT amount FROM cash_balances WHERE portfolio_id=? AND currency=?", BigDecimal.class, portfolioId, cur);
+            BigDecimal balance = rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
+            if (balance == null) balance = BigDecimal.ZERO;
+            if (balance.compareTo(transferAmount) < 0) {
+                applyCashEffect(portfolioId, old);
+                Map<String, Object> err = new LinkedHashMap<>();
+                err.put("error", "INSUFFICIENT_CASH");
+                err.put("balance", balance);
+                err.put("required", transferAmount);
+                err.put("currency", cur);
+                return ResponseEntity.badRequest().body(err);
+            }
+            jdbc.update("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?",
+                transferAmount, portfolioId, cur);
+        }
+
         Transaction t = new Transaction();
         t.setId(id);
         t.setPortfolioId(portfolioId);
@@ -368,9 +434,61 @@ public class DataApiController {
         transactionDao.update(t);
         holdingService.rebuildHolding(portfolioId, stockId);
         valueCalculator.backfillFrom(portfolioId, LocalDate.parse(tradeDate));
-        Map<String, String> result = new LinkedHashMap<>();
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("status", "ok");
-        return result;
+        return ResponseEntity.ok(result);
+    }
+
+    /** Reverse the cash balance effect of a transaction (used before editing or deleting). */
+    private void reverseCashEffect(long portfolioId, Transaction old) {
+        String type = old.getType();
+        String cur = old.getCurrency();
+        if (cur == null && old.getStockId() != null && old.getStockId() > 0) {
+            cur = getStockCurrency(old.getStockId());
+        }
+        if (cur == null) cur = "CNY";
+
+        if ("BUY".equals(type)) {
+            BigDecimal cost = old.getShares().multiply(old.getPrice()).add(old.getFee());
+            jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                portfolioId, cur, cost, cost);
+        } else if ("SELL".equals(type)) {
+            BigDecimal proceeds = old.getShares().multiply(old.getPrice()).subtract(old.getFee());
+            jdbc.update("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?",
+                proceeds, portfolioId, cur);
+        } else if ("TRANSFER_IN".equals(type)) {
+            jdbc.update("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?",
+                old.getShares(), portfolioId, cur);
+        } else if ("TRANSFER_OUT".equals(type)) {
+            jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                portfolioId, cur, old.getShares(), old.getShares());
+        }
+    }
+
+    /** Apply the cash balance effect of a transaction (used after rolling back a failed edit). */
+    private void applyCashEffect(long portfolioId, Transaction t) {
+        String type = t.getType();
+        String cur = t.getCurrency();
+        if (cur == null && t.getStockId() != null && t.getStockId() > 0) {
+            cur = getStockCurrency(t.getStockId());
+        }
+        if (cur == null) cur = "CNY";
+
+        if ("BUY".equals(type)) {
+            BigDecimal cost = t.getShares().multiply(t.getPrice()).add(t.getFee());
+            jdbc.update("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?",
+                cost, portfolioId, cur);
+        } else if ("SELL".equals(type)) {
+            BigDecimal proceeds = t.getShares().multiply(t.getPrice()).subtract(t.getFee());
+            jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                portfolioId, cur, proceeds, proceeds);
+        } else if ("TRANSFER_IN".equals(type)) {
+            jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?",
+                portfolioId, cur, t.getShares(), t.getShares());
+        } else if ("TRANSFER_OUT".equals(type)) {
+            jdbc.update("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?",
+                t.getShares(), portfolioId, cur);
+        }
     }
 
     @DeleteMapping("/transactions/{id}")
@@ -452,12 +570,54 @@ public class DataApiController {
     @DeleteMapping("/dividends/{id}")
     public Map<String, String> deleteDividend(@PathVariable long id, HttpServletRequest req) {
         long portfolioId = getPortfolioId(req);
-        dividendDao.findByPortfolio(portfolioId).stream()
-            .filter(d -> d.getId() == id).findFirst().ifPresent(d -> {
-                dividendDao.delete(id);
-                holdingService.rebuildHolding(portfolioId, d.getStockId());
-            });
+        Dividend d = dividendDao.findById(id);
+        if (d != null && d.getPortfolioId() == portfolioId) {
+            dividendDao.delete(id);
+            holdingService.rebuildHolding(portfolioId, d.getStockId());
+        }
         Map<String, String> result = new LinkedHashMap<>();
+        result.put("status", "ok");
+        return result;
+    }
+
+    @GetMapping("/dividends/{id}")
+    public Map<String, Object> getDividend(@PathVariable long id, HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        Dividend d = dividendDao.findById(id);
+        if (d == null || d.getPortfolioId() != portfolioId) return Map.of("error", "Not found");
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id",              d.getId());
+        m.put("stockId",         d.getStockId());
+        m.put("stockName",       d.getStockName());
+        m.put("stockSymbol",     d.getStockSymbol());
+        m.put("amountPerShare",  d.getAmountPerShare());
+        m.put("sharesHeld",     d.getSharesHeld());
+        m.put("totalAmount",    d.getTotalAmount());
+        m.put("date",           d.getRecordDate().toString());
+        return m;
+    }
+
+    @PutMapping("/dividends/{id}")
+    public Map<String, Object> updateDividend(@PathVariable long id,
+            @RequestParam long stockId, @RequestParam BigDecimal amountPerShare,
+            @RequestParam String recordDate, HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        Dividend old = dividendDao.findById(id);
+        if (old == null || old.getPortfolioId() != portfolioId) return Map.of("error", "Not found");
+        Holding h = holdingDao.findByPortfolioAndStock(portfolioId, stockId);
+        BigDecimal sharesHeld = h != null ? h.getTotalShares() : old.getSharesHeld();
+        Dividend d = new Dividend();
+        d.setId(id);
+        d.setPortfolioId(portfolioId);
+        d.setStockId(stockId);
+        d.setAmountPerShare(amountPerShare);
+        d.setSharesHeld(sharesHeld);
+        d.setTotalAmount(amountPerShare.multiply(sharesHeld));
+        d.setRecordDate(LocalDate.parse(recordDate));
+        dividendDao.update(d);
+        holdingService.rebuildHolding(portfolioId, stockId);
+        valueCalculator.backfillFrom(portfolioId, LocalDate.parse(recordDate));
+        Map<String, Object> result = new LinkedHashMap<>();
         result.put("status", "ok");
         return result;
     }

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { Card, CardContent } from '@/components/ui/card'
 import { displaySymbol } from '@/lib/format'
-import { Pencil, Trash2 } from 'lucide-react'
+import { Pencil, Trash2, Plus } from 'lucide-react'
 
 interface Activity {
   id: number; date: string; type: 'BUY' | 'SELL' | 'DIV' | 'TRANSFER_IN' | 'TRANSFER_OUT'
@@ -60,7 +60,7 @@ export default function Transactions() {
           </button>
           <Link to="/transactions/add"
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
-            添加交易
+            <Plus className="w-3.5 h-3.5" />添加交易
           </Link>
         </div>
       </div>
@@ -117,12 +117,10 @@ export default function Transactions() {
                         <td className="pr-6 text-right">
                           {managing && (
                             <div className="flex items-center gap-2 justify-end">
-                              {item.type !== 'DIV' && (
-                                <Link to={`/transactions/add?edit=${item.id}`}
-                                  className="text-slate-400 hover:text-blue-500 transition-colors">
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </Link>
-                              )}
+                              <Link to={`/transactions/add?edit=${item.id}${item.type === 'DIV' ? '&type=DIV' : ''}`}
+                                className="text-slate-400 hover:text-blue-500 transition-colors">
+                                <Pencil className="w-3.5 h-3.5" />
+                              </Link>
                               <button onClick={() => handleDelete(item.id, item.type)}
                                 className="text-slate-400 hover:text-red-500 transition-colors">
                                 <Trash2 className="w-3.5 h-3.5" />
