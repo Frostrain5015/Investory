@@ -72,10 +72,30 @@ public class RealtimeQuoteService {
         return safeDecimal(data, "f2");
     }
 
+    // ── Symbol helpers ───────────────────────────────────────────────────
+
+    /** Extract the raw ticker from the symbol, which may be in either
+     *  EastMoney format (\"1.600519\") or human-readable format (\"XPEV.US\"). */
+    private static String getTicker(Stock stock) {
+        String symbol = stock.getSymbol();
+        int dot = symbol.indexOf('.');
+        if (dot < 0) return symbol;
+        // SH/SZ stocks use EastMoney market-prefix format: market_code.ticker
+        if ("SH".equals(stock.getMarket()) || "SZ".equals(stock.getMarket())) {
+            return symbol.substring(dot + 1);
+        }
+        // US/HK stocks use human-readable format: ticker.market
+        return symbol.substring(0, dot);
+    }
+
     // ── Sina ────────────────────────────────────────────────────────────
 
     private BigDecimal fetchFromSina(Stock stock) throws Exception {
-        String code = stock.getSymbol().substring(stock.getSymbol().indexOf('.') + 1);
+        // Sina only supports Chinese A-shares
+        if (!"SH".equals(stock.getMarket()) && !"SZ".equals(stock.getMarket())) {
+            throw new Exception("Sina does not support non-A-share stocks");
+        }
+        String code = getTicker(stock);
         String prefix = "SH".equals(stock.getMarket()) ? "sh" : "sz";
         String url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
                 + "CN_MarketData.getKLineData?symbol=" + prefix + code
@@ -89,14 +109,13 @@ public class RealtimeQuoteService {
 
     // ── Yahoo Finance ────────────────────────────────────────────────────
 
-    private String toYahooSymbol(Stock stock) {
-        String code = stock.getSymbol().substring(stock.getSymbol().indexOf('.') + 1);
+    private static String toYahooSymbol(Stock stock) {
+        String ticker = getTicker(stock);
         return switch (stock.getMarket()) {
-            case "SH" -> code + ".SS";
-            case "SZ" -> code + ".SZ";
-            case "HK" -> code + ".HK";
-            case "US" -> code;
-            default   -> code;
+            case "SH" -> ticker + ".SS";
+            case "SZ" -> ticker + ".SZ";
+            case "HK" -> String.format("%04d", Integer.parseInt(ticker)) + ".HK";
+            default   -> ticker;
         };
     }
 
