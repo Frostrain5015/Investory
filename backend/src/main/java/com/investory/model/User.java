@@ -7,6 +7,7 @@ public class User {
     private String username;
     private String passwordHash;
     private String email;
+    private boolean isAdmin;
     private LocalDateTime createdAt;
 
     public User() {}
@@ -19,6 +20,8 @@ public class User {
     public void setPasswordHash(String passwordHash) { this.passwordHash = passwordHash; }
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
+    public boolean isAdmin() { return isAdmin; }
+    public void setAdmin(boolean admin) { isAdmin = admin; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

@@ -29,7 +29,7 @@ public class SpaController {
     // Serve the React SPA for all non-API GET routes
     @GetMapping(value = {"/", "/login", "/register", "/market", "/watchlist", "/dashboard", "/portfolio",
         "/holdings", "/transactions", "/transactions/**", "/dividends", "/dividends/**",
-        "/stock", "/pnl-calendar"})
+        "/stock", "/pnl-calendar", "/admin"})
     @ResponseBody
     public String serveSpa() throws IOException {
         Resource resource = new ClassPathResource("static/index.html");
@@ -45,6 +45,7 @@ public class SpaController {
         HttpSession session = req.getSession(true);
         session.setAttribute("userId",   user.getId());
         session.setAttribute("username", user.getUsername());
+        session.setAttribute("isAdmin",  user.isAdmin());
         List<Portfolio> portfolios = portfolioDao.findByUser(user.getId());
         if (!portfolios.isEmpty()) session.setAttribute("portfolioId", portfolios.get(0).getId());
         return "ok";

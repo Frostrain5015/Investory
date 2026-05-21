@@ -25,6 +25,7 @@ public class SessionController {
             result.put("userId",   session.getAttribute("userId"));
             result.put("username", session.getAttribute("username"));
             result.put("portfolioId", session.getAttribute("portfolioId"));
+            result.put("isAdmin",  Boolean.TRUE.equals(session.getAttribute("isAdmin")));
             result.put("authenticated", true);
         } else {
             result.put("authenticated", false);

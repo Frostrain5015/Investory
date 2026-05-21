@@ -6,6 +6,7 @@ import { ToastProvider } from '@/components/Toast'
 import Layout from '@/components/Layout'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
+import Admin from '@/pages/Admin'
 import Dashboard from '@/pages/Dashboard'
 import Market from '@/pages/Market'
 import Holdings from '@/pages/Holdings'
@@ -30,9 +31,9 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
-  const { authenticated, loading } = useAuth()
+  const { authenticated, loading, isAdmin } = useAuth()
   if (loading) return null
-  return !authenticated ? children : <Navigate to="/dashboard" replace />
+  return !authenticated ? children : <Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />
 }
 
 export default function App() {
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="/pnl-calendar" element={<PnlCalendar />} />
           <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/admin" element={<Admin />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>

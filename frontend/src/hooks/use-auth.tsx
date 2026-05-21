@@ -7,6 +7,7 @@ interface AuthState {
   username: string | null
   portfolioId: number | null
   portfolioName: string
+  isAdmin: boolean
   setPortfolioName: (name: string) => void
   authenticated: boolean
   loading: boolean
@@ -23,6 +24,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [username, setUsername] = useState<string | null>(null)
   const [portfolioId, setPortfolioId] = useState<number | null>(null)
   const [portfolioName, setPortfolioName] = useState('')
+  const [isAdmin, setIsAdmin] = useState(false)
   const [authenticated, setAuthenticated] = useState(false)
   const [loading, setLoading] = useState(true)
 
@@ -33,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUserId(data.userId)
           setUsername(data.username ?? null)
           setPortfolioId(data.portfolioId ?? null)
+          setIsAdmin(data.isAdmin ?? false)
           setAuthenticated(true)
         }
       })
@@ -49,6 +52,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUserId(data.userId)
           setUsername(data.username ?? null)
           setPortfolioId(data.portfolioId ?? null)
+          setIsAdmin(data.isAdmin ?? false)
           setAuthenticated(true)
         }
         return { success: true }
@@ -75,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ userId, username, portfolioId, portfolioName, setPortfolioName, authenticated, loading, login, register, logout, setPortfolioId }}>
+    <AuthContext.Provider value={{ userId, username, portfolioId, portfolioName, isAdmin, setPortfolioName, authenticated, loading, login, register, logout, setPortfolioId }}>
       {children}
     </AuthContext.Provider>
   )

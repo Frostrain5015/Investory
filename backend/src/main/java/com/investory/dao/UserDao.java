@@ -16,6 +16,7 @@ public class UserDao extends BaseDao {
         u.setUsername(rs.getString("username"));
         u.setPasswordHash(rs.getString("password_hash"));
         u.setEmail(rs.getString("email"));
+        try { u.setAdmin(rs.getBoolean("is_admin")); } catch (SQLException ignored) {}
         Timestamp ts = rs.getTimestamp("created_at");
         if (ts != null) u.setCreatedAt(ts.toLocalDateTime());
         return u;

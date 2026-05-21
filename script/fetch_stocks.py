@@ -341,22 +341,51 @@ def fetch_hk_stocks(
     cfg: dict, start: str, end: str, dry_run: bool,
     discover: bool, log: logging.Logger
 ) -> None:
-    log.info(f"=== 港股 (腾讯财经) | {start} ~ {end} ===")
+    log.info(f"=== 港股 (Yahoo Finance) | {start} ~ {end} ===")
+
+    # 代理必须在 import yfinance 之前注入 os.environ
+    proxy_url = cfg.get("proxy_url", "").strip()
+    if proxy_url:
+        os.environ["HTTP_PROXY"]  = proxy_url
+        os.environ["HTTPS_PROXY"] = proxy_url
+        log.info(f"已设置代理: {proxy_url}")
+    else:
+        log.warning("未配置 proxy_url，从大陆直连 Yahoo Finance 可能失败")
+
+    try:
+        import yfinance as yf
+    except ImportError:
+        log.error("缺少依赖: pip install yfinance")
+        return
 
     conn = None if dry_run else get_conn(cfg)
 
-    if discover and not dry_run:
-        log.info("扫描新港股...")
-        found = _discover_hk(conn, log)
-        log.info(f"发现新港股: {found} 只")
+    def fetch_kline(ticker: str) -> list:
+        t    = yf.Ticker(ticker)
+        hist = t.history(start=start, end=end, interval="1d", auto_adjust=True)
+        if hist.empty:
+            return []
+        rows = []
+        for dt, row in hist.iterrows():
+            try:
+                rows.append((
+                    dt.strftime("%Y-%m-%d"),
+                    round(float(row["Open"]),  4),
+                    round(float(row["Close"]), 4),
+                    round(float(row["High"]),  4),
+                    round(float(row["Low"]),   4),
+                    int(float(row["Volume"])),
+                ))
+            except (ValueError, KeyError):
+                continue
+        return rows
 
     if dry_run:
-        # dry-run: 直接抓几只验证格式
-        test_codes = ["00001", "00700", "09988"]
+        test_codes = ["0001.HK", "0700.HK", "9988.HK"]
         log.info(f"[dry-run] 测试 {len(test_codes)} 只港股 K 线请求")
-        for code5d in test_codes:
-            rows = _tencent_kline(code5d, start, end)
-            log.info(f"  {code5d}.HK → {len(rows)} 行" + (f"，最新: {rows[-1]}" if rows else "，无数据"))
+        for ticker in test_codes:
+            rows = fetch_kline(ticker)
+            log.info(f"  {ticker} → {len(rows)} 行" + (f"，最新: {rows[-1]}" if rows else "，无数据"))
         return
 
     cur = conn.cursor()
@@ -379,7 +408,15 @@ def fetch_hk_stocks(
             skipped = False
             continue
 
-        krows  = _tencent_kline(code5d, start, end)
+        # Yahoo Finance HK ticker: 4-digit zero-padded format (00001 → 0001.HK)
+        try:
+            yahoo_ticker = f"{int(code5d):04d}.HK"
+        except ValueError:
+            log.warning(f"  [{seq}/{len(stocks)}] {name}({symbol}) → 无法解析代码，跳过")
+            no_data += 1
+            continue
+
+        krows = fetch_kline(yahoo_ticker)
 
         if krows:
             db_rows = [(stock_id, r[0], r[1], r[2], r[3], r[4], r[5]) for r in krows]
@@ -390,11 +427,12 @@ def fetch_hk_stocks(
 
         save_checkpoint("hk", code5d)
         pct = seq / len(stocks) * 100
-        log.info(f"  [{seq}/{len(stocks)} {pct:.1f}%] {name}({code5d}.HK) → {n if krows else 0}行")
+        log.info(f"  [{seq}/{len(stocks)} {pct:.1f}%] {name}({symbol}) → {n if krows else 0}行")
         time.sleep(cfg["delay_hk"])
 
     clear_checkpoint("hk")
-    conn.close()
+    if conn:
+        conn.close()
     log.info(f"港股完成: 写入 {total_rows} 行，无数据(停牌/错误) {no_data} 只")
 
 

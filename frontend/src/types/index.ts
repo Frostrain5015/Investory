@@ -104,6 +104,7 @@ export interface SessionResponse {
   userId?: number
   username?: string
   portfolioId?: number
+  isAdmin?: boolean
 }
 
 export interface DashboardResponse {
