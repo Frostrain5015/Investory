@@ -60,9 +60,9 @@
 
         <!-- Pinyin4j for Chinese → pinyin conversion (stock search) -->
         <dependency>
-            <groupId>net.sourceforge.pinyin4j</groupId>
+            <groupId>com.belerweb</groupId>
             <artifactId>pinyin4j</artifactId>
-            <version>2.5.0</version>
+            <version>2.5.1</version>
         </dependency>
     </dependencies>
 
