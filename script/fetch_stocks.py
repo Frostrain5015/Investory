@@ -653,6 +653,14 @@ def parse_args():
         help="抓取最近 N 个日历日（覆盖 config.ini 的 days_back）",
     )
     p.add_argument(
+        "--start", type=str, default=None,
+        help="起始日期 YYYY-MM-DD（覆盖 --days）",
+    )
+    p.add_argument(
+        "--end", type=str, default=None,
+        help="结束日期 YYYY-MM-DD（覆盖 --days，默认今天）",
+    )
+    p.add_argument(
         "--discover", action="store_true",
         help="港股: 扫描腾讯 API 发现新股补入 stocks 表（仅 -m hk/all 有效）",
     )
@@ -675,9 +683,13 @@ def main():
     if args.days is not None:
         cfg["days_back"] = args.days
 
-    days_back = cfg["days_back"]
-    start = (datetime.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
-    end   = datetime.today().strftime("%Y-%m-%d")
+    if args.start:
+        start = args.start
+        end   = args.end if args.end else datetime.today().strftime("%Y-%m-%d")
+    else:
+        days_back = cfg["days_back"]
+        start = (datetime.today() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        end   = datetime.today().strftime("%Y-%m-%d")
 
     market = args.market if args.market != "auto" else auto_market()
     do_a   = market in ("a",  "all")

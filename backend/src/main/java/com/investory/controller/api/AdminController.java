@@ -88,7 +88,8 @@ public class AdminController {
 
     @GetMapping("/crawl/{market}")
     public SseEmitter startCrawl(@PathVariable String market,
-            @RequestParam(defaultValue = "36500") int days,
+            @RequestParam(defaultValue = "") String start,
+            @RequestParam(defaultValue = "") String end,
             HttpServletRequest req) {
         SseEmitter emitter = new SseEmitter(0L);
 
@@ -105,12 +106,14 @@ public class AdminController {
         }
 
         String label = market.equals("all") ? "全市场" : market.toUpperCase();
-        String daysBack = String.valueOf(Math.max(1, Math.min(days, 36500)));
+        // Use custom date range if provided; fallback to 10 days
+        final String startDate = start.isBlank() ? java.time.LocalDate.now().minusDays(10).toString() : start;
+        final String endDate = end.isBlank() ? java.time.LocalDate.now().toString() : end;
 
         executor.submit(() -> {
             try {
                 emit(emitter, "status", Map.of("msg",
-                    String.format("启动 %s 抓取 (近 %s 天)...", label, daysBack), "market", market));
+                    String.format("启动 %s 抓取 (%s ~ %s)...", label, startDate, endDate), "market", market));
                 // Try multiple paths: working dir/script (cloud), then ../script (local dev)
                 File script = new File("script/fetch_stocks.py");
                 if (!script.exists()) {
@@ -125,7 +128,7 @@ public class AdminController {
 
                 ProcessBuilder pb = new ProcessBuilder(
                     pythonExecutable, script.getAbsolutePath(),
-                    "-m", market, "--days", daysBack
+                    "-m", market, "--start", startDate, "--end", endDate
                 );
                 pb.directory(scriptDir);
                 pb.redirectErrorStream(true);

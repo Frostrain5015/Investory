@@ -11,14 +11,8 @@ interface SseEvent { event: string; msg?: string; current?: number; total?: numb
 
 const MARKET_LABELS: Record<string, string> = { SH: 'A股(沪)', SZ: 'A股(深)', HK: '港股', US: '美股' }
 
-const DAYS_OPTIONS = [
-  { label: '10天', value: 10 },
-  { label: '30天', value: 30 },
-  { label: '90天', value: 90 },
-  { label: '1年', value: 365 },
-  { label: '3年', value: 1095 },
-  { label: '全部', value: 36500 },
-]
+function todayStr() { return new Date().toISOString().slice(0, 10) }
+function daysAgoStr(n: number) { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10) }
 
 export default function Admin() {
   const { isAdmin } = useAuth()
@@ -28,7 +22,8 @@ export default function Admin() {
   const [progress, setProgress] = useState<ProgressData | null>(null)
   const [logs, setLogs] = useState<string[]>([])
   const [doneMsg, setDoneMsg] = useState<string | null>(null)
-  const [daysBack, setDaysBack] = useState(10)
+  const [dateStart, setDateStart] = useState(daysAgoStr(10))
+  const [dateEnd, setDateEnd] = useState(todayStr())
   const logEndRef = useRef<HTMLDivElement>(null)
 
   const fetchStatus = useCallback(() => {
@@ -51,7 +46,7 @@ export default function Admin() {
     setLogs([])
     setDoneMsg(null)
 
-    const eventSource = new EventSource(`/investory/api/admin/crawl/${market}?days=${daysBack}`)
+    const eventSource = new EventSource(`/investory/api/admin/crawl/${market}?start=${dateStart}&end=${dateEnd}`)
 
     eventSource.addEventListener('status', (e) => {
       const d: SseEvent = JSON.parse(e.data)
@@ -100,16 +95,12 @@ export default function Admin() {
           <p className="text-xs text-slate-400 mt-1">数据库状态 & 数据抓取控制</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="text-[10px] text-slate-400">范围</span>
-            <div className="flex bg-slate-100 rounded-lg p-0.5">
-              {DAYS_OPTIONS.map(o => (
-                <button key={o.value} onClick={() => setDaysBack(o.value)}
-                  className={`px-2 py-1 rounded-md text-[10px] font-medium transition-colors ${daysBack === o.value ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-                  {o.label}
-                </button>
-              ))}
-            </div>
+          <div className="flex items-center gap-1.5 text-xs">
+            <input type="date" value={dateStart} onChange={e => setDateStart(e.target.value)}
+              className="h-8 rounded-lg border border-slate-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
+            <span className="text-slate-400">—</span>
+            <input type="date" value={dateEnd} onChange={e => setDateEnd(e.target.value)}
+              className="h-8 rounded-lg border border-slate-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
           </div>
           <button onClick={() => startCrawl('all')}
             disabled={crawling !== null}
@@ -187,7 +178,7 @@ export default function Admin() {
                       <td className="px-3 py-1.5 text-right tabular-nums">{t.data_mb}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums">{t.index_mb}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{t.total_mb}</td>
-                      <td className="px-4 py-1.5 text-right tabular-nums">{Number(t.table_rows).toLocaleString()}</td>
+                      <td className="px-4 py-1.5 text-right tabular-nums">{t.table_rows != null ? Number(t.table_rows).toLocaleString() : '-'}</td>
                     </tr>
                   ))}
                 </tbody>

@@ -3,7 +3,7 @@ import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
-  LogOut, TrendingUp, User, Search, Menu
+  LogOut, TrendingUp, User, Search, Menu, Shield
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { searchStocks, getPortfolios } from '@/services/api'
@@ -19,7 +19,7 @@ const navItems = [
 ]
 
 export default function Layout() {
-  const { username, portfolioId, setPortfolioName, logout } = useAuth()
+  const { username, portfolioId, isAdmin, setPortfolioName, logout } = useAuth()
   const { positiveHex } = useSettings()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<StockSearchItem[]>([])
@@ -58,6 +58,13 @@ export default function Layout() {
             <Icon className="w-4 h-4" />{label}
           </NavLink>
         ))}
+        {isAdmin && (
+          <NavLink to="/admin" onClick={() => setSidebarOpen(false)}
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive ? 'bg-amber-800 text-amber-200' : 'text-amber-500 hover:text-amber-300 hover:bg-slate-800/50'}`} >
+            <Shield className="w-4 h-4" />管理后台
+          </NavLink>
+        )}
       </nav>
       <div className="p-3 border-t border-slate-800">
         <NavLink to="/settings" onClick={() => setSidebarOpen(false)}
