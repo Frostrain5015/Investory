@@ -3,6 +3,7 @@ package com.investory.service;
 import com.investory.crawler.RealtimeQuoteService;
 import com.investory.dao.*;
 import com.investory.model.*;
+import com.investory.model.Quote;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -59,9 +60,11 @@ public class HoldingService {
             snap.setTotalShares(h.getTotalShares());
 
             // Get price (before any conversion)
-            BigDecimal price = quoteService.getPrice(stock);
+            Quote quote = quoteService.getQuote(stock);
+            BigDecimal price = quote != null ? quote.price() : null;
             if (price == null) price = stockPriceDao.findLatestClose(h.getStockId());
             price = price != null ? price : h.getAvgCost();
+            if (quote != null) snap.setPriceTimestamp(quote.fetchedAt().toString());
 
             // Native values (original currency, before CNY conversion)
             snap.setNativePrice(price);

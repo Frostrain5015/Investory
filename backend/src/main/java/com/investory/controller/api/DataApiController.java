@@ -4,6 +4,7 @@ import com.investory.crawler.EastMoneyCrawler;
 import com.investory.crawler.RealtimeQuoteService;
 import com.investory.dao.*;
 import com.investory.model.*;
+import com.investory.model.Quote;
 import com.investory.service.AuthService;
 import com.investory.service.HoldingService;
 import com.investory.service.PortfolioAnalysisService;
@@ -450,7 +451,9 @@ public class DataApiController {
         result.put("holding",      holdingDao.findByPortfolioAndStock(portfolioId, stock.getId()));
         result.put("transactions", transactionDao.findByPortfolioAndStock(portfolioId, stock.getId()));
         result.put("dividends",    dividendDao.findByPortfolioAndStock(portfolioId, stock.getId()));
-        result.put("livePrice", quoteService.getPrice(stock));
+        Quote liveQuote = quoteService.getQuote(stock);
+        result.put("livePrice",   liveQuote != null ? liveQuote.price() : null);
+        result.put("livePriceTs", liveQuote != null ? liveQuote.fetchedAt().toString() : null);
         return result;
     }
 

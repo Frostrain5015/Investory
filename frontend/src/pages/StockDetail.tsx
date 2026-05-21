@@ -6,7 +6,7 @@ import { useSettings } from '@/hooks/use-settings'
 import type { StockDetailResponse, Transaction, Dividend, PriceData } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts'
-import { displaySymbol } from '@/lib/format'
+import { displaySymbol, fmtQuoteTime } from '@/lib/format'
 
 export default function StockDetail() {
   const [params] = useSearchParams()
@@ -44,8 +44,14 @@ export default function StockDetail() {
 
   const stock = data?.stock
   const holding = data?.holding
-  const currentPrice = priceData.length > 0 ? Number(priceData[priceData.length - 1].close) : null
-  const prevClose = priceData.length > 1 ? Number(priceData[priceData.length - 2].close) : null
+  const livePrice = data?.livePrice != null ? Number(data.livePrice) : null
+  const lastClose = priceData.length > 0 ? Number(priceData[priceData.length - 1].close) : null
+  const currentPrice = livePrice ?? lastClose
+  // prevClose: when live price available, compare against last historical close (yesterday);
+  // otherwise fall back to second-to-last so the chart-only case still shows a change %.
+  const prevClose = livePrice != null
+    ? lastClose
+    : priceData.length > 1 ? Number(priceData[priceData.length - 2].close) : null
   const changePct = currentPrice != null && prevClose != null && prevClose > 0
     ? ((currentPrice - prevClose) / prevClose * 100) : null
   const priceUp = changePct != null ? changePct >= 0 : true
@@ -90,6 +96,11 @@ export default function StockDetail() {
                 {changePct != null && (
                   <span className={`text-lg font-semibold tabular-nums ${changePct >= 0 ? positiveClass : negativeClass}`}>
                     {changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%
+                  </span>
+                )}
+                {data?.livePriceTs && (
+                  <span className="text-xs text-slate-400 self-end mb-0.5">
+                    实时 · {fmtQuoteTime(data.livePriceTs)}
                   </span>
                 )}
               </>

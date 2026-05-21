@@ -5,12 +5,12 @@ import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
 import { searchStocks, chartAPI } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/card'
-import { displaySymbol } from '@/lib/format'
+import { displaySymbol, fmtQuoteTime } from '@/lib/format'
 import Sparkline from '@/components/Sparkline'
 import type { StockSearchItem, PriceData } from '@/types'
 import { Search, X, Plus, GripVertical } from 'lucide-react'
 
-interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number; changeToday?: number; changePctToday?: number }
+interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number; changeToday?: number; changePctToday?: number; priceTimestamp?: string }
 
 export default function Holdings() {
   const { portfolioId } = useAuth()
@@ -79,6 +79,7 @@ export default function Holdings() {
           id: -(s.stockId), stock_id: s.stockId, symbol: s.stockSymbol, name: s.stockName,
           market: s.market, currency: s.currency || '', price: s.currentPrice || 0,
           changeToday: s.changeToday ?? 0, changePctToday: s.changePctToday ?? 0,
+          priceTimestamp: s.priceTimestamp,
         })
       }
 
@@ -208,7 +209,10 @@ export default function Holdings() {
                             ? <Sparkline data={sparkData[item.symbol]} />
                             : <div className="w-[60px] h-6 bg-slate-50 rounded" />}
                         </td>
-                        <td className="px-3 py-3 text-right tabular-nums">{valid ? Number(item.price).toFixed(2) : '—'}</td>
+                        <td className="px-3 py-3 text-right tabular-nums">
+                          <div>{valid ? Number(item.price).toFixed(2) : '—'}</div>
+                          {item.priceTimestamp && <div className="text-[10px] text-slate-400">{fmtQuoteTime(item.priceTimestamp)}</div>}
+                        </td>
                         <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
                           {valid ? `${up ? '+' : ''}${chg.toFixed(2)}` : '—'}
                         </td>

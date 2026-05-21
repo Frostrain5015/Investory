@@ -138,6 +138,8 @@ export interface StockDetailResponse {
   holding: Holding | null
   transactions: Transaction[]
   dividends: Dividend[]
+  livePrice?: number
+  livePriceTs?: string
 }
 
 export interface AllocationItem {

@@ -30,6 +30,7 @@ public class HoldingSnapshot {
     private BigDecimal nativeUnrealizedPnl;
     private BigDecimal changeToday;
     private BigDecimal changePctToday;
+    private String priceTimestamp; // ISO-8601 UTC instant when the live price was fetched
 
     public HoldingSnapshot() {}
 
@@ -96,4 +97,6 @@ public class HoldingSnapshot {
     public void setChangeToday(BigDecimal changeToday) { this.changeToday = changeToday; }
     public BigDecimal getChangePctToday() { return changePctToday; }
     public void setChangePctToday(BigDecimal changePctToday) { this.changePctToday = changePctToday; }
+    public String getPriceTimestamp() { return priceTimestamp; }
+    public void setPriceTimestamp(String priceTimestamp) { this.priceTimestamp = priceTimestamp; }
 }

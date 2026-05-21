@@ -12,7 +12,7 @@ import {
   AreaChart, Area, Tooltip, ResponsiveContainer
 } from 'recharts'
 import { getDashboard, getPortfolios } from '@/services/api'
-import { displaySymbol } from '@/lib/format'
+import { displaySymbol, fmtQuoteTime } from '@/lib/format'
 import CloudChart from '@/components/CloudChart'
 import ClosedPositions from '@/components/ClosedPositions'
 
@@ -23,6 +23,7 @@ interface Snapshot {
   currentPrice: number; marketValue: number; unrealizedPnl: number; unrealizedPnlPct: number
   changeToday: number; changePctToday: number
   nativePrice: number; nativeAvgCost: number; nativeInvested: number; nativeMarketValue: number; nativeUnrealizedPnl: number
+  priceTimestamp?: string
 }
 
 const COLORS = ['#0f172a', '#1e293b', '#334155', '#475569', '#64748b', '#94a3b8', '#cbd5e1',
@@ -400,7 +401,10 @@ export default function Dashboard() {
                         <span className="inline-flex items-center rounded-lg bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{s.market}</span>
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums">{s.totalShares}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{fmtVal(price)}</td>
+                      <td className="px-3 py-3 text-right tabular-nums">
+                        <div>{fmtVal(price)}</div>
+                        {s.priceTimestamp && <div className="text-[10px] text-slate-400">{fmtQuoteTime(s.priceTimestamp)}</div>}
+                      </td>
                       <td className="px-3 py-3 text-right tabular-nums">{fmtVal(cost)}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{fmtVal(diluted)}</td>
                       <td className="px-3 py-3 text-right font-medium tabular-nums">{fmtVal(mv)}</td>

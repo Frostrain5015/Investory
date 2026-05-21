@@ -4,12 +4,14 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.investory.dao.StockDao;
+import com.investory.model.Quote;
 import com.investory.model.Stock;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.net.URI;
+import java.time.Instant;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -35,12 +37,12 @@ public class RealtimeQuoteService {
 
     @Autowired private StockDao stockDao;
 
-    /** Get the best available real-time price for a stock. Returns null if all sources fail. */
-    public BigDecimal getPrice(Stock stock) {
-        List<Callable<BigDecimal>> tasks = List.of(
-            () -> fetchFromEastMoney(stock),
-            () -> fetchFromSina(stock),
-            () -> fetchFromYahoo(stock)
+    /** Get the best available real-time price with fetch timestamp. Returns null if all sources fail. */
+    public Quote getQuote(Stock stock) {
+        List<Callable<Quote>> tasks = List.of(
+            () -> new Quote(fetchFromEastMoney(stock), Instant.now()),
+            () -> new Quote(fetchFromSina(stock), Instant.now()),
+            () -> new Quote(fetchFromYahoo(stock), Instant.now())
         );
         ExecutorService executor = Executors.newFixedThreadPool(3);
         try {
@@ -51,6 +53,12 @@ public class RealtimeQuoteService {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    /** Convenience wrapper — returns only the price, null if all sources fail. */
+    public BigDecimal getPrice(Stock stock) {
+        Quote q = getQuote(stock);
+        return q != null ? q.price() : null;
     }
 
     // ── EastMoney ───────────────────────────────────────────────────────

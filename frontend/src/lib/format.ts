@@ -1,3 +1,13 @@
+/**
+ * Format an ISO-8601 UTC timestamp as a local HH:mm string.
+ * Returns empty string if ts is null/undefined.
+ */
+export function fmtQuoteTime(ts?: string | null): string {
+  if (!ts) return ''
+  const d = new Date(ts)
+  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+}
+
 /** Extract stock code from symbol (handles both "116.00001" and "MMM.US" formats) */
 export function shortSymbol(symbol: string): string {
   const dot = symbol.lastIndexOf('.')

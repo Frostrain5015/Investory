@@ -3,9 +3,9 @@ import * as echarts from 'echarts'
 import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
 
-interface IndexData { name: string; flag: string; lat: number; lng: number; price: number; change: number; changePct: number; symbol: string }
+interface IndexData { name: string; flag: string; lat: number; lng: number; price: number; change: number; changePct: number; symbol: string; fetchedAt?: string }
 
-interface IndicatorData { name: string; symbol: string; price: number; change: number; changePct: number }
+interface IndicatorData { name: string; symbol: string; price: number; change: number; changePct: number; fetchedAt?: string }
 
 const LEADING = ['上证指数', '恒生指数', '标普500']
 
@@ -120,10 +120,12 @@ export default function Market() {
                   const color = !valid ? '#9ca3af' : u ? positiveHex : negativeHex
                   const priceText = valid ? Number(d.price).toLocaleString() : '—'
                   const changeText = valid ? `${u ? '+' : ''}${Number(d.change).toFixed(2)} (${u ? '+' : ''}${Number(d.changePct).toFixed(2)}%)` : '暂无数据'
+                  const tsText = d.fetchedAt ? new Date(d.fetchedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
                   return `<div style="display:flex;align-items:center;gap:12px;padding:3px 0;font-size:12px">
                     <span style="min-width:56px;color:#475569">${d.name}</span>
                     <span style="font-weight:600;min-width:85px;text-align:right;color:${color}">${priceText}</span>
                     <span style="min-width:95px;text-align:right;color:${color}">${changeText}</span>
+                    ${tsText ? `<span style="color:#94a3b8;font-size:10px;min-width:34px">${tsText}</span>` : ''}
                   </div>`
                 }).join('')}`
             },
@@ -133,7 +135,7 @@ export default function Market() {
             layoutCenter: ['50%', '30%'], aspectScale: 0.85,
             regions: countryRegions,
             itemStyle: { areaColor: '#f1f5f9', borderColor: '#cbd5e1', borderWidth: 0.5 },
-            emphasis: { itemStyle: { areaColor: '#e2e8f0' }, label: { show: false } },
+            emphasis: { itemStyle: { areaColor: '#bfdbfe' }, label: { show: false } },
           },
           series: [{
             type: 'scatter', coordinateSystem: 'geo',
@@ -209,9 +211,10 @@ export default function Market() {
                 className="flex-1 rounded-xl border border-slate-200 px-4 py-3 hover:bg-slate-50 transition-colors no-underline">
                 <div className="text-[11px] text-slate-400 font-medium mb-0.5">{ind.name}</div>
                 <div className="text-base font-bold text-slate-900 tabular-nums">{priceText}</div>
-                <div className="flex gap-2 mt-0.5">
+                <div className="flex items-baseline gap-2 mt-0.5">
                   <span className={`text-xs font-medium tabular-nums ${cls}`}>{chgText}</span>
                   <span className={`text-xs font-medium tabular-nums ${cls}`}>{pctText}</span>
+                  {ind.fetchedAt && <span className="text-[10px] text-slate-400 ml-auto">{new Date(ind.fetchedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
                 </div>
               </a>
             )

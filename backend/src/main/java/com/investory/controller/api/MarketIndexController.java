@@ -89,9 +89,10 @@ public class MarketIndexController {
             if (parts.length >= 2) {
                 String[] fields = parts[1].split(",");
                 if (fields.length >= 4) {
-                    m.put("price",    new BigDecimal(fields[1]));
-                    m.put("change",   new BigDecimal(fields[2]));
+                    m.put("price",     new BigDecimal(fields[1]));
+                    m.put("change",    new BigDecimal(fields[2]));
                     m.put("changePct", new BigDecimal(fields[3]));
+                    m.put("fetchedAt", java.time.Instant.now().toString());
                 }
             }
         } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
@@ -120,9 +121,10 @@ public class MarketIndexController {
                 .get(0).getAsJsonObject().getAsJsonObject("meta");
             BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
             BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
-            m.put("price", price);
-            m.put("change", price.subtract(prev));
+            m.put("price",     price);
+            m.put("change",    price.subtract(prev));
             m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+            m.put("fetchedAt", java.time.Instant.now().toString());
         } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
         return m;
     }
@@ -145,9 +147,10 @@ public class MarketIndexController {
                 .get(0).getAsJsonObject().getAsJsonObject("meta");
             BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
             BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
-            m.put("price", price);
-            m.put("change", price.subtract(prev));
+            m.put("price",     price);
+            m.put("change",    price.subtract(prev));
             m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+            m.put("fetchedAt", java.time.Instant.now().toString());
         } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
         return m;
     }
