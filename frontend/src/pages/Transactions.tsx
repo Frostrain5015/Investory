@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { Card, CardContent } from '@/components/ui/card'
 import { displaySymbol } from '@/lib/format'
+import { Pencil, Trash2 } from 'lucide-react'
 
 interface Activity {
   id: number; date: string; type: 'BUY' | 'SELL' | 'DIV' | 'TRANSFER_IN' | 'TRANSFER_OUT'
@@ -15,6 +16,7 @@ export default function Transactions() {
   const { portfolioId } = useAuth()
   const [items, setItems] = useState<Activity[]>([])
   const [loading, setLoading] = useState(true)
+  const [managing, setManaging] = useState(false)
 
   const load = useCallback(() => {
     fetch('/investory/api/transactions', { credentials: 'include' })
@@ -52,6 +54,10 @@ export default function Transactions() {
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">交易记录</h2>
         <div className="flex gap-2">
+          <button onClick={() => setManaging(!managing)}
+            className={`h-9 px-4 rounded-xl text-xs font-medium transition-colors border ${managing ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+            管理
+          </button>
           <Link to="/transactions/add"
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
             添加交易
@@ -109,14 +115,20 @@ export default function Transactions() {
                           {item.type === 'DIV' && '+'}{amount}
                         </td>
                         <td className="pr-6 text-right">
-                          <div className="flex items-center gap-2 justify-end">
-                            {item.type !== 'DIV' && (
-                              <Link to={`/transactions/add?edit=${item.id}`}
-                                className="text-xs text-slate-400 hover:text-blue-500 transition-colors">编辑</Link>
-                            )}
-                            <button onClick={() => handleDelete(item.id, item.type)}
-                              className="text-xs text-slate-400 hover:text-red-500 transition-colors">删除</button>
-                          </div>
+                          {managing && (
+                            <div className="flex items-center gap-2 justify-end">
+                              {item.type !== 'DIV' && (
+                                <Link to={`/transactions/add?edit=${item.id}`}
+                                  className="text-slate-400 hover:text-blue-500 transition-colors">
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </Link>
+                              )}
+                              <button onClick={() => handleDelete(item.id, item.type)}
+                                className="text-slate-400 hover:text-red-500 transition-colors">
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     )
