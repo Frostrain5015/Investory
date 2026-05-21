@@ -66,6 +66,17 @@ export default function Admin() {
     setLogs([])
     setDoneMsg(null)
 
+    let lastEventTime = Date.now()
+    const bump = () => { lastEventTime = Date.now() }
+    const heartbeat = setInterval(() => {
+      if (Date.now() - lastEventTime > 15000) {
+        setLogs(prev => [...prev, '✗ 连接超时'])
+        setCrawling(null)
+        eventSource.close()
+        clearInterval(heartbeat)
+      }
+    }, 3000)
+
     const eventSource = new EventSource(`/investory/api/admin/crawl/${market}?start=${dateStart}&end=${dateEnd}`)
 
     eventSource.addEventListener('status', (e) => {
@@ -88,17 +99,6 @@ export default function Admin() {
       const d: SseEvent = JSON.parse(e.data)
       setLogs(prev => [...prev, d.msg!])
     })
-    let lastEventTime = Date.now()
-    const bump = () => { lastEventTime = Date.now() }
-    const heartbeat = setInterval(() => {
-      if (Date.now() - lastEventTime > 15000) {
-        setLogs(prev => [...prev, '✗ 连接超时'])
-        setCrawling(null)
-        eventSource.close()
-        clearInterval(heartbeat)
-      }
-    }, 3000)
-
     eventSource.addEventListener('done', (e) => {
       clearInterval(heartbeat)
       const d: SseEvent = JSON.parse(e.data)
