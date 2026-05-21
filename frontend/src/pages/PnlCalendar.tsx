@@ -18,7 +18,7 @@ export default function PnlCalendar() {
 
   function fmt(v: number): string {
     const cv = convertCurrency(v)
-    const s = Math.abs(cv).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 4 })
+    const s = Math.abs(cv).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
     // Strip trailing zeros after decimal point
     return s.includes('.') ? s.replace(/\.?0+$/, '') : s
   }
