@@ -36,7 +36,8 @@ def build_system_prompt(kb: dict) -> str:
 回复规则：
 - 每次不超过 3 句。但生成代码/策略/表格时不受此限
 - 用户说"你好"只需回"你好"
-- 不确定的事直接说"不确定"
+- 如果有部分数据但不够完整，先分享已有的，再说"以上信息不完整"
+- 没有数据时直说"没有相关数据"，不说"不确定"这种模糊词
 - 不带表情，不带感叹号
 - 中文。缩写和指标名保留英文"""
 
@@ -326,17 +327,52 @@ def tool_analyze_backtest(backtest_id: int = None) -> dict:
         "equityPoints": len(curve),
     }
 
+# ── Memory / Chat History ────────────────────────────────────────────────
+
+def save_chat_history(user_id: int, messages: list):
+    """Save recent messages to DB for next session context"""
+    conn = get_db_conn(); cur = conn.cursor()
+    # Only save the last 3 exchanges (user + assistant pairs)
+    recent = [m for m in messages if m.get("role") in ("user", "assistant")][-6:]
+    for m in recent:
+        cur.execute("INSERT INTO ai_chat_history (user_id, role, content) VALUES (%s,%s,%s)",
+                     (user_id, m["role"], m["content"][:2000]))
+    conn.commit()
+    # Keep only last 50 messages per user
+    cur.execute("DELETE FROM ai_chat_history WHERE user_id=%s AND id NOT IN (SELECT id FROM (SELECT id FROM ai_chat_history WHERE user_id=%s ORDER BY id DESC LIMIT 50) AS t)", (user_id, user_id))
+    conn.commit()
+    cur.close(); conn.close()
+
+def load_chat_history(user_id: int) -> str:
+    """Load recent chat context for injection into system prompt"""
+    conn = get_db_conn(); cur = conn.cursor()
+    cur.execute("SELECT role, content FROM ai_chat_history WHERE user_id=%s AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY id DESC LIMIT 20", (user_id,))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    if not rows: return ""
+    rows = list(reversed(rows))
+    lines = ["以下是最近的对话记录，供参考上下文："]
+    for role, content in rows:
+        prefix = "用户" if role == "user" else "观澜"
+        lines.append(f"{prefix}: {content[:200]}")
+    return "\n".join(lines)
+
 def tool_web_search(query: str, count: int = 5) -> dict:
     """联网搜索（DuckDuckGo，免费无API key）"""
     try:
-        from duckduckgo_search import DDGS
+        try:
+            from ddgs import DDGS
+        except ImportError:
+            from duckduckgo_search import DDGS
         results = []
         with DDGS() as ddgs:
             for r in ddgs.text(query, max_results=min(count, 8)):
                 results.append({"title": r.get("title",""), "snippet": r.get("body","")[:300], "url": r.get("href","")})
-        return {"query": query, "results": results, "note": "搜索结果来自公开网络，仅供参考"}
+        if not results:
+            return {"query": query, "results": [], "note": "未找到相关结果"}
+        return {"query": query, "results": results, "note": f"共{len(results)}条结果"}
     except ImportError:
-        return {"error": "搜索模块未安装 (duckduckgo-search)", "note": "请在云端执行 pip3 install --break-system-packages duckduckgo-search"}
+        return {"error": "搜索模块未安装", "note": "pip3 install --break-system-packages ddgs"}
     except Exception as e:
         return {"error": f"搜索失败: {str(e)[:100]}"}
 
@@ -462,7 +498,7 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"id": {"type": "integer", "description": "回测结果ID，不传则取最新一次"}}, "required": []}
     }},
     {"type": "function", "function": {
-        "name": "web_search", "description": "联网搜索最新信息。当用户问的问题你无法从数据库回答时（例如公司新闻、宏观经济、行业动态），先调用此工具查询",
+        "name": "web_search", "description": "联网搜索。凡涉及新闻、时事、最新动态、具体事件日期和细节——你无法从数据库回答的一切——必须先调用此工具再回复，禁止凭记忆编造",
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "搜索关键词"},
             "count": {"type": "integer", "description": "返回条数，默认5，最多8"}
@@ -646,6 +682,7 @@ def main():
     parser.add_argument("--api-base", default="")
     parser.add_argument("--deep-think", action="store_true")
     parser.add_argument("--portfolio-id", type=int, default=0)
+    parser.add_argument("--user-id", type=int, default=0)
     parser.add_argument("--input", required=True)
     args = parser.parse_args()
 
@@ -656,6 +693,11 @@ def main():
 
     kb = load_knowledge_base()
     system_prompt = build_system_prompt(kb)
+    # Inject recent chat history as context
+    if args.user_id > 0:
+        history = load_chat_history(args.user_id)
+        if history:
+            system_prompt += "\n\n" + history
     if args.deep_think:
         system_prompt += "\n\n深度思考模式。要求：详细展示推理步骤、具体数据、假设和局限。如果用户要求写策略代码，直接输出完整可运行的 Python 代码（def decide(ctx): ...），不用先讲理论。"
     full_messages = [{"role": "system", "content": system_prompt}] + messages
@@ -665,6 +707,10 @@ def main():
             call_anthropic_stream(args.api_key, args.model, full_messages)
         else:
             call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think)
+        # Save conversation to memory
+        if args.user_id > 0:
+            try: save_chat_history(args.user_id, full_messages)
+            except: pass
     except Exception as e:
         msg = str(e)
         if "401" in msg or "Unauthorized" in msg or "Authentication" in msg:

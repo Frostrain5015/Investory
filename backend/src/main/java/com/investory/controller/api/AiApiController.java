@@ -62,6 +62,8 @@ public class AiApiController {
             if (pid instanceof Number) portfolioId = ((Number) pid).longValue();
         }
         final long pid = portfolioId;
+        final long uid = (s != null && s.getAttribute("userId") instanceof Number)
+            ? ((Number) s.getAttribute("userId")).longValue() : 0;
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> messages = (List<Map<String, Object>>) body.get("messages");
@@ -94,6 +96,7 @@ public class AiApiController {
                 cmd.add("--model"); cmd.add(model);
                 cmd.add("--api-key"); cmd.add(key);
                 cmd.add("--portfolio-id"); cmd.add(String.valueOf(pid));
+                cmd.add("--user-id"); cmd.add(String.valueOf(uid));
                 cmd.add("--input"); cmd.add(tmpInput.toString());
                 if (deepThink) { cmd.add("--deep-think"); }
                 if (!baseUrl.isBlank()) { cmd.add("--api-base"); cmd.add(baseUrl); }
