@@ -71,14 +71,19 @@ export default function Hero() {
             </motion.div>
           ) : (
             <AnimatePresence mode="wait">
-              <motion.form key={mode} initial={{ opacity: 0, y: 12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+              <motion.form key={mode} noValidate
+                initial={{ opacity: 0, y: 12, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -12, scale: 0.97 }} transition={{ duration: 0.25 }} onSubmit={submit}
                 className="mx-auto max-w-sm bg-slate-900/70 backdrop-blur-xl border border-slate-700/60 rounded-2xl p-6 shadow-2xl">
                 <h2 className="text-lg font-semibold text-white mb-4">{mode === 'login' ? '登录' : '注册'}</h2>
-                <input type="text" value={username} onChange={e => setUsername(e.target.value)} required
-                  placeholder="用户名" className="w-full h-10 px-3.5 rounded-xl bg-slate-800 border border-slate-600 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 mb-3" />
-                <input type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={6}
-                  placeholder="密码" className="w-full h-10 px-3.5 rounded-xl bg-slate-800 border border-slate-600 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 mb-3" />
+                <input type="text" value={username} onChange={e => setUsername(e.target.value)}
+                  autoComplete="username" placeholder="用户名"
+                  className="w-full h-10 px-3.5 rounded-xl bg-slate-800 border border-slate-600 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 mb-3
+                  [&:-webkit-autofill]:bg-slate-800 [&:-webkit-autofill]:text-white [&:-webkit-autofill]:[transition-delay:99999s]" />
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'} placeholder="密码"
+                  className="w-full h-10 px-3.5 rounded-xl bg-slate-800 border border-slate-600 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 mb-3
+                  [&:-webkit-autofill]:bg-slate-800 [&:-webkit-autofill]:text-white [&:-webkit-autofill]:[transition-delay:99999s]" />
                 {mode === 'register' && (
                   <input type="email" value={email} onChange={e => setEmail(e.target.value)}
                     placeholder="邮箱（选填）" className="w-full h-10 px-3.5 rounded-xl bg-slate-800 border border-slate-600 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 mb-3" />

@@ -172,3 +172,10 @@ body {
   border-color: var(--border) !important;
   color: var(--text-1) !important;
 }
+
+/* ── Prevent browser autofill from breaking dark input styling ────────── */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  transition: background-color 99999s ease-in-out 0s, color 99999s ease-in-out 0s;
+}
