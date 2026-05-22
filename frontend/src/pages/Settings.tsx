@@ -4,7 +4,7 @@ import { useToast } from '@/components/Toast'
 import { useSettings, type BaseCurrency } from '@/hooks/use-settings'
 import { useTheme } from '@/hooks/use-theme'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Sun, Moon, Camera } from 'lucide-react'
+import { Sun, Moon, Camera, Sparkles } from 'lucide-react'
 
 const CURRENCY_LABELS: Record<BaseCurrency, string> = { CNY: '人民币 (¥)', HKD: '港币 (HK$)', USD: '美元 ($)' }
 
@@ -19,6 +19,9 @@ export default function Settings() {
   const [newPw, setNewPw] = useState('')
   const [pwMsg, setPwMsg] = useState('')
   const [deleting, setDeleting] = useState(false)
+  const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('ai_provider') || 'openai')
+  const [aiKey, setAiKey] = useState(() => localStorage.getItem('ai_key') || '')
+  const [aiModel, setAiModel] = useState(() => localStorage.getItem('ai_model') || '')
 
   function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -146,6 +149,27 @@ export default function Settings() {
                 style={{ left: showRiskMetrics ? '22px' : '2px' }} />
             </button>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* AI Assistant */}
+      <Card>
+        <CardHeader><CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" />观澜 AI 助手</CardTitle></CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex bg-slate-100 rounded-lg p-0.5">
+            {(['openai', 'anthropic'] as const).map(p => (
+              <button key={p} onClick={() => { setAiProvider(p); localStorage.setItem('ai_provider', p) }}
+                className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${aiProvider === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                {p === 'openai' ? 'OpenAI' : 'Anthropic'}
+              </button>
+            ))}
+          </div>
+          <input type="password" value={aiKey} onChange={e => { setAiKey(e.target.value); localStorage.setItem('ai_key', e.target.value) }}
+            placeholder={aiProvider === 'openai' ? 'sk-...' : 'sk-ant-...'}
+            className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
+          <input type="text" value={aiModel} onChange={e => { setAiModel(e.target.value); localStorage.setItem('ai_model', e.target.value) }}
+            placeholder={aiProvider === 'openai' ? 'gpt-4o-mini' : 'claude-haiku-4-5'}
+            className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
         </CardContent>
       </Card>
 

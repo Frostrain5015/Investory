@@ -3,10 +3,12 @@ import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
-  LogOut, TrendingUp, User, Search, Menu, Shield, BarChart2
+  LogOut, TrendingUp, User, Search, Menu, Shield, BarChart2, Sparkles
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { AnimatePresence } from 'framer-motion'
 import { searchStocks, getPortfolios } from '@/services/api'
+import ChatPanel from '@/pages/ChatPanel'
 import type { StockSearchItem } from '@/types'
 import { displaySymbol } from '@/lib/format'
 
@@ -26,6 +28,7 @@ export default function Layout() {
   const [results, setResults] = useState<StockSearchItem[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [chatOpen, setChatOpen] = useState(false)
 
   useEffect(() => {
     if (!portfolioId) return
@@ -126,6 +129,19 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      {/* Floating AI Ball */}
+      <div className="fixed bottom-6 right-6 z-40">
+        <button onClick={() => setChatOpen(!chatOpen)}
+          className="w-12 h-12 rounded-full bg-slate-900 text-white shadow-lg hover:scale-110 transition-transform flex items-center justify-center">
+          <Sparkles className="w-5 h-5" />
+        </button>
+      </div>
+
+      {/* Chat Panel */}
+      <AnimatePresence>
+        {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
+      </AnimatePresence>
     </div>
   )
 }
