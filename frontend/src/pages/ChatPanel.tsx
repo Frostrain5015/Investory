@@ -45,8 +45,8 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   const [streamText, setStreamText] = useState('')
   const [toolMsg, setToolMsg] = useState('')
   const [deepThink, setDeepThink] = useState(false)
-  const [usedTools, setUsedTools] = useState<string[]>([])
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
+  const [askData, setAskData] = useState<{ question: string; options: string[] } | null>(null)
   const esRef = useRef<EventSource | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -77,6 +77,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     setMessages(newMessages)
     setStreaming(true)
     setStreamText('')
+    setAskData(null)
 
     try {
       const resp = await fetch('/investory/api/ai/chat', {
@@ -96,17 +97,11 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       })
       es.addEventListener('ask', (e) => {
         const d = JSON.parse(e.data)
-        setStreamText(prev => {
-          const opts = (d.options || []).map((o: string) =>
-            `<button class=\"ask-option\" data-q=\"${d.question}\" data-o=\"${o}\" style=\"display:inline-block;margin:2px 4px 2px 0;padding:4px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:12px;cursor:pointer;background:#fff\">${o}</button>`
-          ).join(' ')
-          return prev + '\n\n**' + d.question + '**\n\n' + opts
-        })
+        setAskData({ question: d.question, options: d.options || [] })
       })
       es.addEventListener('tool', (e) => {
         const d: SseEvent = JSON.parse(e.data)
         setToolMsg(d.name || '')
-        setUsedTools(prev => { const next = [...prev, d.name || '']; return next.slice(-10) })
       })
       es.addEventListener('token', (e) => {
         const d: SseEvent = JSON.parse(e.data)
@@ -171,25 +166,8 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      {/* C3: Context panel */}
-      {usedTools.length > 0 && (
-        <div className="px-4 py-1.5 border-b border-slate-100 bg-slate-50/50">
-          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-            <span>已获取:</span>
-            {usedTools.map((t, i) => <span key={i} className="bg-white px-1.5 py-0.5 rounded border border-slate-100">{t}</span>)}
-          </div>
-        </div>
-      )}
-
       {/* Messages */}
-      <div className="flex-1 overflow-auto px-4 py-4 space-y-4" onClick={(e) => {
-        const target = e.target as HTMLElement
-        if (target.classList.contains('ask-option')) {
-          const option = target.dataset.o || target.textContent || ''
-          setInput(option)
-          setTimeout(() => send(), 100)
-        }
-      }}>
+      <div className="flex-1 overflow-auto px-4 py-4 space-y-4">
         {messages.length === 0 && !streaming && (
           <div className="text-center py-12">
             <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-3">
@@ -262,6 +240,15 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
               }
               {toolMsg && <div className="flex items-center gap-2 text-xs text-slate-400 mt-2 pt-2 border-t border-slate-200"><span className="w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />{toolMsg}</div>}
             </div>
+            {askData && (
+              <div className="mt-2 space-y-1.5">
+                <p className="text-xs text-slate-500">{askData.question}</p>
+                {askData.options.map((o: string, i: number) => (
+                  <button key={i} onClick={() => { setInput(o); setAskData(null); setTimeout(() => send(), 100) }}
+                    className="block w-full text-left text-xs px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 hover:border-slate-300 transition-colors">{o}</button>
+                ))}
+              </div>
+            )}
           </div>
         )}
         <div ref={scrollRef} />
