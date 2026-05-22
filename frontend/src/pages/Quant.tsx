@@ -1,20 +1,13 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { getQuantData, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings } from '@/services/api'
+import { getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings } from '@/services/api'
 import { useToast } from '@/components/Toast'
 import { useSettings } from '@/hooks/use-settings'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, TrendingUp, Target, AlertTriangle, BarChart3, Activity, ChevronDown, ChevronRight } from 'lucide-react'
+import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, Activity, ChevronDown, ChevronRight } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { displaySymbol } from '@/lib/format'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
-import type { ScenarioResult, PortfolioRiskSummary, ScenarioHoldingDetail, BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent } from '@/types'
-
-const SCENARIO_META: Record<string, { borderColor: string; bgColor: string; benchmark: string }> = {
-  crisis_2008: { borderColor: 'border-red-200',    bgColor: 'bg-red-50',    benchmark: 'S&P 500 -47%' },
-  crisis_2015: { borderColor: 'border-orange-200', bgColor: 'bg-orange-50', benchmark: 'CSI300 -43%' },
-  crisis_2020: { borderColor: 'border-yellow-200', bgColor: 'bg-yellow-50', benchmark: '全球 -30%' },
-  crisis_2022: { borderColor: 'border-purple-200', bgColor: 'bg-purple-50', benchmark: '科技股 -50%' },
-}
+import type { BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent } from '@/types'
 
 const INDICATORS = [
   { name: 'sma', label: 'SMA', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> SMA' }, { value: 'below', label: '< SMA' }] },
@@ -61,113 +54,96 @@ export default function Quant() {
 // ── Risk Analysis Section ───────────────────────────────────────────────
 
 function RiskSection() {
-  const [scenarios, setScenarios] = useState<ScenarioResult[]>([])
-  const [risk, setRisk] = useState<PortfolioRiskSummary | null>(null)
+  const { positiveClass } = useSettings()
+  const [styleData, setStyleData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-  const [progress, setProgress] = useState<SseProgress | null>(null)
-  const [logs, setLogs] = useState<string[]>([])
-  const [doneMsg, setDoneMsg] = useState<string | null>(null)
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const logRef = useRef<HTMLDivElement>(null)
+  const [refreshingMetrics, setRefreshingMetrics] = useState(false)
   const esRef = useRef<EventSource | null>(null)
 
-  const loadData = useCallback(() => {
+  const loadStyle = useCallback(() => {
     setLoading(true)
-    getQuantData()
-      .then(d => { setScenarios(d.scenarios || []); setRisk(Object.keys(d.risk || {}).length ? (d.risk as PortfolioRiskSummary) : null) })
+    fetch('/investory/api/quant/portfolio-style', { credentials: 'include' })
+      .then(r => r.json()).then(d => { if (!d.error) setStyleData(d) })
       .catch(() => {}).finally(() => setLoading(false))
   }, [])
 
-  useEffect(() => { loadData() }, [loadData])
-  useEffect(() => { logRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [logs])
+  useEffect(() => { loadStyle() }, [loadStyle])
 
-  function startRefresh() {
-    setRefreshing(true); setProgress(null); setLogs([]); setDoneMsg(null); setErrorMsg(null)
-    if (esRef.current) { esRef.current.close(); esRef.current = null }
+  function refreshMetrics() {
+    setRefreshingMetrics(true)
+    if (esRef.current) { esRef.current.close() }
     const es = new EventSource('/investory/api/quant/refresh', { withCredentials: true })
     esRef.current = es
-    es.addEventListener('status', e => { const d = JSON.parse(e.data); setLogs(l => [...l, `[状态] ${d.msg}`]) })
-    es.addEventListener('progress', e => { const d = JSON.parse(e.data); setProgress({ current: d.current, total: d.total, pct: d.pct, name: d.name }) })
-    es.addEventListener('info', e => { const d = JSON.parse(e.data); setLogs(l => [...l, `[信息] ${d.msg}`]) })
-    es.addEventListener('log', e => { const d = JSON.parse(e.data); setLogs(l => [...l, d.msg]) })
-    es.addEventListener('done', e => { const d = JSON.parse(e.data); setDoneMsg(d.msg); setLogs(l => [...l, `✓ ${d.msg}`]); setRefreshing(false); es.close(); loadData() })
-    es.addEventListener('error', e => {
-      try { const d = JSON.parse((e as MessageEvent).data); setErrorMsg(d.msg); setLogs(l => [...l, `✗ ${d.msg}`]) } catch {}
-      setRefreshing(false); es.close()
-    })
+    es.addEventListener('done', () => { setRefreshingMetrics(false); es.close() })
+    es.addEventListener('error', () => { setRefreshingMetrics(false); es.close() })
     es.onerror = () => {}
+  }
+
+  const STYLE_COLORS: Record<string, string> = {
+    '科技成长': 'bg-blue-500', '金融价值': 'bg-amber-500', '消费防御': 'bg-emerald-500',
+    '能源材料': 'bg-orange-500', '医疗健康': 'bg-purple-500', '地产基建': 'bg-slate-500',
+    '综合其他': 'bg-slate-400',
   }
 
   return (<>
     <div className="flex items-center gap-2">
-      <button onClick={startRefresh} disabled={refreshing}
+      <button onClick={loadStyle} disabled={loading}
         className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-60">
-        <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? '分析中...' : '开始分析'}
+        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />{loading ? '分析中...' : '风格诊断'}
+      </button>
+      <button onClick={refreshMetrics} disabled={refreshingMetrics}
+        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors disabled:opacity-40">
+        <RefreshCw className={`w-3.5 h-3.5 ${refreshingMetrics ? 'animate-spin' : ''}`} />{refreshingMetrics ? '刷新中...' : '刷新指标'}
       </button>
     </div>
 
-    {(refreshing || doneMsg || errorMsg) && (
+    {styleData && !loading && (<>
       <Card>
-        <CardHeader><CardTitle className="text-sm flex items-center gap-2"><RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />{refreshing ? '正在分析' : '分析完成'}</CardTitle></CardHeader>
-        <CardContent>
-          {progress && (<div className="mb-3"><div className="flex justify-between text-xs text-slate-500 mb-1"><span className="truncate max-w-[300px]">{progress.name}</span><span>{progress.pct.toFixed(1)}%</span></div><div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden"><div className="bg-slate-900 h-full rounded-full transition-all duration-300" style={{ width: `${progress.pct}%` }} /></div></div>)}
-          <div className="bg-slate-900 rounded-xl p-4 max-h-80 overflow-auto font-mono text-xs">
-            {logs.map((line, i) => (<div key={i} className={`py-0.5 ${line.startsWith('✓') ? 'text-emerald-400' : line.startsWith('✗') ? 'text-red-400' : line.startsWith('[状态]') ? 'text-sky-400' : 'text-slate-300'}`}>{line}</div>))}
-            <div ref={logRef} />
-          </div>
-          {doneMsg && <div className="mt-3 text-sm text-emerald-600 font-medium">{doneMsg}</div>}
-          {errorMsg && <div className="mt-3 text-sm text-red-500 font-medium">{errorMsg}</div>}
-        </CardContent>
-      </Card>
-    )}
-
-    <div>
-      <h3 className="text-sm font-bold text-slate-700 mb-3">历史危机压测</h3>
-      {!loading && scenarios.length === 0 ? (
-        <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">暂无数据</p></CardContent></Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {scenarios.map(s => {
-            const meta = SCENARIO_META[s.scenario_key] || { borderColor: 'border-slate-200', bgColor: 'bg-slate-50', benchmark: '' }
-            const pnl = s.total_pnl_pct != null ? Number(s.total_pnl_pct) : null
-            let holdings: ScenarioHoldingDetail[] = []
-            try { const arr = JSON.parse(s.detail_json || '[]'); holdings = (Array.isArray(arr) ? arr : []).sort((a: any, b: any) => a.returnPct - b.returnPct).slice(0, 5) } catch {}
-            const pnlColor = pnl == null ? 'text-slate-400' : pnl >= 0 ? 'text-red-600' : 'text-emerald-600'
-            return (
-              <Card key={s.scenario_key} className={`border-l-4 ${meta.borderColor}`}>
-                <CardHeader className={meta.bgColor}>
-                  <CardTitle className="text-sm">{s.scenario_name}</CardTitle>
-                  <p className="text-xs text-slate-500">{s.start_date} ~ {s.end_date}</p>
-                  {meta.benchmark && <p className="text-[10px] text-slate-400">参考跌幅：{meta.benchmark}</p>}
-                </CardHeader>
-                <CardContent className="pt-4">
-                  <p className={`text-2xl font-bold ${pnlColor}`}>{pnl != null ? `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%` : '—'}</p>
-                  {holdings.length > 0 && (<div className="mt-3 space-y-1"><p className="text-[10px] text-slate-400 mb-1">最差持仓</p>{holdings.map((h, i) => { const rp = h.returnPct ?? 0; return (<div key={i} className="flex justify-between text-xs"><span className="text-slate-600">{h.stockName}</span><span className={rp >= 0 ? 'text-red-500' : 'text-emerald-500'}>{rp >= 0 ? '+' : ''}{rp.toFixed(1)}%</span></div>) })}</div>)}
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      )}
-    </div>
-
-    {(risk || loading) && (
-      <Card>
-        <CardHeader><CardTitle className="text-sm">组合风险汇总</CardTitle></CardHeader>
-        <CardContent>
-          {loading ? <div className="h-16 flex flex-col items-center justify-center gap-2"><div className="w-5 h-5 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-xs text-slate-400">正在加载量化数据...</span></div>
-          : risk && (
-            <div className="grid grid-cols-3 gap-4 text-center">
-              <div><p className="text-xs text-slate-500">加权 Beta</p><p className="text-2xl font-bold text-slate-900 mt-1">{risk.weighted_beta != null ? Number(risk.weighted_beta).toFixed(2) : '—'}</p></div>
-              <div><p className="text-xs text-slate-500">VaR 95% (日)</p><p className={`text-2xl font-bold mt-1 ${risk.var_95_pct != null ? 'text-red-500' : 'text-slate-400'}`}>{risk.var_95_pct != null ? `${Number(risk.var_95_pct).toFixed(2)}%` : '—'}</p></div>
-              <div><p className="text-xs text-slate-500">1Y 最大回撤</p><p className={`text-2xl font-bold mt-1 ${risk.portfolio_maxdd != null ? 'text-red-500' : 'text-slate-400'}`}>{risk.portfolio_maxdd != null ? `${Number(risk.portfolio_maxdd).toFixed(2)}%` : '—'}</p></div>
-              {risk.computed_at && <div className="col-span-3 text-right text-[10px] text-slate-400 mt-2">计算于 {new Date(risk.computed_at).toLocaleString('zh-CN')}</div>}
+        <CardContent className="py-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs text-slate-500">组合风格诊断</p>
+              <p className="text-lg font-bold text-slate-900">{styleData.styleSummary}</p>
             </div>
-          )}
+            <div className="flex items-center gap-6 text-xs text-slate-500">
+              <div className="text-center"><p className="text-2xl font-bold text-slate-900">{styleData.positionCount}</p><p>持仓标的</p></div>
+              <div className="text-center"><p className="text-2xl font-bold text-slate-900">{(styleData.totalValue / 10000).toFixed(0)}万</p><p>总市值</p></div>
+              <div className="text-center"><p className={`text-2xl font-bold ${styleData.weightedBeta != null ? (styleData.weightedBeta > 1 ? positiveClass : 'text-slate-900') : 'text-slate-400'}`}>{styleData.weightedBeta ?? '—'}</p><p>加权Beta</p></div>
+            </div>
+          </div>
         </CardContent>
       </Card>
-    )}
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card>
+          <CardHeader><CardTitle className="text-sm">风格配置</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {Object.entries(styleData.styleAllocation || {}).map(([style, data]: [string, any]) => (
+              <div key={style} className="flex items-center gap-2">
+                <span className={`w-2.5 h-2.5 rounded-full ${STYLE_COLORS[style] || 'bg-slate-400'}`} />
+                <span className="text-xs text-slate-600 w-16">{style}</span>
+                <div className="flex-1 bg-slate-100 rounded-full h-2"><div className={`h-full rounded-full ${STYLE_COLORS[style] || 'bg-slate-400'}`} style={{ width: `${Math.max(data.pct, 2)}%` }} /></div>
+                <span className="text-xs text-slate-500 w-12 text-right">{data.pct}%</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle className="text-sm">优化建议</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {(styleData.recommendations || []).map((r: any, i: number) => (
+              <div key={i} className={`text-xs p-2 rounded-lg ${r.severity === 'warning' ? 'bg-amber-50 text-amber-800' : 'bg-blue-50 text-blue-800'}`}>
+                <p className="font-medium">{r.title}</p><p className="mt-0.5 opacity-80">{r.detail}</p>
+              </div>
+            ))}
+            {!styleData.recommendations?.length && <p className="text-xs text-slate-400">当前组合结构合理，无需调整</p>}
+          </CardContent>
+        </Card>
+      </div>
+    </>)}
+
+    {loading && <div className="flex flex-col items-center justify-center h-48 gap-2"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-xs text-slate-400">正在分析组合风格...</span></div>}
+    {!loading && !styleData && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">暂无数据</p></CardContent></Card>}
   </>)
 }
 
@@ -200,9 +176,52 @@ function BacktestSection() {
   const [endDate, setEndDate] = useState(todayStr())
   const [initialCapital, setInitialCapital] = useState('100000')
   const [advancedCode, setAdvancedCode] = useState(`def decide(ctx):
-    if not ctx['has_position']:
-        return {'action': 'BUY', 'quantity': 100}
-    return {'action': 'HOLD', 'quantity': 0}`)
+    """
+    自定义策略函数。每个交易日对每只持仓股票调用一次。
+
+    ctx 字段说明:
+      symbol       - 股票代码 (str)
+      date         - 当前日期, YYYY-MM-DD (str)
+      open, high, low, close, volume  - 当日OHLCV (float)
+      has_position - 是否持仓 (bool)
+      shares       - 当前持仓股数 (int)
+      avg_cost     - 持仓均价 (float)
+      cash         - 现金余额 (float)
+      total_equity - 总权益 = 现金 + 所有持仓市值 (float)
+
+    返回格式: {'action': 'BUY'|'SELL'|'HOLD', 'quantity': int}
+    """
+
+    # ── 持仓管理 ──────────────────────────────────────
+    if ctx['has_position']:
+        # 计算盈亏百分比
+        pnl = (ctx['close'] - ctx['avg_cost']) / ctx['avg_cost'] * 100
+
+        # 止损 -8%：亏损超过8%立即卖出
+        if pnl <= -8:
+            return {'action': 'SELL', 'quantity': ctx['shares']}
+
+        # 止盈 +25%：盈利超过25%锁定利润
+        if pnl >= 25:
+            return {'action': 'SELL', 'quantity': ctx['shares']}
+
+        # 继续持有
+        return {'action': 'HOLD', 'quantity': 0}
+
+    # ── 开仓条件 ──────────────────────────────────────
+    # 单票仓位不超过总权益的20%
+    max_alloc = ctx['total_equity'] * 0.2
+
+    # 只买入收阳线的股票 (close > open)
+    if ctx['close'] <= ctx['open']:
+        return {'action': 'HOLD', 'quantity': 0}
+
+    # 计算买入数量
+    qty = max(10, int(max_alloc / ctx['close']))
+    if qty * ctx['close'] > ctx['cash']:
+        qty = max(10, int(ctx['cash'] * 0.95 / ctx['close']))
+
+    return {'action': 'BUY', 'quantity': qty}`)
 
   // SSE
   const [running, setRunning] = useState(false)
@@ -334,7 +353,7 @@ function BacktestSection() {
     setView('builder')
   }
 
-  function startNewStrategy() { setEditId(null); setStrategyName(''); setEntryRules([]); setExitRules([]); setStockInput(''); setSelectedStocks([]); setAdvancedCode(`def decide(ctx):\n    if not ctx['has_position']:\n        return {'action': 'BUY', 'quantity': 100}\n    return {'action': 'HOLD', 'quantity': 0}`); setView('builder') }
+  function startNewStrategy() { setEditId(null); setStrategyName(''); setEntryRules([]); setExitRules([]); setStockInput(''); setSelectedStocks([]); setAdvancedCode(advancedCode); setView('builder') }
 
   return (<>
     <div className="flex items-center gap-2">
@@ -519,19 +538,21 @@ function BacktestSection() {
     {/* Results */}
     {metrics && (
       <div className="space-y-4">
-        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-          {metrics && (<>
-          <MetricCard label="总收益" value={metrics.totalReturnPct != null ? `${metrics.totalReturnPct >= 0 ? '+' : ''}${metrics.totalReturnPct}%` : '—'} color={metrics.totalReturnPct != null ? (metrics.totalReturnPct >= 0 ? positiveClass : negativeClass) : 'text-slate-400'} icon={<TrendingUp className="w-3.5 h-3.5" />} />
-          <MetricCard label="年化收益" value={metrics.annualReturnPct != null ? `${metrics.annualReturnPct >= 0 ? '+' : ''}${metrics.annualReturnPct}%` : '—'} color={metrics.annualReturnPct != null ? (metrics.annualReturnPct >= 0 ? positiveClass : negativeClass) : 'text-slate-400'} icon={<Target className="w-3.5 h-3.5" />} />
-          <MetricCard label="Sharpe" value={metrics.sharpeRatio != null ? `${metrics.sharpeRatio}` : '—'} color="text-slate-900" icon={<BarChart3 className="w-3.5 h-3.5" />} />
-          <MetricCard label="最大回撤" value={metrics.maxDrawdownPct != null ? `${metrics.maxDrawdownPct}%` : '—'} color={negativeClass} icon={<AlertTriangle className="w-3.5 h-3.5" />} />
-          <MetricCard label="胜率" value={metrics.winRatePct != null ? `${metrics.winRatePct}%` : '—'} color={metrics.winRatePct != null ? (metrics.winRatePct >= 50 ? positiveClass : negativeClass) : 'text-slate-900'} icon={<Activity className="w-3.5 h-3.5" />} />
-          <MetricCard label="盈亏比" value={metrics.profitFactor != null ? `${metrics.profitFactor}` : '—'} color={metrics.profitFactor != null ? (metrics.profitFactor >= 1 ? positiveClass : negativeClass) : 'text-slate-900'} />
-          <MetricCard label="交易次数" value={metrics.totalTrades != null ? `${metrics.totalTrades}` : '—'} color="text-slate-900" />
-          <MetricCard label="平均盈利" value={metrics.avgProfitPct != null ? `${metrics.avgProfitPct}%` : '—'} color={positiveClass} />
-          <MetricCard label="平均亏损" value={metrics.avgLossPct != null ? `${metrics.avgLossPct}%` : '—'} color={negativeClass} />
-          </>)}
-        </div>
+        <Card>
+          <CardContent className="py-4">
+            <div className="grid grid-cols-3 md:grid-cols-5 gap-x-6 gap-y-3 text-sm">
+              <div><span className="text-slate-400">总收益</span> <span className={`font-bold ${metrics.totalReturnPct != null ? (metrics.totalReturnPct >= 0 ? positiveClass : negativeClass) : 'text-slate-400'}`}>{metrics.totalReturnPct != null ? `${metrics.totalReturnPct >= 0 ? '+' : ''}${metrics.totalReturnPct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">年化</span> <span className={`font-bold ${metrics.annualReturnPct != null ? (metrics.annualReturnPct >= 0 ? positiveClass : negativeClass) : 'text-slate-400'}`}>{metrics.annualReturnPct != null ? `${metrics.annualReturnPct >= 0 ? '+' : ''}${metrics.annualReturnPct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">Sharpe</span> <span className="font-bold text-slate-900">{metrics.sharpeRatio != null ? metrics.sharpeRatio : '—'}</span></div>
+              <div><span className="text-slate-400">最大回撤</span> <span className={`font-bold ${negativeClass}`}>{metrics.maxDrawdownPct != null ? `${metrics.maxDrawdownPct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">胜率</span> <span className="font-bold text-slate-900">{metrics.winRatePct != null ? `${metrics.winRatePct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">盈亏比</span> <span className="font-bold text-slate-900">{metrics.profitFactor != null ? metrics.profitFactor : '—'}</span></div>
+              <div><span className="text-slate-400">交易</span> <span className="font-bold text-slate-900">{metrics.totalTrades != null ? `${metrics.totalTrades}笔` : '—'}</span></div>
+              <div><span className="text-slate-400">均盈</span> <span className={`font-bold ${positiveClass}`}>{metrics.avgProfitPct != null ? `${metrics.avgProfitPct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">均亏</span> <span className={`font-bold ${negativeClass}`}>{metrics.avgLossPct != null ? `${metrics.avgLossPct}%` : '—'}</span></div>
+            </div>
+          </CardContent>
+        </Card>
 
         {equityCurve && equityCurve.length > 1 && (
           <Card>
@@ -606,10 +627,6 @@ function BacktestSection() {
 }
 
 // ── Shared components ───────────────────────────────────────────────────
-
-function MetricCard({ label, value, color, icon }: { label: string; value: string; color: string; icon?: React.ReactNode }) {
-  return <Card><CardContent className="pt-4 pb-3"><p className="text-[10px] text-slate-500 font-medium flex items-center gap-1">{icon}{label}</p><p className={`text-lg font-bold mt-1 tabular-nums ${color}`}>{value}</p></CardContent></Card>
-}
 
 function RuleEditor({ rule, onChange, onRemove }: { rule: any; onChange: (r: any) => void; onRemove: () => void }) {
   const indicator = INDICATORS.find(ind => ind.name === rule.indicator) || INDICATORS[0]

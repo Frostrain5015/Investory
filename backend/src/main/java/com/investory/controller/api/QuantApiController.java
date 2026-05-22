@@ -84,6 +84,44 @@ public class QuantApiController {
         );
     }
 
+    // ── 组合风格诊断 ─────────────────────────────────────────────────────
+
+    @GetMapping("/portfolio-style")
+    public Map<String, Object> getPortfolioStyle(HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        if (portfolioId == 0) return Map.of("error", "no portfolio");
+
+        try {
+            File script = new File("script/portfolio_style_analyzer.py");
+            if (!script.exists()) {
+                script = new File("../script/portfolio_style_analyzer.py").getCanonicalFile();
+            }
+            if (!script.exists()) {
+                return Map.of("error", "分析引擎未找到");
+            }
+            File scriptDir = script.getParentFile();
+
+            ProcessBuilder pb = new ProcessBuilder(
+                pythonExecutable, script.getAbsolutePath(),
+                "--portfolio-id", String.valueOf(portfolioId),
+                "--mode", "quick"
+            );
+            pb.directory(scriptDir);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String output = new String(p.getInputStream().readAllBytes(), "UTF-8");
+            int exitCode = p.waitFor();
+            if (exitCode == 0 && !output.isBlank()) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> result = json.readValue(output, Map.class);
+                return result;
+            }
+            return Map.of("error", "分析失败, exit=" + exitCode);
+        } catch (Exception e) {
+            return Map.of("error", e.getMessage());
+        }
+    }
+
     // ── SSE 刷新：触发 analyze_quant.py，实时推送进度 ──────────────────────────
 
     @GetMapping("/refresh")
