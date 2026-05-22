@@ -102,20 +102,30 @@ def analyze_portfolio(conn, portfolio_id: int) -> dict:
     """)
     price_map = {row[0]: float(row[1]) for row in cur.fetchall()}
 
-    # Load metrics
+    # Load metrics — try factor columns first, fall back to basic columns
     metric_rows = {}
     if stock_ids:
-        cur.execute(f"""
-            SELECT stock_id, percentile_5y, beta_1y, volatility_1y, max_drawdown_1y,
-                   factor_style, size_factor, value_factor, momentum_12m, quality_score
-            FROM stock_metric_cache WHERE stock_id IN ({id_str})
-        """)
-        for row in cur.fetchall():
-            metric_rows[row[0]] = {
-                "pct": row[1], "beta": row[2], "vol": row[3], "mdd": row[4],
-                "factor_style": row[5], "size_factor": row[6], "value_factor": row[7],
-                "momentum": row[8], "quality": row[9],
-            }
+        try:
+            cur.execute(f"""
+                SELECT stock_id, percentile_5y, beta_1y, volatility_1y, max_drawdown_1y,
+                       factor_style, size_factor, value_factor, momentum_12m, quality_score
+                FROM stock_metric_cache WHERE stock_id IN ({id_str})
+            """)
+            for row in cur.fetchall():
+                metric_rows[row[0]] = {
+                    "pct": row[1], "beta": row[2], "vol": row[3], "mdd": row[4],
+                    "factor_style": row[5], "size_factor": row[6], "value_factor": row[7],
+                    "momentum": row[8], "quality": row[9],
+                }
+        except Exception:
+            cur.execute(f"""
+                SELECT stock_id, percentile_5y, beta_1y, volatility_1y, max_drawdown_1y
+                FROM stock_metric_cache WHERE stock_id IN ({id_str})
+            """)
+            for row in cur.fetchall():
+                metric_rows[row[0]] = {
+                    "pct": row[1], "beta": row[2], "vol": row[3], "mdd": row[4],
+                }
 
     # Load exchange rates
     cur.execute("SELECT currency, rate FROM exchange_rates")
