@@ -1,4 +1,5 @@
 backend/target/
+backend/src/main/resources/application.properties
 frontend/node_modules/
 *.class
 *.jar

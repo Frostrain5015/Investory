@@ -29,9 +29,11 @@ public class AiApiController {
     @Value("${python.executable:python3}")
     private String pythonExecutable;
 
-    private static final String DEFAULT_KEY = "";
+    @Value("${ai.default.key:}")
+    private String defaultKey;
+
     private static final String DEFAULT_PROVIDER = "bailian";
-    private static final String DEFAULT_MODEL = "qwen-plus";
+    private static final String DEFAULT_MODEL   = "qwen-plus";
     private static final String DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 
     @Autowired
@@ -51,7 +53,7 @@ public class AiApiController {
         }
 
         // Resolve AI config: user's saved settings > defaults
-        String aiKey = DEFAULT_KEY;
+        String aiKey = defaultKey;
         String aiProvider = DEFAULT_PROVIDER;
         String aiModel = DEFAULT_MODEL;
         String aiBaseUrl = DEFAULT_BASE_URL;
