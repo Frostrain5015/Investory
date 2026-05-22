@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 
-const COUNT = 260
+const COUNT = 350
 const RED = '#ef4444'
 const GREEN = '#22c55e'
 
@@ -22,10 +22,10 @@ export default function HeroParticles() {
     const resize = () => {
       w = c.width = c.parentElement!.clientWidth
       h = c.height = c.parentElement!.clientHeight
-      const cols = Math.max(16, Math.floor(w / 70))
-      const rows = Math.max(10, Math.floor(h / 60))
-      const gapX = w / (cols + 1)
-      const gapY = h / (rows + 1)
+      const cols = Math.max(18, Math.floor(w / 65))
+      const rows = Math.max(12, Math.floor(h / 55))
+      const gapX = w / cols
+      const gapY = h / rows
       particles = []
       for (let i = 0; i < COUNT; i++) {
         const col = i % cols
@@ -33,11 +33,11 @@ export default function HeroParticles() {
         particles.push({
           x: Math.random() * w, y: Math.random() * h,
           vx: (Math.random() - 0.5) * 0.5, vy: (Math.random() - 0.5) * 0.3,
-          baseX: (col + 1) * gapX + (Math.random() - 0.5) * 12,
-          baseY: (row + 1) * gapY + (Math.random() - 0.5) * 50,
+          baseX: col * gapX + gapX * 0.5 + (Math.random() - 0.5) * 8,
+          baseY: row * gapY + gapY * 0.5 + (Math.random() - 0.5) * 8,
           color: Math.random() > 0.5 ? RED : GREEN,
-          size: 0.8 + Math.random() * 2.2,
-          alpha: 0.25 + Math.random() * 0.45,
+          size: 0.6 + Math.random() * 1.8,
+          alpha: 0.2 + Math.random() * 0.35,
         })
       }
     }
