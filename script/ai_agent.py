@@ -494,6 +494,67 @@ def _format_rule(rule: dict) -> str:
     return base
 
 
+# ── Fundamentals tool ────────────────────────────────────────────────────
+
+def tool_get_fundamentals(symbol: str) -> dict:
+    """获取单只股票的基本面数据：PE、PB、ROE、EPS、市值、行业。"""
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT id FROM stocks WHERE symbol=%s", (symbol,))
+    row = cur.fetchone()
+    if not row:
+        cur.close(); conn.close()
+        return {"error": "股票未找到", "symbol": symbol}
+
+    stock_id = row[0]
+    cur.execute("""
+        SELECT pe_ttm, pb, roe, eps_ttm, rev_growth, earnings_growth,
+               debt_ratio, market_cap, sector, industry, div_yield, updated_at
+        FROM stock_fundamentals WHERE stock_id=%s
+    """, (stock_id,))
+    r = cur.fetchone()
+    cur.close(); conn.close()
+
+    if not r:
+        return {"symbol": symbol, "note": "暂无基本面数据，请先运行 fetch_fundamentals.py"}
+
+    return {
+        "symbol": symbol,
+        "pe_ttm": float(r[0]) if r[0] else None,
+        "pb": float(r[1]) if r[1] else None,
+        "roe": float(r[2]) if r[2] else None,
+        "eps_ttm": float(r[3]) if r[3] else None,
+        "rev_growth": float(r[4]) if r[4] else None,
+        "earnings_growth": float(r[5]) if r[5] else None,
+        "debt_ratio": float(r[6]) if r[6] else None,
+        "market_cap": float(r[7]) if r[7] else None,
+        "sector": r[8], "industry": r[9],
+        "div_yield": float(r[10]) if r[10] else None,
+        "updated_at": str(r[11]) if r[11] else None,
+    }
+
+
+# ── Portfolio optimization tool ─────────────────────────────────────────
+
+def tool_optimize_portfolio(portfolio_id: int, max_weight: float = 0.30, mode: str = "sharpe") -> dict:
+    """运行 Markowitz 均值-方差优化，返回建议权重与当前持仓对比。mode: sharpe|minvar|riskparity"""
+    import subprocess, tempfile
+    try:
+        r = subprocess.run(
+            ["python3", "-u", str(SCRIPT_DIR / "optimizer.py"),
+             "--portfolio-id", str(portfolio_id),
+             "--max-weight", str(max_weight), "--mode", mode],
+            capture_output=True, text=True, timeout=30,
+            cwd=str(SCRIPT_DIR))
+        if r.returncode != 0:
+            return {"error": "优化失败", "detail": r.stderr[:500]}
+        return json.loads(r.stdout)
+    except subprocess.TimeoutExpired:
+        return {"error": "优化超时"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # ── Tool definitions (OpenAI format) ────────────────────────────────────
 
 TOOLS = [
@@ -585,6 +646,20 @@ TOOLS = [
             "count": {"type": "integer", "description": "返回条数，默认5，最多8"}
         }, "required": ["query"]}
     }},
+    {"type": "function", "function": {
+        "name": "get_fundamentals", "description": "获取单只股票的基本面数据：PE、PB、ROE、EPS(TTM)、营收增速、市值、行业。用户问估值或财务面时必须调用。",
+        "parameters": {"type": "object", "properties": {
+            "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
+        }, "required": ["symbol"]}
+    }},
+    {"type": "function", "function": {
+        "name": "optimize_portfolio", "description": "Markowitz均值-方差组合优化。给出当前持仓的建议权重分配（最大化夏普/最小方差/风险平价），以及与当前权重的对比。用户要求调仓建议时调用。",
+        "parameters": {"type": "object", "properties": {
+            "portfolio_id": {"type": "integer", "description": "组合ID"},
+            "max_weight": {"type": "number", "description": "单票最大权重，默认0.30"},
+            "mode": {"type": "string", "description": "优化模式: sharpe(默认), minvar, riskparity"}
+        }, "required": ["portfolio_id"]}
+    }},
 ]
 
 TOOL_LABELS = {
@@ -658,6 +733,14 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> 
         return json.dumps(tool_analyze_backtest(args.get("id")), ensure_ascii=False)
     elif name == "web_search":
         return json.dumps(tool_web_search(args.get("query",""), args.get("count",5)), ensure_ascii=False)
+    elif name == "get_fundamentals":
+        return json.dumps(tool_get_fundamentals(args.get("symbol","")), ensure_ascii=False)
+    elif name == "optimize_portfolio":
+        return json.dumps(tool_optimize_portfolio(
+            args.get("portfolio_id", portfolio_id),
+            float(args.get("max_weight", 0.30)),
+            args.get("mode", "sharpe")
+        ), ensure_ascii=False)
     return json.dumps({"error": f"unknown tool: {name}"})
 
 

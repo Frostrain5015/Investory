@@ -728,6 +728,64 @@ def run_walk_forward(strategy: dict, config: dict, conn, result_id: int):
     return output
 
 
+def run_optimize(strategy: dict, config: dict, conn, result_id: int):
+    """Grid search over parameter combinations on full period. Returns best result + heatmap."""
+    param_grid = config.get("paramGrid", {})
+    if not param_grid:
+        print("[ERROR] optimize mode requires paramGrid in config", flush=True)
+        return None
+
+    from itertools import product
+
+    param_names = list(param_grid.keys())
+    param_values = list(param_grid.values())
+    combos = list(product(*param_values))
+    total = len(combos)
+    print(f"=== 参数优化: {total} 个组合 ===", flush=True)
+
+    best_result, best_sharpe, best_combo = None, -999, None
+    all_results = []
+
+    for ci, combo in enumerate(combos):
+        params = dict(zip(param_names, combo))
+        print(f"[{ci+1}/{total} {(ci+1)/total*100:.1f}%] {params}", flush=True)
+
+        trial = _apply_params(strategy, params)
+        result = run_simple_backtest(trial, config, conn, result_id)
+        if result:
+            sharpe = result["metrics"].get("sharpeRatio", -999) or -999
+            all_results.append({"params": params, "sharpe": round(sharpe, 3),
+                                "returnPct": result["metrics"].get("totalReturnPct"),
+                                "maxdd": result["metrics"].get("maxDrawdownPct")})
+            if sharpe > best_sharpe:
+                best_sharpe = sharpe
+                best_result = result
+                best_combo = params
+
+    if best_result is None:
+        return None
+
+    best_result["optimizeHeatmap"] = all_results
+    best_result["metrics"]["optimizeBestParams"] = best_combo
+    best_result["metrics"]["optimizeTotalCombos"] = total
+    return best_result
+
+
+def _apply_params(strategy: dict, params: dict):
+    """Apply parameter overrides to matching rules in entry/exit."""
+    import copy
+    s = copy.deepcopy(strategy)
+    for rule_set_key in ["entry", "exit"]:
+        rules = s.get(rule_set_key, {}).get("rules", [])
+        for rule in rules:
+            for pname, pval in params.items():
+                # e.g. "sma_period" → match indicator "sma", set param "period"
+                parts = pname.split("_", 1)
+                if len(parts) == 2 and rule.get("indicator") == parts[0]:
+                    rule["params"][parts[1]] = pval
+    return s
+
+
 def optimize_window(strategy: dict, config: dict, param_grid: dict, conn, result_id: int):
     """Grid search over parameter combinations, return best result by Sharpe."""
     from itertools import product
@@ -789,6 +847,8 @@ def main():
     try:
         if strategy_type == "walk_forward":
             output = run_walk_forward(strategy, config, conn, result_id)
+        elif strategy_type == "optimize":
+            output = run_optimize(strategy, config, conn, result_id)
         elif strategy_type == "advanced":
             output = run_advanced_backtest(strategy, config, conn, result_id)
         else:

@@ -201,6 +201,43 @@ public class QuantApiController {
 
     // ── 工具方法 ──────────────────────────────────────────────────────────────
 
+    // 组合优化
+    @GetMapping("/optimize")
+    public Map<String, Object> optimize(@RequestParam(defaultValue = "sharpe") String mode,
+                                        @RequestParam(defaultValue = "0.30") double maxWeight,
+                                        HttpServletRequest req) {
+        long portfolioId = getPortfolioId(req);
+        if (portfolioId == 0) return Map.of("error", "未选择组合");
+
+        try {
+            File script = new File("script/optimizer.py");
+            if (!script.exists()) {
+                script = new File("../script/optimizer.py").getCanonicalFile();
+            }
+            if (!script.exists()) return Map.of("error", "优化器脚本未找到");
+
+            ProcessBuilder pb = new ProcessBuilder(
+                pythonExecutable, "-u", script.getAbsolutePath(),
+                "--portfolio-id", String.valueOf(portfolioId),
+                "--mode", mode,
+                "--max-weight", String.valueOf(maxWeight));
+            pb.directory(script.getParentFile());
+            pb.redirectErrorStream(true);
+            pb.environment().put("PYTHONUNBUFFERED", "1");
+
+            Process p = pb.start();
+            StringBuilder out = new StringBuilder();
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), "UTF-8"))) {
+                String line;
+                while ((line = r.readLine()) != null) out.append(line);
+            }
+            p.waitFor();
+            return json.readValue(out.toString(), Map.class);
+        } catch (Exception e) {
+            return Map.of("error", e.getMessage());
+        }
+    }
+
     private long getPortfolioId(HttpServletRequest req) {
         HttpSession session = req.getSession(false);
         if (session == null) return 0;

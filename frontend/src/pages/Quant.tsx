@@ -176,6 +176,7 @@ function BacktestSection() {
   const [wfWindow, setWfWindow] = useState(24)
   const [wfStep, setWfStep] = useState(6)
   const [wfOos, setWfOos] = useState(6)
+  const [optimize, setOptimize] = useState(false)        // grid search toggle
   const [strategyName, setStrategyName] = useState('')
   const [stockInput, setStockInput] = useState('')
   const [stockSearchResults, setStockSearchResults] = useState<any[]>([])
@@ -293,9 +294,25 @@ function BacktestSection() {
     const strategyData = JSON.parse(savedStrat.strategy_json)
     const strategy = { ...strategyData, stocks }
     const config: any = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.0003, slippagePct: 0.001 }
-    const effectiveStrategyType = wfEnabled ? 'walk_forward' : savedStrat.strategy_type
+    const effectiveStrategyType = optimize ? 'optimize' : wfEnabled ? 'walk_forward' : savedStrat.strategy_type
     if (wfEnabled) {
       Object.assign(config, { windowMonths: wfWindow, stepMonths: wfStep, oosMonths: wfOos })
+    }
+    if (optimize) {
+      // Auto-generate param grid: for each indicator, sweep its period param
+      const grid: Record<string, number[]> = {}
+      const allRules = [...(strategy.entry?.rules || []), ...(strategy.exit?.rules || [])]
+      for (const rule of allRules) {
+        const ind = rule.indicator
+        if (ind === 'stop_loss' || ind === 'take_profit' || ind === 'trailing_stop') continue
+        if (rule.params?.period && !grid[`${ind}_period`]) {
+          const p = rule.params.period
+          grid[`${ind}_period`] = [Math.max(3, p - 10), p, p + 10, p + 20].filter(v => v > 0)
+        }
+      }
+      if (Object.keys(grid).length > 0) {
+        config.paramGrid = grid
+      }
     }
     setRunning(true); setProgress(null); setSseLogs([]); setDoneMsg(null); setErrorMsg(null)
     const resp = await startBacktest({ name: savedStrat.name, strategyType: effectiveStrategyType, strategy, config })
@@ -516,27 +533,32 @@ function BacktestSection() {
                 </div>
               </div>
               {/* Walk-Forward validation toggle */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <label className="flex items-center gap-1.5 cursor-pointer select-none">
                   <input type="checkbox" checked={wfEnabled} onChange={e => setWfEnabled(e.target.checked)}
                     className="w-3.5 h-3.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
-                  <span className="text-xs text-slate-600">Walk-Forward 滚动验证</span>
+                  <span className="text-xs text-slate-600">Walk-Forward</span>
                 </label>
                 {wfEnabled && (
-                  <div className="flex items-center gap-2 text-xs">
+                  <div className="flex items-center gap-1.5 text-xs">
                     <input type="number" value={wfWindow} onChange={e => setWfWindow(Number(e.target.value))}
                       className="w-10 h-6 px-1 rounded border border-amber-200 bg-amber-50 text-center text-[11px]" min={6} max={60} />
-                    <span className="text-slate-400">月训练</span>
-                    <span className="text-amber-300">/</span>
+                    <span className="text-slate-400">训练</span>
                     <input type="number" value={wfStep} onChange={e => setWfStep(Number(e.target.value))}
                       className="w-10 h-6 px-1 rounded border border-amber-200 bg-amber-50 text-center text-[11px]" min={1} max={12} />
-                    <span className="text-slate-400">月步长</span>
-                    <span className="text-amber-300">/</span>
+                    <span className="text-slate-400">步长</span>
                     <input type="number" value={wfOos} onChange={e => setWfOos(Number(e.target.value))}
                       className="w-10 h-6 px-1 rounded border border-amber-200 bg-amber-50 text-center text-[11px]" min={1} max={18} />
-                    <span className="text-slate-400">月测试</span>
+                    <span className="text-slate-400">测试</span>
+                    <span className="text-amber-300">月</span>
                   </div>
                 )}
+                <span className="text-slate-300">|</span>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                  <input type="checkbox" checked={optimize} onChange={e => setOptimize(e.target.checked)}
+                    className="w-3.5 h-3.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
+                  <span className="text-xs text-slate-600">参数网格搜索</span>
+                </label>
               </div>
               <div className="grid grid-cols-5 gap-3">
                 <div><label className="text-[10px] text-slate-500">起始日期</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
