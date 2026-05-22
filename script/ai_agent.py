@@ -327,35 +327,36 @@ def tool_analyze_backtest(backtest_id: int = None) -> dict:
         "equityPoints": len(curve),
     }
 
-# ── Memory / Chat History ────────────────────────────────────────────────
+# ── Memory / Knowledge Base ──────────────────────────────────────────────
 
-def save_chat_history(user_id: int, messages: list):
-    """Save recent messages to DB for next session context"""
+def tool_remember(user_id: int, fact: str) -> str:
+    """用户主动要求记住的信息，持久化到知识库"""
     conn = get_db_conn(); cur = conn.cursor()
-    # Only save the last 3 exchanges (user + assistant pairs)
-    recent = [m for m in messages if m.get("role") in ("user", "assistant")][-6:]
-    for m in recent:
-        cur.execute("INSERT INTO ai_chat_history (user_id, role, content) VALUES (%s,%s,%s)",
-                     (user_id, m["role"], m["content"][:2000]))
+    cur.execute("INSERT INTO ai_chat_history (user_id, role, content) VALUES (%s, 'memory', %s)",
+                 (user_id, fact[:2000]))
     conn.commit()
-    # Keep only last 50 messages per user
-    cur.execute("DELETE FROM ai_chat_history WHERE user_id=%s AND id NOT IN (SELECT id FROM (SELECT id FROM ai_chat_history WHERE user_id=%s ORDER BY id DESC LIMIT 50) AS t)", (user_id, user_id))
+    # Keep max 50 memories per user
+    cur.execute("DELETE FROM ai_chat_history WHERE user_id=%s AND role='memory' AND id NOT IN (SELECT id FROM (SELECT id FROM ai_chat_history WHERE user_id=%s AND role='memory' ORDER BY id DESC LIMIT 50) AS t)", (user_id, user_id))
     conn.commit()
     cur.close(); conn.close()
+    return "已记住"
 
-def load_chat_history(user_id: int) -> str:
-    """Load recent chat context for injection into system prompt"""
+def load_memories(user_id: int) -> str:
+    """加载用户主动保存的记忆"""
     conn = get_db_conn(); cur = conn.cursor()
-    cur.execute("SELECT role, content FROM ai_chat_history WHERE user_id=%s AND created_at > DATE_SUB(NOW(), INTERVAL 7 DAY) ORDER BY id DESC LIMIT 20", (user_id,))
+    cur.execute("SELECT content FROM ai_chat_history WHERE user_id=%s AND role='memory' ORDER BY id DESC", (user_id,))
     rows = cur.fetchall()
     cur.close(); conn.close()
     if not rows: return ""
-    rows = list(reversed(rows))
-    lines = ["以下是最近的对话记录，供参考上下文："]
-    for role, content in rows:
-        prefix = "用户" if role == "user" else "观澜"
-        lines.append(f"{prefix}: {content[:200]}")
-    return "\n".join(lines)
+    return "用户保存的记忆：\n" + "\n".join(f"- {r[0]}" for r in rows)
+
+def tool_forget(user_id: int, keyword: str) -> str:
+    """删除包含关键词的记忆"""
+    conn = get_db_conn(); cur = conn.cursor()
+    cur.execute("DELETE FROM ai_chat_history WHERE user_id=%s AND role='memory' AND content LIKE %s", (user_id, f"%{keyword}%"))
+    deleted = cur.rowcount
+    conn.commit(); cur.close(); conn.close()
+    return f"已删除 {deleted} 条相关记忆"
 
 def tool_web_search(query: str, count: int = 5) -> dict:
     """联网搜索（DuckDuckGo，免费无API key）"""
@@ -498,6 +499,10 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"id": {"type": "integer", "description": "回测结果ID，不传则取最新一次"}}, "required": []}
     }},
     {"type": "function", "function": {
+        "name": "remember", "description": "用户要求记住某个信息（偏好、事实、背景等），保存到长期记忆。用户说'记住'、'别忘了'、'帮我记一下'时调用",
+        "parameters": {"type": "object", "properties": {"fact": {"type": "string", "description": "要记住的内容"}}, "required": ["fact"]}
+    }},
+    {"type": "function", "function": {
         "name": "web_search", "description": "联网搜索。凡涉及新闻、时事、最新动态、具体事件日期和细节——你无法从数据库回答的一切——必须先调用此工具再回复，禁止凭记忆编造",
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "搜索关键词"},
@@ -523,12 +528,15 @@ TOOL_LABELS = {
     "benchmark_compare": "正在对比基准...",
     "analyze_backtest": "正在分析回测...",
     "web_search": "正在联网搜索...",
+    "remember": "正在保存记忆...",
 }
 
-def execute_tool(name: str, args: dict, portfolio_id: int) -> str:
+def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> str:
     label = TOOL_LABELS.get(name, f"调用 {name}")
     print(f"[TOOL] {label}", flush=True)
-    if name == "get_portfolio":
+    if name == "remember":
+        return json.dumps({"status": tool_remember(user_id, args.get("fact",""))})
+    elif name == "get_portfolio":
         return json.dumps(tool_get_portfolio(portfolio_id), ensure_ascii=False)
     elif name == "get_stock_metrics":
         return json.dumps(tool_get_stock_metrics(args.get("symbol","")), ensure_ascii=False)
@@ -578,7 +586,7 @@ def get_proxy():
     except: return ""
 
 
-def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False):
+def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0):
     from openai import OpenAI
     import httpx
     kwargs = {"api_key": api_key}
@@ -631,7 +639,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                 break
             try: args = json.loads(t["args"])
             except: args = {}
-            result = execute_tool(t["name"], args, portfolio_id)
+            result = execute_tool(t["name"], args, portfolio_id, user_id)
             formatted.append({"role": "tool", "tool_call_id": t["id"], "content": result})
 
         stream2 = client.chat.completions.create(model=model, messages=formatted, stream=True, temperature=0.7, max_tokens=max_tokens)
@@ -693,11 +701,11 @@ def main():
 
     kb = load_knowledge_base()
     system_prompt = build_system_prompt(kb)
-    # Inject recent chat history as context
+    # Inject user's saved memories as context
     if args.user_id > 0:
-        history = load_chat_history(args.user_id)
-        if history:
-            system_prompt += "\n\n" + history
+        memories = load_memories(args.user_id)
+        if memories:
+            system_prompt += "\n\n" + memories
     if args.deep_think:
         system_prompt += "\n\n深度思考模式。要求：详细展示推理步骤、具体数据、假设和局限。如果用户要求写策略代码，直接输出完整可运行的 Python 代码（def decide(ctx): ...），不用先讲理论。"
     full_messages = [{"role": "system", "content": system_prompt}] + messages
@@ -706,11 +714,7 @@ def main():
         if args.provider == "anthropic":
             call_anthropic_stream(args.api_key, args.model, full_messages)
         else:
-            call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think)
-        # Save conversation to memory
-        if args.user_id > 0:
-            try: save_chat_history(args.user_id, full_messages)
-            except: pass
+            call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think, args.user_id)
     except Exception as e:
         msg = str(e)
         if "401" in msg or "Unauthorized" in msg or "Authentication" in msg:
