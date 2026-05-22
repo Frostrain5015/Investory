@@ -112,10 +112,11 @@ public class AiApiController {
                     while ((line = reader.readLine()) != null) {
                         if ("[DONE]".equals(line.trim())) {
                             session.emitDone();
-                        } else if (line.startsWith("[SUGGESTIONS]")) {
+                        } else if (line.startsWith("[ASK]")) {
                             try {
-                                String jsonStr = line.substring(14).trim();
-                                session.emitSuggestions(json.readValue(jsonStr, List.class));
+                                String jsonStr = line.substring(5).trim();
+                                Map<String, Object> askData = json.readValue(jsonStr, Map.class);
+                                session.emitAsk(askData);
                             } catch (Exception ignored) {}
                         } else if (line.startsWith("[STRATEGY]")) {
                             try {

@@ -40,6 +40,10 @@ public class AiSessionManager {
         emitToAll("strategy", data);
     }
 
+    public void emitAsk(Map<String, Object> data) {
+        emitToAll("ask", data);
+    }
+
     public void emitSuggestions(List<?> data) {
         emitToAll("suggestions", Map.of("items", data));
     }

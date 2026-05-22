@@ -459,7 +459,7 @@ TOOLS = [
         }, "required": ["id"]}
     }},
     {"type": "function", "function": {
-        "name": "generate_strategy", "description": "根据用户的自然语言描述生成一个完整的回测策略",
+        "name": "generate_strategy", "description": "生成Investory回测策略。代码必须是一个def decide(ctx)函数，ctx包含symbol/date/open/high/low/close/volume/has_position/shares/avg_cost/cash/total_equity。只使用numpy，禁止pandas/聚宽/米筐API",
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string"}, "description": {"type": "string"}, "code": {"type": "string"}
         }, "required": ["name", "description", "code"]}
@@ -499,6 +499,13 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"id": {"type": "integer", "description": "回测结果ID，不传则取最新一次"}}, "required": []}
     }},
     {"type": "function", "function": {
+        "name": "ask_user", "description": "需要用户做选择时调用。例如：多个回测结果选哪个、多个股票选哪个、确认是否执行操作。提供2-4个选项让用户选",
+        "parameters": {"type": "object", "properties": {
+            "question": {"type": "string", "description": "问用户的问题"},
+            "options": {"type": "array", "items": {"type": "string"}, "description": "选项列表，2-4个"}
+        }, "required": ["question", "options"]}
+    }},
+    {"type": "function", "function": {
         "name": "remember", "description": "用户要求记住某个信息（偏好、事实、背景等），保存到长期记忆。用户说'记住'、'别忘了'、'帮我记一下'时调用",
         "parameters": {"type": "object", "properties": {"fact": {"type": "string", "description": "要记住的内容"}}, "required": ["fact"]}
     }},
@@ -529,6 +536,7 @@ TOOL_LABELS = {
     "analyze_backtest": "正在分析回测...",
     "web_search": "正在联网搜索...",
     "remember": "正在保存记忆...",
+    "ask_user": "",
 }
 
 def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> str:
@@ -536,6 +544,10 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> 
     print(f"[TOOL] {label}", flush=True)
     if name == "remember":
         return json.dumps({"status": tool_remember(user_id, args.get("fact",""))})
+    elif name == "ask_user":
+        result = {"question": args.get("question",""), "options": args.get("options",[])}
+        print(f"[ASK] {json.dumps(result, ensure_ascii=False)}", flush=True)
+        return json.dumps({"answered": "已向用户展示选项，等待选择"})
     elif name == "get_portfolio":
         return json.dumps(tool_get_portfolio(portfolio_id), ensure_ascii=False)
     elif name == "get_stock_metrics":
@@ -648,13 +660,6 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             if delta.content:
                 sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
 
-    # Emit follow-up suggestions based on conversation context
-    suggestions = []
-    if any('持仓' in str(m.get('content','')) for m in messages):
-        suggestions.append("对比沪深300")
-    suggestions.append("诊断组合风格")
-    if suggestions:
-        print(f"[SUGGESTIONS] {json.dumps(suggestions, ensure_ascii=False)}", flush=True)
     print("\n[DONE]", flush=True)
 
 
@@ -707,7 +712,7 @@ def main():
         if memories:
             system_prompt += "\n\n" + memories
     if args.deep_think:
-        system_prompt += "\n\n深度思考模式。要求：详细展示推理步骤、具体数据、假设和局限。如果用户要求写策略代码，直接输出完整可运行的 Python 代码（def decide(ctx): ...），不用先讲理论。"
+        system_prompt += "\n\n深度思考模式。把推理过程放在<thinking>...</thinking>标签内（这部分前端会折叠，用户点开才看），最终结论放在标签外面直接显示。结论简洁，3-5句。如果要求写策略代码：Investory格式def decide(ctx)函数，只用numpy，禁止pandas/聚宽/米筐API。"
     full_messages = [{"role": "system", "content": system_prompt}] + messages
 
     try:

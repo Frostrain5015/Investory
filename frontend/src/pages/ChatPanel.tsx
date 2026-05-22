@@ -13,6 +13,20 @@ let gListeners: (() => void)[] = []
 
 function notify() { gListeners.forEach(fn => fn()) }
 
+function ThinkingBlock({ text, done }: { text: string; done: boolean }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="mb-2">
+      <button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600">
+        <span className={`w-2 h-2 rounded-full ${done ? 'bg-slate-400' : 'bg-amber-400 animate-pulse'}`} />
+        {done ? '思考过程' : '正在思考...'}
+        <span className="text-[10px]">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && <div className="mt-1.5 p-3 bg-slate-200/50 rounded-lg text-xs text-slate-500 whitespace-pre-wrap leading-relaxed">{text.trim() || '...'}</div>}
+    </div>
+  )
+}
+
 function useChatMessages(): [Message[], (msgs: Message[]) => void] {
   const [, setTick] = useState(0)
   useEffect(() => {
@@ -31,7 +45,6 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   const [streamText, setStreamText] = useState('')
   const [toolMsg, setToolMsg] = useState('')
   const [deepThink, setDeepThink] = useState(false)
-  const [suggestions, setSuggestions] = useState<string[]>([])
   const [usedTools, setUsedTools] = useState<string[]>([])
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
   const esRef = useRef<EventSource | null>(null)
@@ -81,9 +94,14 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
         const d = JSON.parse(e.data)
         pendingStrategy.current = { name: d.name, desc: d.description, code: d.code }
       })
-      es.addEventListener('suggestions', (e) => {
+      es.addEventListener('ask', (e) => {
         const d = JSON.parse(e.data)
-        setSuggestions(d.items || [])
+        setStreamText(prev => {
+          const opts = (d.options || []).map((o: string) =>
+            `<button class=\"ask-option\" data-q=\"${d.question}\" data-o=\"${o}\" style=\"display:inline-block;margin:2px 4px 2px 0;padding:4px 10px;border:1px solid #cbd5e1;border-radius:8px;font-size:12px;cursor:pointer;background:#fff\">${o}</button>`
+          ).join(' ')
+          return prev + '\n\n**' + d.question + '**\n\n' + opts
+        })
       })
       es.addEventListener('tool', (e) => {
         const d: SseEvent = JSON.parse(e.data)
@@ -164,7 +182,14 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-auto px-4 py-4 space-y-4">
+      <div className="flex-1 overflow-auto px-4 py-4 space-y-4" onClick={(e) => {
+        const target = e.target as HTMLElement
+        if (target.classList.contains('ask-option')) {
+          const option = target.dataset.o || target.textContent || ''
+          setInput(option)
+          setTimeout(() => send(), 100)
+        }
+      }}>
         {messages.length === 0 && !streaming && (
           <div className="text-center py-12">
             <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-3">
@@ -198,31 +223,24 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                 </div>
                 : <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>
               }
-              {/* C2: Follow-up suggestion buttons */}
-              {i === messages.length - 1 && suggestions.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {suggestions.map((s, si) => (
-                    <button key={si} onClick={() => { setInput(s); setTimeout(() => send(), 100) }}
-                      className="text-xs px-2.5 py-1 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700">{s}</button>
-                  ))}
-                </div>
-              )}
               {(m as Message).hasCode && (
-                <button onClick={async () => {
-                  const name = m.strategyName || prompt('策略名称', '观澜生成的策略')
-                  if (!name) return
-                  const code = m.strategyCode || m.content
-                  const res = await fetch('/investory/api/backtest/strategies', {
-                    method: 'POST', credentials: 'include',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, strategyType: 'advanced', strategy: { code } })
-                  })
-                  const data = await res.json()
-                  if (data.error) toast(data.error, false)
-                  else toast('策略已保存', true)
-                }} className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium">
-                  保存策略
-                </button>
+                <div className="mt-3 pt-3 border-t border-slate-200">
+                  <button onClick={async () => {
+                    const name = m.strategyName || prompt('策略名称', '观澜生成的策略')
+                    if (!name) return
+                    const code = m.strategyCode || m.content
+                    const res = await fetch('/investory/api/backtest/strategies', {
+                      method: 'POST', credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ name, strategyType: 'advanced', strategy: { code } })
+                    })
+                    const data = await res.json()
+                    if (data.error) toast(data.error, false)
+                    else toast('策略已保存', true)
+                  }} className="w-full h-9 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800">
+                    保存策略到我的策略库
+                  </button>
+                </div>
               )}
             </div>
           </div>
@@ -230,11 +248,19 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
         {streaming && (
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed bg-slate-100 text-slate-800">
-              {toolMsg && <div className="flex items-center gap-2 text-xs text-slate-400 mb-1"><span className="w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />{toolMsg}</div>}
               {streamText
-                ? <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded"><ReactMarkdown>{streamText}</ReactMarkdown></div>
+                ? (() => {
+                    const thinkMatch = streamText.match(/<thinking>([\s\S]*?)(<\/thinking>|$)/)
+                    const thinking = thinkMatch ? thinkMatch[1] : ''
+                    const after = streamText.replace(/<thinking>[\s\S]*?(<\/thinking>|$)/, '').trim()
+                    return (<>
+                      {thinking && <ThinkingBlock text={thinking} done={streamText.includes('</thinking>')} />}
+                      {after && <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded"><ReactMarkdown>{after}</ReactMarkdown></div>}
+                    </>)
+                  })()
                 : (!toolMsg && <span className="inline-flex gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>)
               }
+              {toolMsg && <div className="flex items-center gap-2 text-xs text-slate-400 mt-2 pt-2 border-t border-slate-200"><span className="w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />{toolMsg}</div>}
             </div>
           </div>
         )}
