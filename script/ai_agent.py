@@ -451,12 +451,6 @@ def tool_get_strategy(strategy_id: int) -> dict:
             # Format exit rules
             exit_rules = exit_r.get("rules", [])
             result["exit_rules"] = [_format_rule(rl) for rl in exit_rules]
-
-            # Position sizing
-            ps = strat.get("positionSizing", {})
-            result["position_sizing"] = ps.get("method", "equal_weight") + (
-                f" (基础股数: {ps['value']})" if "value" in ps and ps.get("method") == "equal_weight" else ""
-            )
     except Exception:
         result["raw"] = r[3][:500]
 

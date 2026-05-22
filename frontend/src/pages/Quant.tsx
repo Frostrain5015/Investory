@@ -338,7 +338,7 @@ function BacktestSection() {
   async function saveStrategy() {
     const strategy = strategyType === 'advanced'
       ? { code: advancedCode }
-      : { entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules }, positionSizing: { method: 'equal_weight', value: 10 } }
+      : { entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules } }
     const body: any = { name: strategyName || `${strategyType === 'advanced' ? '高级' : '简单'}策略`, strategyType, strategy }
     if (editId) body.id = editId
     const resp = await fetch('/investory/api/backtest/strategies', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
