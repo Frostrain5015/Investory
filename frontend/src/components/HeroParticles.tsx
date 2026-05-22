@@ -17,6 +17,7 @@ export default function HeroParticles() {
     const c = ref.current; if (!c) return
     const ctx = c.getContext('2d'); if (!ctx) return
     let w = 0, h = 0, particles: Particle[] = [], phase = 0, anim = 0
+    let mx = -999, my = -999  // mouse position
 
     const resize = () => {
       w = c.width = c.parentElement!.clientWidth
@@ -51,19 +52,35 @@ export default function HeroParticles() {
         const tx = p.baseX + rx, ty = p.baseY + ry
         p.x += (tx - p.x) * 0.018 + p.vx * (1 - cluster)
         p.y += (ty - p.y) * 0.018 + p.vy * (1 - cluster)
+        // Mouse repulsion
+        const dxm = p.x - mx, dym = p.y - my
+        const dist = Math.sqrt(dxm * dxm + dym * dym)
+        if (dist < 100 && dist > 0) {
+          const force = (1 - dist / 100) * 3.5
+          p.x += (dxm / dist) * force
+          p.y += (dym / dist) * force
+        }
+        // Mouse proximity boosts glow
+        const near = dist < 100 ? (1 - dist / 100) * 0.35 : 0
         // Glow halo
         ctx.beginPath(); ctx.arc(p.x, p.y, p.size * 2.5, 0, Math.PI * 2)
-        ctx.fillStyle = p.color; ctx.globalAlpha = p.alpha * 0.12; ctx.fill()
+        ctx.fillStyle = p.color; ctx.globalAlpha = p.alpha * 0.12 + near; ctx.fill()
         // Core dot
         ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2)
-        ctx.globalAlpha = p.alpha; ctx.fill()
+        ctx.globalAlpha = p.alpha + near; ctx.fill()
       }
       ctx.globalAlpha = 1
       anim = requestAnimationFrame(draw)
     }
+    const onMove = (e: MouseEvent) => { mx = e.clientX; my = e.clientY }
     resize(); window.addEventListener('resize', resize)
+    window.addEventListener('mousemove', onMove)
     draw()
-    return () => { cancelAnimationFrame(anim); window.removeEventListener('resize', resize) }
+    return () => {
+      cancelAnimationFrame(anim)
+      window.removeEventListener('resize', resize)
+      window.removeEventListener('mousemove', onMove)
+    }
   }, [])
 
   return <canvas ref={ref} className="absolute inset-0 pointer-events-none" />
