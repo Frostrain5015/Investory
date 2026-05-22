@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { getQuantData, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream } from '@/services/api'
+import { getQuantData, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks } from '@/services/api'
 import { useToast } from '@/components/Toast'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, TrendingUp, Target, AlertTriangle, BarChart3, Activity, ChevronDown, ChevronRight } from 'lucide-react'
@@ -182,6 +182,8 @@ function BacktestSection() {
   const [strategyType, setStrategyType] = useState<'simple' | 'advanced'>('simple')
   const [strategyName, setStrategyName] = useState('')
   const [stockInput, setStockInput] = useState('')
+  const [stockSearchResults, setStockSearchResults] = useState<any[]>([])
+  const [selectedStocks, setSelectedStocks] = useState<{ symbol: string; name: string }[]>([])
   const [entryLogic, setEntryLogic] = useState<'all' | 'any'>('all')
   const [entryRules, setEntryRules] = useState<any[]>([])
   const [exitRules, setExitRules] = useState<any[]>([])
@@ -244,7 +246,8 @@ function BacktestSection() {
   }
 
   async function handleStart() {
-    const stocks = stockInput.split(/[,;\s]+/).filter(Boolean)
+    const manualStocks = stockInput.split(/[,;\s]+/).filter(Boolean)
+    const stocks = [...selectedStocks.map(s => s.symbol), ...manualStocks]
     if (stocks.length === 0) { toast('请至少输入一只股票', false); return }
     const strategy = strategyType === 'simple'
       ? { stocks, entry: { logic: entryLogic, rules: entryRules }, exit: { stopLossPct: Number(stopLoss) || 0, takeProfitPct: Number(takeProfit) || 0, rules: exitRules }, positionSizing: { method: 'equal_weight', value: 10 } }
@@ -308,7 +311,44 @@ function BacktestSection() {
 
               <div>
                 <label className="text-xs font-medium text-slate-600 mb-1 block">测试股票</label>
-                <input type="text" value={stockInput} onChange={e => setStockInput(e.target.value)} placeholder="600519.SH, 00001.HK, AAPL.US" className="w-full h-8 px-3 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
+                {selectedStocks.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {selectedStocks.map(s => (
+                      <span key={s.symbol} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-xs text-blue-700">
+                        {s.name} ({s.symbol})
+                        <button onClick={() => setSelectedStocks(selectedStocks.filter(x => x.symbol !== s.symbol))} className="text-blue-400 hover:text-red-500">×</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="relative">
+                  <input type="text" value={stockInput}
+                    onChange={e => { setStockInput(e.target.value); if (e.target.value.length >= 1) searchStocks(e.target.value).then(setStockSearchResults).catch(() => {}) }}
+                    onFocus={() => { if (stockInput.length >= 1) searchStocks(stockInput).then(setStockSearchResults).catch(() => {}) }}
+                    onBlur={() => setTimeout(() => setStockSearchResults([]), 200)}
+                    placeholder="搜索股票代码或名称..."
+                    className="w-full h-8 px-3 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
+                  {stockSearchResults.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 max-h-48 overflow-auto">
+                      {stockSearchResults.map(r => (
+                        <button key={r.id} type="button"
+                          onMouseDown={e => e.preventDefault()}
+                          onClick={() => {
+                            if (!selectedStocks.find(s => s.symbol === r.symbol)) {
+                              setSelectedStocks([...selectedStocks, { symbol: r.symbol, name: r.name }])
+                            }
+                            setStockInput('')
+                            setStockSearchResults([])
+                          }}
+                          className="w-full flex items-center justify-between px-3 py-2 hover:bg-slate-50 text-left text-xs">
+                          <span className="font-medium text-slate-700">{r.name}</span>
+                          <span className="text-slate-400">{r.symbol}{r.market ? '.' + r.market : ''}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <p className="text-[10px] text-slate-400 mt-1">搜索并点击添加，或直接输入代码逗号分隔</p>
+                </div>
               </div>
 
               {strategyType === 'simple' ? (<>
@@ -382,7 +422,7 @@ function BacktestSection() {
     {metrics && (
       <div className="space-y-4">
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-          <MetricCard label="总收益" value={`${metrics.totalReturnPct >= 0 ? '+' : ''}${metrics.totalReturnPct}%`} color={metrics.totalReturnPct >= 0 ? 'text-red-600' : 'text-emerald-600'} icon={<TrendingUp className="w-3.5 h-3.5" />} />
+          <MetricCard label="总收益" value={metrics.totalReturnPct != null ? `${metrics.totalReturnPct >= 0 ? '+' : ''}${metrics.totalReturnPct}%` : '—'} color={metrics.totalReturnPct >= 0 ? 'text-red-600' : 'text-emerald-600'} icon={<TrendingUp className="w-3.5 h-3.5" />} />
           <MetricCard label="年化收益" value={`${metrics.annualReturnPct >= 0 ? '+' : ''}${metrics.annualReturnPct}%`} color={metrics.annualReturnPct >= 0 ? 'text-red-600' : 'text-emerald-600'} icon={<Target className="w-3.5 h-3.5" />} />
           <MetricCard label="Sharpe" value={`${metrics.sharpeRatio}`} color="text-slate-900" icon={<BarChart3 className="w-3.5 h-3.5" />} />
           <MetricCard label="最大回撤" value={`${metrics.maxDrawdownPct}%`} color="text-red-500" icon={<AlertTriangle className="w-3.5 h-3.5" />} />

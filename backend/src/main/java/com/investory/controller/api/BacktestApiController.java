@@ -149,8 +149,8 @@ public class BacktestApiController {
                 int exitCode = p.waitFor();
                 Files.deleteIfExists(tmpInput);
 
-                // Read output JSON
-                Path tmpOutput = Path.of("backtest_output_" + resultId + ".json");
+                // Read output JSON — Python writes to its working dir (script/)
+                Path tmpOutput = scriptDir.toPath().resolve("backtest_output_" + resultId + ".json");
                 if (exitCode == 0 && Files.exists(tmpOutput)) {
                     String outputJson = Files.readString(tmpOutput);
                     @SuppressWarnings("unchecked")
