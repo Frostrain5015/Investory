@@ -459,7 +459,7 @@ TOOLS = [
         }, "required": ["id"]}
     }},
     {"type": "function", "function": {
-        "name": "generate_strategy", "description": "生成Investory回测策略。代码必须是一个def decide(ctx)函数，ctx包含symbol/date/open/high/low/close/volume/has_position/shares/avg_cost/cash/total_equity。只使用numpy，禁止pandas/聚宽/米筐API",
+        "name": "generate_strategy", "description": "生成Investory回测策略代码。代码格式：def decide(ctx): 接收ctx字典，键为symbol date open high low close volume has_position shares avg_cost cash total_equity。返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只能用numpy和math，禁止import pandas/聚宽/米筐/jqdata/ricequant/joinquant，禁止DataFrame/Series/context/get_all_securities/get_fundamentals。返回的code字段只包含def decide函数，不超过80行",
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string"}, "description": {"type": "string"}, "code": {"type": "string"}
         }, "required": ["name", "description", "code"]}
@@ -653,6 +653,8 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             except: args = {}
             result = execute_tool(t["name"], args, portfolio_id, user_id)
             formatted.append({"role": "tool", "tool_call_id": t["id"], "content": result})
+            if t["name"] == "ask_user":
+                print("\n[DONE]", flush=True); return
 
         stream2 = client.chat.completions.create(model=model, messages=formatted, stream=True, temperature=0.7, max_tokens=max_tokens)
         for chunk in stream2:
