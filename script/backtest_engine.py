@@ -206,9 +206,6 @@ def run_simple_backtest(strategy: dict, config: dict, conn, result_id: int) -> d
     entry_rules = strategy.get("entry", {}).get("rules", [])
     entry_logic = strategy.get("entry", {}).get("logic", "all")
     exit_rules = strategy.get("exit", {}).get("rules", [])
-    stop_loss_pct = float(strategy.get("exit", {}).get("stopLossPct", 0) or 0)
-    take_profit_pct = float(strategy.get("exit", {}).get("takeProfitPct", 0) or 0)
-    trailing_stop_pct = float(strategy.get("exit", {}).get("trailingStopPct", 0) or 0)
     pos_method = strategy.get("positionSizing", {}).get("method", "equal_weight")
     pos_pct = float(strategy.get("positionSizing", {}).get("value", 10))
 
@@ -276,43 +273,51 @@ def run_simple_backtest(strategy: dict, config: dict, conn, result_id: int) -> d
             price = float(sd["close"][idx])
             has_position = sym in positions
 
-            # Check exit conditions first
+            # Check exit conditions
             if has_position:
                 pos = positions[sym]
                 entry_cost = pos["avg_cost"]
                 current_pnl_pct = (price / entry_cost - 1) * 100
-
-                # Update trailing stop
                 pos["highest_close"] = max(pos["highest_close"], price)
-                trailing_price = pos["highest_close"] * (1 - trailing_stop_pct / 100)
 
                 should_sell = False
                 reason = ""
 
-                # Stop loss
-                if stop_loss_pct and current_pnl_pct <= -stop_loss_pct:
-                    should_sell = True
-                    reason = f"止损 ({current_pnl_pct:.1f}%)"
+                # Evaluate exit rules one by one
+                for rule in exit_rules:
+                    indicator = rule.get("indicator", "")
+                    params = rule.get("params", {})
 
-                # Take profit
-                elif take_profit_pct and current_pnl_pct >= take_profit_pct:
-                    should_sell = True
-                    reason = f"止盈 ({current_pnl_pct:.1f}%)"
+                    # Position-aware indicators
+                    if indicator == "stop_loss":
+                        pct = float(params.get("pct", 8))
+                        if current_pnl_pct <= -pct:
+                            should_sell = True
+                            reason = f"止损 ({current_pnl_pct:.1f}%)"
+                            break
 
-                # Trailing stop
-                elif trailing_stop_pct and price < trailing_price:
-                    should_sell = True
-                    reason = f"移动止损 ({current_pnl_pct:.1f}%)"
+                    elif indicator == "take_profit":
+                        pct = float(params.get("pct", 20))
+                        if current_pnl_pct >= pct:
+                            should_sell = True
+                            reason = f"止盈 ({current_pnl_pct:.1f}%)"
+                            break
 
-                # Rule-based exit
-                if not should_sell and exit_rules:
-                    results = []
-                    for rule in exit_rules:
-                        val = eval_indicator(rule["indicator"], sd, rule.get("params", {}), idx)
-                        results.append(eval_condition(val, rule))
-                    should_sell = all(results) if entry_logic == "all" else any(results)
-                    if should_sell:
-                        reason = "离场规则触发"
+                    elif indicator == "trailing_stop":
+                        pct = float(params.get("pct", 5))
+                        trail_price = pos["highest_close"] * (1 - pct / 100)
+                        if price < trail_price:
+                            should_sell = True
+                            reason = f"移动止损 ({current_pnl_pct:.1f}%)"
+                            break
+
+                    # Regular indicator rules
+                    else:
+                        val = eval_indicator(indicator, sd, params, idx)
+                        if eval_condition(val, rule):
+                            should_sell = True
+                            reason = f"离场规则: {indicator}"
+                            break
 
                 if should_sell:
                     proceeds = pos["shares"] * price

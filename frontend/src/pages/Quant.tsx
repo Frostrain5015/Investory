@@ -4,6 +4,7 @@ import { useToast } from '@/components/Toast'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, TrendingUp, Target, AlertTriangle, BarChart3, Activity, ChevronDown, ChevronRight } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { displaySymbol } from '@/lib/format'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceDot } from 'recharts'
 import type { ScenarioResult, PortfolioRiskSummary, ScenarioHoldingDetail, BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent } from '@/types'
 
@@ -22,6 +23,9 @@ const INDICATORS = [
   { name: 'bollinger_lower', label: '布林下轨', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: '< 下轨' }] },
   { name: 'volume_ma', label: '成交量MA', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '放量' }] },
   { name: 'kdj_k', label: 'KDJ-K', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 9 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
+  { name: 'stop_loss', label: '止损', params: [{ name: 'pct', label: '跌幅%', type: 'number' as const, default: 8 }], conditions: [{ value: 'triggered', label: '触发止损' }] },
+  { name: 'take_profit', label: '止盈', params: [{ name: 'pct', label: '涨幅%', type: 'number' as const, default: 20 }], conditions: [{ value: 'triggered', label: '触发止盈' }] },
+  { name: 'trailing_stop', label: '移动止损', params: [{ name: 'pct', label: '回落%', type: 'number' as const, default: 5 }], conditions: [{ value: 'triggered', label: '触发移动止损' }] },
 ]
 
 interface SseProgress { current: number; total: number; pct: number; name: string }
@@ -187,9 +191,8 @@ function BacktestSection() {
   const [entryLogic, setEntryLogic] = useState<'all' | 'any'>('all')
   const [entryRules, setEntryRules] = useState<any[]>([])
   const [exitRules, setExitRules] = useState<any[]>([])
-  const [stopLoss, setStopLoss] = useState('')
-  const [takeProfit, setTakeProfit] = useState('')
   const [startDate, setStartDate] = useState(yearAgoStr())
+  const [baseCurrency, setBaseCurrency] = useState('CNY')
   const [endDate, setEndDate] = useState(todayStr())
   const [initialCapital, setInitialCapital] = useState('100000')
   const [advancedCode, setAdvancedCode] = useState(`def decide(ctx):
@@ -250,9 +253,9 @@ function BacktestSection() {
     const stocks = [...selectedStocks.map(s => s.symbol), ...manualStocks]
     if (stocks.length === 0) { toast('请至少输入一只股票', false); return }
     const strategy = strategyType === 'simple'
-      ? { stocks, entry: { logic: entryLogic, rules: entryRules }, exit: { stopLossPct: Number(stopLoss) || 0, takeProfitPct: Number(takeProfit) || 0, rules: exitRules }, positionSizing: { method: 'equal_weight', value: 10 } }
+      ? { stocks, entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules }, positionSizing: { method: 'equal_weight', value: 10 } }
       : { stocks, code: advancedCode }
-    const config = { startDate, endDate, initialCapital: Number(initialCapital), commissionPct: 0.0003, slippagePct: 0.001 }
+    const config = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.0003, slippagePct: 0.001 }
     setRunning(true); setProgress(null); setSseLogs([]); setDoneMsg(null); setErrorMsg(null)
     const resp = await startBacktest({ name: strategyName || `${strategyType === 'simple' ? '简单' : '高级'}策略`, strategyType, strategy, config })
     if (!resp.ok) { setErrorMsg(`HTTP ${resp.status}`); setRunning(false); return }
@@ -342,7 +345,7 @@ function BacktestSection() {
                           }}
                           className="w-full flex items-center justify-between px-3 py-2 hover:bg-slate-50 text-left text-xs">
                           <span className="font-medium text-slate-700">{r.name}</span>
-                          <span className="text-slate-400">{r.symbol}{r.market ? '.' + r.market : ''}</span>
+                          <span className="text-slate-400">{displaySymbol(r.symbol, r.market)}</span>
                         </button>
                       ))}
                     </div>
@@ -369,10 +372,6 @@ function BacktestSection() {
                       <button onClick={() => addRule('exit')} className="text-xs text-blue-600 hover:text-blue-800">+ 添加</button>
                     </div>
                     {exitRules.map((rule, i) => <RuleEditor key={i} rule={rule} onChange={r => { const e = [...exitRules]; e[i] = r; setExitRules(e) }} onRemove={() => setExitRules(exitRules.filter((_, j) => j !== i))} />)}
-                    <div className="grid grid-cols-2 gap-2 mt-2">
-                      <div><label className="text-[10px] text-slate-500">止损 %</label><input type="number" value={stopLoss} onChange={e => setStopLoss(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
-                      <div><label className="text-[10px] text-slate-500">止盈 %</label><input type="number" value={takeProfit} onChange={e => setTakeProfit(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
-                    </div>
                   </div>
                 </div>
               </>) : (
@@ -384,10 +383,11 @@ function BacktestSection() {
                 </div>
               )}
 
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-5 gap-3">
                 <div><label className="text-[10px] text-slate-500">起始日期</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
                 <div><label className="text-[10px] text-slate-500">结束日期</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
                 <div><label className="text-[10px] text-slate-500">初始资金</label><input type="number" value={initialCapital} onChange={e => setInitialCapital(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
+                <div><label className="text-[10px] text-slate-500">基准货币</label><select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} className="w-full h-8 px-1 rounded-lg border border-slate-200 text-xs"><option value="CNY">CNY 人民币</option><option value="HKD">HKD 港币</option><option value="USD">USD 美元</option></select></div>
                 <div className="flex items-end">
                   <button onClick={handleStart} disabled={running} className="w-full h-8 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 disabled:opacity-40 inline-flex items-center justify-center gap-1"><Play className="w-3 h-3" />开始回测</button>
                 </div>
