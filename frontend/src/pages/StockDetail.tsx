@@ -272,7 +272,9 @@ export default function StockDetail() {
                     <ReferenceLine y={Number(holding.dilutedCost)} stroke="#0ea5e9" strokeDasharray="6 4" strokeWidth={1.5}
                       label={{ value: `摊薄 ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
                   )}
-                  <Tooltip />
+                  <Tooltip formatter={(value: any) => [
+                    Number(value).toFixed(2), stock?.name || ''
+                  ]} />
                   <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
                   {transactions.map(t => {
                     const match = priceData.find(p => p.date === t.tradeDate)
