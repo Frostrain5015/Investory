@@ -220,11 +220,12 @@ def execute_tool(name: str, args: dict, portfolio_id: int) -> str:
 
 # ── OpenAI-compatible streaming with function calling ────────────────────
 
-def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int):
+def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False):
     from openai import OpenAI
     kwargs = {"api_key": api_key}
     if api_base: kwargs["base_url"] = api_base
     client = OpenAI(**kwargs)
+    max_tokens = 4096 if deep_think else 1024
 
     formatted = []
     for m in messages:
@@ -236,7 +237,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         formatted.append(entry)
 
     # First call — stream to detect tool calls
-    stream = client.chat.completions.create(model=model, messages=formatted, tools=TOOLS, stream=True, temperature=0.7, max_tokens=1024)
+    stream = client.chat.completions.create(model=model, messages=formatted, tools=TOOLS, stream=True, temperature=0.7, max_tokens=max_tokens)
 
     # Collect streamed chunks to detect tool calls
     tool_calls_map = {}
@@ -254,7 +255,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                     if tc.function.arguments: tool_calls_map[idx]["args"] += tc.function.arguments
         elif delta.content:
             content_buffer += delta.content
-            sys.stdout.write(delta.content); sys.stdout.flush()
+            sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
 
     # Handle function calls if detected
     if tool_calls_map:
@@ -270,11 +271,11 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             formatted.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
 
         # Second call with tool results — stream
-        stream2 = client.chat.completions.create(model=model, messages=formatted, stream=True, temperature=0.7, max_tokens=1024)
+        stream2 = client.chat.completions.create(model=model, messages=formatted, stream=True, temperature=0.7, max_tokens=max_tokens)
         for chunk in stream2:
             delta = chunk.choices[0].delta
             if delta.content:
-                sys.stdout.write(delta.content); sys.stdout.flush()
+                sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
     elif content_buffer:
         pass  # Already streamed above
 
@@ -295,8 +296,8 @@ def call_anthropic_stream(api_key: str, model: str, messages: list):
     if system_prompt: kwargs["system"] = system_prompt
     with client.messages.stream(**kwargs) as stream:
         for text in stream.text_stream:
-            sys.stdout.write(text); sys.stdout.flush()
-    print("\n[DONE]", flush=True)
+            sys.stdout.write(text + "\n"); sys.stdout.flush()
+    print("[DONE]", flush=True)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────
@@ -307,6 +308,7 @@ def main():
     parser.add_argument("--model", default="gpt-4o-mini")
     parser.add_argument("--api-key", required=True)
     parser.add_argument("--api-base", default="")
+    parser.add_argument("--deep-think", action="store_true")
     parser.add_argument("--portfolio-id", type=int, default=0)
     parser.add_argument("--input", required=True)
     args = parser.parse_args()
@@ -318,13 +320,15 @@ def main():
 
     kb = load_knowledge_base()
     system_prompt = build_system_prompt(kb)
+    if args.deep_think:
+        system_prompt += "\n\n用户已启用深度思考模式。请给出更详细的分析：展示推理步骤、引用具体数据、考虑多种情景、明确列出假设和局限。"
     full_messages = [{"role": "system", "content": system_prompt}] + messages
 
     try:
         if args.provider == "anthropic":
             call_anthropic_stream(args.api_key, args.model, full_messages)
         else:
-            call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id)
+            call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think)
     except Exception as e:
         print(f"[ERROR] {e}", flush=True)
         traceback.print_exc(file=sys.stderr)

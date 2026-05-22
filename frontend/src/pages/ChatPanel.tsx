@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Sparkles, X, Send, RefreshCw, Trash2 } from 'lucide-react'
+import { Sparkles, X, Send, RefreshCw, Trash2, Brain } from 'lucide-react'
 import type { SseEvent } from '@/types'
 
 interface Message { role: 'user' | 'assistant'; content: string }
@@ -27,28 +27,34 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [toolMsg, setToolMsg] = useState('')
+  const [deepThink, setDeepThink] = useState(false)
   const esRef = useRef<EventSource | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
 
-  function getAiConfig() {
-    const provider = localStorage.getItem('ai_provider') || 'openai'
-    return {
-      provider, key: localStorage.getItem('ai_key') || '',
-      baseUrl: localStorage.getItem('ai_base_url') || '',
-      model: localStorage.getItem('ai_model') || 'gpt-4o-mini',
-    }
-  }
-
   async function send() {
     const text = input.trim()
     if (!text || streaming) return
-    const config = getAiConfig()
-    if (!config.key) { alert('请先在设置中配置 AI API Key'); return }
+
+    // Get settings from server
+    let apiKey = ''; let provider = 'openai'; let model = 'gpt-4o-mini'; let baseUrl = ''
+    try {
+      const r = await fetch('/investory/api/ai/settings', { credentials: 'include' })
+      const s = await r.json()
+      if (!s.hasKey) { alert('请先在设置页配置 AI API Key'); return }
+      provider = s.provider || 'openai'
+      model = s.model || 'gpt-4o-mini'
+      baseUrl = s.baseUrl || ''
+      const kr = await fetch('/investory/api/ai/key', { method: 'POST', credentials: 'include' })
+      const kd = await kr.json()
+      apiKey = kd.apiKey || ''
+    } catch { alert('无法获取 AI 配置'); return }
+    if (!apiKey) { alert('请先在设置页配置 AI API Key'); return }
 
     setInput('')
-    const newMessages: Message[] = [...messages, { role: 'user', content: text }]
+    const userContent = deepThink ? `[深度思考模式] ${text}\n请给出详细的分析和推理过程，不要省略步骤。` : text
+    const newMessages: Message[] = [...messages, { role: 'user', content: userContent }]
     setMessages(newMessages)
     setStreaming(true)
     setStreamText('')
@@ -56,7 +62,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     try {
       const resp = await fetch('/investory/api/ai/chat', {
         method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json', 'X-AI-Key': config.key, 'X-AI-Provider': config.provider, 'X-AI-Model': config.model, 'X-AI-Base-URL': config.baseUrl },
+        headers: { 'Content-Type': 'application/json', 'X-AI-Key': apiKey, 'X-AI-Provider': provider, 'X-AI-Model': model, 'X-AI-Base-URL': baseUrl, 'X-AI-Deep-Think': deepThink ? '1' : '0' },
         body: JSON.stringify({ messages: newMessages }),
       })
       if (!resp.ok) { setStreamText(`[错误] HTTP ${resp.status}`); setStreaming(false); return }
@@ -110,10 +116,10 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-slate-900 flex items-center justify-center"><Sparkles className="w-3.5 h-3.5 text-white" /></div>
-          <span className="text-sm font-bold text-slate-900">观澜</span>
-          <span className="text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">Alpha</span>
+          <span className="text-sm font-bold text-slate-900">观澜 AI</span>
         </div>
         <div className="flex items-center gap-1">
+          <button onClick={() => setDeepThink(!deepThink)} className={`p-1.5 rounded-lg transition-colors ${deepThink ? 'bg-purple-100 text-purple-600' : 'hover:bg-slate-100 text-slate-400'}`} title="深度思考"><Brain className="w-3.5 h-3.5" /></button>
           <button onClick={clearChat} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400" title="清空对话"><Trash2 className="w-3.5 h-3.5" /></button>
           {messages.length >= 2 && !streaming && <button onClick={regenerate} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400" title="重新生成"><RefreshCw className="w-3.5 h-3.5" /></button>}
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"><X className="w-4 h-4" /></button>

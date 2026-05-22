@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { useToast } from '@/components/Toast'
 import { useSettings, type BaseCurrency } from '@/hooks/use-settings'
@@ -19,10 +19,22 @@ export default function Settings() {
   const [newPw, setNewPw] = useState('')
   const [pwMsg, setPwMsg] = useState('')
   const [deleting, setDeleting] = useState(false)
-  const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('ai_provider') || 'openai')
-  const [aiKey, setAiKey] = useState(() => localStorage.getItem('ai_key') || '')
-  const [aiBaseUrl, setAiBaseUrl] = useState(() => localStorage.getItem('ai_base_url') || '')
-  const [aiModel, setAiModel] = useState(() => localStorage.getItem('ai_model') || '')
+  const [aiProvider, setAiProvider] = useState('openai')
+  const [aiKey, setAiKey] = useState('')
+  const [aiBaseUrl, setAiBaseUrl] = useState('')
+  const [aiModel, setAiModel] = useState('')
+  const [aiHasKey, setAiHasKey] = useState(false)
+
+  // Load AI settings from server on mount
+  useEffect(() => {
+    fetch('/investory/api/ai/settings', { credentials: 'include' })
+      .then(r => r.json()).then(d => {
+        if (d.provider) setAiProvider(d.provider)
+        if (d.model) setAiModel(d.model)
+        if (d.baseUrl) setAiBaseUrl(d.baseUrl)
+        if (d.hasKey) setAiHasKey(true)
+      }).catch(() => {})
+  }, [])
 
   const AI_PRESETS: Record<string, { label: string; baseUrl: string; model: string }> = {
     openai:     { label: 'OpenAI',       baseUrl: '',                                           model: 'gpt-4o-mini' },
@@ -177,18 +189,26 @@ export default function Settings() {
             ))}
           </select>
           <input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)}
-            placeholder="API Key" className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
+            placeholder={aiHasKey ? '已保存（留空不修改）' : '粘贴 API Key，例如 sk-...'}
+            className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
           {aiProvider === 'custom' && (
             <input type="text" value={aiBaseUrl} onChange={e => setAiBaseUrl(e.target.value)}
-              placeholder="API Base URL (例如 https://api.deepseek.com/v1)" className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
+              placeholder="API 端点地址，例如 https://api.deepseek.com/v1"
+              className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
           )}
           <input type="text" value={aiModel} onChange={e => setAiModel(e.target.value)}
-            placeholder="模型名称" className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
-          <button onClick={() => {
-            localStorage.setItem('ai_provider', aiProvider)
-            localStorage.setItem('ai_key', aiKey)
-            localStorage.setItem('ai_base_url', aiBaseUrl)
-            localStorage.setItem('ai_model', aiModel)
+            placeholder={aiProvider === 'openai' ? '例如 gpt-4o-mini / gpt-4o' : aiProvider === 'anthropic' ? '例如 claude-haiku-4-5' : aiProvider === 'deepseek' ? '例如 deepseek-chat' : '模型名称，服务商文档中可查'}
+            className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
+          <button onClick={async () => {
+            const body: any = { provider: aiProvider, model: aiModel, baseUrl: aiBaseUrl }
+            if (aiKey) body.apiKey = aiKey
+            const res = await fetch('/investory/api/ai/settings', {
+              method: 'POST', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+            })
+            const data = await res.json()
+            if (data.error) { toast(data.error, false); return }
+            if (aiKey) setAiHasKey(true)
             toast('AI 设置已保存', true)
           }} className="w-full h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
             保存设置

@@ -52,6 +52,7 @@ public class AiApiController {
         final String model = (aiModel != null && !aiModel.isBlank()) ? aiModel : "gpt-4o-mini";
         final String key = aiKey;
         final String baseUrl = (aiBaseUrl != null) ? aiBaseUrl : "";
+        final boolean deepThink = "1".equals(req.getHeader("X-AI-Deep-Think"));
 
         // Get portfolio ID from session
         jakarta.servlet.http.HttpSession s = req.getSession(false);
@@ -94,6 +95,7 @@ public class AiApiController {
                 cmd.add("--api-key"); cmd.add(key);
                 cmd.add("--portfolio-id"); cmd.add(String.valueOf(pid));
                 cmd.add("--input"); cmd.add(tmpInput.toString());
+                if (deepThink) { cmd.add("--deep-think"); }
                 if (!baseUrl.isBlank()) { cmd.add("--api-base"); cmd.add(baseUrl); }
                 ProcessBuilder pb = new ProcessBuilder(cmd);
                 pb.directory(scriptDir);
