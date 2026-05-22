@@ -171,7 +171,10 @@ function BacktestSection() {
   const [metrics, setMetrics] = useState<BacktestMetrics | null>(null)
   const [tradeLog, setTradeLog] = useState<TradeLogEntry[] | null>(null)
 
-  const [strategyType, setStrategyType] = useState<'simple' | 'advanced'>('simple')
+  const [strategyType, setStrategyType] = useState<'simple' | 'advanced' | 'walk_forward'>('simple')
+  const [wfWindow, setWfWindow] = useState(24)      // WF training window months
+  const [wfStep, setWfStep] = useState(6)            // WF step months
+  const [wfOos, setWfOos] = useState(6)              // WF out-of-sample months
   const [strategyName, setStrategyName] = useState('')
   const [stockInput, setStockInput] = useState('')
   const [stockSearchResults, setStockSearchResults] = useState<any[]>([])
@@ -288,7 +291,10 @@ function BacktestSection() {
     if (!savedStrat) { toast('策略未找到', false); return }
     const strategyData = JSON.parse(savedStrat.strategy_json)
     const strategy = { ...strategyData, stocks }
-    const config = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.0003, slippagePct: 0.001 }
+    const config: any = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.0003, slippagePct: 0.001 }
+    if (savedStrat.strategy_type === 'walk_forward' && savedStrat.config_json) {
+      Object.assign(config, JSON.parse(savedStrat.config_json))
+    }
     setRunning(true); setProgress(null); setSseLogs([]); setDoneMsg(null); setErrorMsg(null)
     const resp = await startBacktest({ name: savedStrat.name, strategyType: savedStrat.strategy_type, strategy, config })
     if (!resp.ok) { setErrorMsg(`HTTP ${resp.status}`); setRunning(false); return }
@@ -328,10 +334,13 @@ function BacktestSection() {
 
   // ── Save strategy ───────────────────────────────────────────────────
   async function saveStrategy() {
-    const strategy = strategyType === 'simple'
-      ? { entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules }, positionSizing: { method: 'equal_weight', value: 10 } }
-      : { code: advancedCode }
-    const body: any = { name: strategyName || `${strategyType === 'simple' ? '简单' : '高级'}策略`, strategyType, strategy }
+    const strategy = strategyType === 'advanced'
+      ? { code: advancedCode }
+      : { entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules }, positionSizing: { method: 'equal_weight', value: 10 } }
+    const config = strategyType === 'walk_forward' ? { windowMonths: wfWindow, stepMonths: wfStep, oosMonths: wfOos } : undefined
+    const typeLabel = strategyType === 'walk_forward' ? 'WF' : strategyType === 'advanced' ? '高级' : '简单'
+    const body: any = { name: strategyName || `${typeLabel}策略`, strategyType, strategy }
+    if (config) body.strategy_config = config
     if (editId) body.id = editId
     const resp = await fetch('/investory/api/backtest/strategies', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const data = await resp.json()
@@ -356,6 +365,12 @@ function BacktestSection() {
         setEntryLogic(parsed.entry?.logic || 'all')
         setEntryRules(parsed.entry?.rules || [])
         setExitRules(parsed.exit?.rules || [])
+      }
+      if (s.strategy_type === 'walk_forward' && s.config_json) {
+        const cfg = JSON.parse(s.config_json)
+        setWfWindow(cfg.windowMonths || 24)
+        setWfStep(cfg.stepMonths || 6)
+        setWfOos(cfg.oosMonths || 6)
       }
     } catch { setAdvancedCode('') }
     setView('builder')
@@ -386,23 +401,28 @@ function BacktestSection() {
             <CardContent className="space-y-4">
               <div className="flex items-center gap-4">
                 <div className="flex bg-slate-100 rounded-lg p-0.5">
-                  {(['simple', 'advanced'] as const).map(t => (
-                    <button key={t} onClick={() => setStrategyType(t)} className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${strategyType === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-                      {t === 'simple' ? '简单模式' : '高级模式'}
+                  {([
+                    { key: 'simple', label: '简单模式' },
+                    { key: 'walk_forward', label: 'Walk-Forward' },
+                    { key: 'advanced', label: '高级模式' },
+                  ] as const).map(t => (
+                    <button key={t.key} onClick={() => setStrategyType(t.key)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${strategyType === t.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                      {t.label}
                     </button>
                   ))}
                 </div>
                 <input type="text" value={strategyName} onChange={e => setStrategyName(e.target.value)} placeholder="策略名称（可选）" className="h-8 px-3 rounded-lg border border-slate-200 text-xs flex-1 max-w-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
               </div>
 
-              {strategyType === 'simple' ? (<>
+              {(strategyType === 'simple' || strategyType === 'walk_forward') ? (<>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs font-medium text-slate-600">入场规则</label>
                       <div className="flex items-center gap-2">
                         <select value={entryLogic} onChange={e => setEntryLogic(e.target.value as 'all' | 'any')} className="h-6 px-1.5 rounded text-xs border border-slate-200"><option value="all">全部满足</option><option value="any">任一满足</option></select>
-                        <button onClick={() => addRule('entry')} className="text-xs text-blue-600 hover:text-blue-800">+ 添加</button>
+                        <button onClick={() => addRule('entry')} className="h-6 px-2 rounded-md text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:border-slate-300 transition-colors">+ 添加</button>
                       </div>
                     </div>
                     {entryRules.map((rule, i) => <RuleEditor key={i} rule={rule} indicators={ENTRY_INDICATORS} onChange={r => { const e = [...entryRules]; e[i] = r; setEntryRules(e) }} onRemove={() => setEntryRules(entryRules.filter((_, j) => j !== i))} />)}
@@ -410,11 +430,35 @@ function BacktestSection() {
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs font-medium text-slate-600">离场规则</label>
-                      <button onClick={() => addRule('exit')} className="text-xs text-blue-600 hover:text-blue-800">+ 添加</button>
+                      <button onClick={() => addRule('exit')} className="h-6 px-2 rounded-md text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:border-slate-300 transition-colors">+ 添加</button>
                     </div>
                     {exitRules.map((rule, i) => <RuleEditor key={i} rule={rule} indicators={EXIT_INDICATORS} onChange={r => { const e = [...exitRules]; e[i] = r; setExitRules(e) }} onRemove={() => setExitRules(exitRules.filter((_, j) => j !== i))} />)}
                   </div>
                 </div>
+                {strategyType === 'walk_forward' && (
+                  <div className="flex items-center gap-4 p-3 bg-amber-50 rounded-xl border border-amber-100">
+                    <span className="text-xs font-medium text-amber-800 whitespace-nowrap">WF 窗口</span>
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[10px] text-amber-600 whitespace-nowrap">训练</label>
+                      <input type="number" value={wfWindow} onChange={e => setWfWindow(Number(e.target.value))}
+                        className="w-14 h-7 px-1.5 rounded text-xs border border-amber-200 bg-white text-center" min={3} max={60} />
+                      <span className="text-[10px] text-amber-500">月</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[10px] text-amber-600 whitespace-nowrap">步长</label>
+                      <input type="number" value={wfStep} onChange={e => setWfStep(Number(e.target.value))}
+                        className="w-14 h-7 px-1.5 rounded text-xs border border-amber-200 bg-white text-center" min={1} max={12} />
+                      <span className="text-[10px] text-amber-500">月</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <label className="text-[10px] text-amber-600 whitespace-nowrap">测试</label>
+                      <input type="number" value={wfOos} onChange={e => setWfOos(Number(e.target.value))}
+                        className="w-14 h-7 px-1.5 rounded text-xs border border-amber-200 bg-white text-center" min={1} max={18} />
+                      <span className="text-[10px] text-amber-500">月</span>
+                    </div>
+                    <span className="text-[10px] text-amber-400 ml-auto">生成 {Math.max(1, Math.floor((((new Date(endDate).getFullYear() - new Date(startDate).getFullYear()) * 12 + (new Date(endDate).getMonth() - new Date(startDate).getMonth())) - wfWindow) / wfStep))} 个窗口</span>
+                  </div>
+                )}
               </>) : (
                 <div>
                   <label className="text-xs font-medium text-slate-600 mb-1 block">Python 策略代码</label>
@@ -448,7 +492,7 @@ function BacktestSection() {
                 <div className="flex items-center gap-3">
                   <div>
                     <div className="text-sm font-medium text-slate-900">{s.name}</div>
-                    <div className="text-xs text-slate-400">{s.strategy_type === 'advanced' ? '高级模式' : '简单模式'} · {s.updated_at?.slice(0, 10)}</div>
+                    <div className="text-xs text-slate-400">{s.strategy_type === 'walk_forward' ? 'Walk-Forward' : s.strategy_type === 'advanced' ? '高级模式' : '简单模式'} · {s.updated_at?.slice(0, 10)}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
@@ -476,7 +520,7 @@ function BacktestSection() {
                 <select value={runStrategyId || ''} onChange={e => setRunStrategyId(Number(e.target.value) || null)}
                   className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs">
                   <option value="">请选择...</option>
-                  {strategies.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.strategy_type === 'advanced' ? '高级' : '简单'})</option>)}
+                  {strategies.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.strategy_type === 'walk_forward' ? 'WF' : s.strategy_type === 'advanced' ? '高级' : '简单'})</option>)}
                 </select>
               </div>
               <div>
@@ -559,6 +603,21 @@ function BacktestSection() {
               <div><span className="text-slate-400">均盈</span> <span className={`font-bold ${positiveClass}`}>{metrics.avgProfitPct != null ? `${metrics.avgProfitPct}%` : '—'}</span></div>
               <div><span className="text-slate-400">均亏</span> <span className={`font-bold ${negativeClass}`}>{metrics.avgLossPct != null ? `${metrics.avgLossPct}%` : '—'}</span></div>
             </div>
+            {metrics.wfStability != null && (
+              <div className="mt-4 pt-4 border-t border-amber-100">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                  <span className="text-xs font-semibold text-amber-800">Walk-Forward 稳健性</span>
+                </div>
+                <div className="grid grid-cols-4 gap-x-6 gap-y-2 text-sm">
+                  <div><span className="text-slate-400 text-xs">窗口数</span> <span className="font-bold text-slate-900">{metrics.wfWindows ?? '—'}</span></div>
+                  <div><span className="text-slate-400 text-xs">稳定性分</span> <span className={`font-bold ${metrics.wfStability >= 0.7 ? 'text-emerald-600' : metrics.wfStability >= 0.4 ? 'text-amber-600' : 'text-red-500'}`}>{metrics.wfStability}</span></div>
+                  <div><span className="text-slate-400 text-xs">OOS Sharpe 均值</span> <span className="font-bold text-slate-900">{metrics.wfOosSharpeAvg ?? '—'}</span></div>
+                  <div><span className="text-slate-400 text-xs">OOS 收益均值</span> <span className={`font-bold ${(metrics.wfOosReturnAvg ?? 0) >= 0 ? positiveClass : negativeClass}`}>{metrics.wfOosReturnAvg != null ? `${metrics.wfOosReturnAvg >= 0 ? '+' : ''}${metrics.wfOosReturnAvg}%` : '—'}</span></div>
+                </div>
+                <p className="text-[10px] text-amber-500 mt-2">稳定性分 = OOS Sharpe / IS Sharpe，越接近 1 策略越稳健，{'< 0.3'} 可能过拟合</p>
+              </div>
+            )}
           </CardContent>
         </Card>
 

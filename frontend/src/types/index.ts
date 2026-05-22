@@ -270,6 +270,11 @@ export interface BacktestMetrics {
   avgProfitPct: number
   avgLossPct: number
   profitFactor: number
+  // Walk-Forward specific
+  wfWindows?: number
+  wfStability?: number
+  wfOosSharpeAvg?: number
+  wfOosReturnAvg?: number
 }
 
 export interface TradeLogEntry {

@@ -41,13 +41,18 @@ public class StrategyApiController {
         }
 
         try {
+            String configJson = null;
+            Object cfg = body.get("strategy_config");
+            if (cfg instanceof Map) {
+                configJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(cfg);
+            }
             String json = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(strategy);
             if (body.containsKey("id") && body.get("id") instanceof Number) {
                 long id = ((Number) body.get("id")).longValue();
-                strategyDao.update(id, userId, name, json);
+                strategyDao.update(id, userId, name, json, configJson);
                 return Map.of("status", "ok", "id", id);
             }
-            long id = strategyDao.insert(userId, name, strategyType, json);
+            long id = strategyDao.insert(userId, name, strategyType, json, configJson);
             return Map.of("status", "ok", "id", id);
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
