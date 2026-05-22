@@ -19,7 +19,7 @@ export default function Settings() {
   const [newPw, setNewPw] = useState('')
   const [pwMsg, setPwMsg] = useState('')
   const [deleting, setDeleting] = useState(false)
-  const [aiProvider, setAiProvider] = useState('openai')
+  const [aiProvider, setAiProvider] = useState('bailian')
   const [aiKey, setAiKey] = useState('')
   const [aiBaseUrl, setAiBaseUrl] = useState('')
   const [aiModel, setAiModel] = useState('')
@@ -37,11 +37,11 @@ export default function Settings() {
   }, [])
 
   const AI_PRESETS: Record<string, { label: string; baseUrl: string; model: string }> = {
+    bailian:    { label: '阿里云百炼',   baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
     openai:     { label: 'OpenAI',       baseUrl: '',                                           model: 'gpt-4o-mini' },
     deepseek:   { label: 'DeepSeek',     baseUrl: 'https://api.deepseek.com/v1',                model: 'deepseek-chat' },
     moonshot:   { label: 'Moonshot',     baseUrl: 'https://api.moonshot.cn/v1',                 model: 'moonshot-v1-8k' },
     zhipu:      { label: '智谱 GLM',     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',       model: 'glm-4-flash' },
-    qwen:       { label: '通义千问',     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo' },
     anthropic:  { label: 'Anthropic',    baseUrl: '',                                           model: 'claude-haiku-4-5' },
     custom:     { label: '自定义',       baseUrl: '',                                           model: '' },
   }
@@ -177,7 +177,12 @@ export default function Settings() {
 
       {/* AI Assistant */}
       <Card>
-        <CardHeader><CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" />观澜 AI 助手</CardTitle></CardHeader>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" />观澜 AI 助手</CardTitle>
+            <span className="text-[10px] text-slate-400">默认：阿里云百炼</span>
+          </div>
+        </CardHeader>
         <CardContent className="space-y-3">
           <select value={aiProvider} onChange={e => {
             const p = e.target.value; setAiProvider(p)
@@ -189,7 +194,7 @@ export default function Settings() {
             ))}
           </select>
           <input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)}
-            placeholder={aiHasKey ? '已保存（留空不修改）' : '粘贴 API Key，例如 sk-...'}
+            placeholder={aiHasKey ? '已保存自定义Key（留空不修改）' : '自定义 API Key（留空则使用系统默认）'}
             className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
           {aiProvider === 'custom' && (
             <input type="text" value={aiBaseUrl} onChange={e => setAiBaseUrl(e.target.value)}

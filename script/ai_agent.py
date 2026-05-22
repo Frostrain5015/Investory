@@ -39,7 +39,7 @@ def build_system_prompt(kb: dict) -> str:
 - 如果有部分数据但不够完整，先分享已有的，再说"以上信息不完整"
 - 没有数据时直说"没有相关数据"，不说"不确定"这种模糊词
 - 不带表情，不带感叹号
-- 中文。缩写和指标名保留英文"""
+- 绝对禁止在对话中输出Python代码。代码通过generate_strategy工具的code字段传递，用户不可见"""
 
 
 # ── Symbol resolution ────────────────────────────────────────────────────
@@ -459,7 +459,7 @@ TOOLS = [
         }, "required": ["id"]}
     }},
     {"type": "function", "function": {
-        "name": "generate_strategy", "description": "生成Investory回测策略代码。代码格式：def decide(ctx): 接收ctx字典，键为symbol date open high low close volume has_position shares avg_cost cash total_equity。返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只能用numpy和math，禁止import pandas/聚宽/米筐/jqdata/ricequant/joinquant，禁止DataFrame/Series/context/get_all_securities/get_fundamentals。返回的code字段只包含def decide函数，不超过80行",
+        "name": "generate_strategy", "description": "生成策略。description用自然语言总结（不含代码）。code必须严格遵守：只包含def decide(ctx):一个函数，接收ctx字典(键:symbol date open high low close volume has_position shares avg_cost cash total_equity)，返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只能import numpy和math。不超过60行。禁止pandas/DataFrame/Series/context变量/get_all_securities/聚宽/米筐/jqdata。禁止在消息正文输出代码",
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string"}, "description": {"type": "string"}, "code": {"type": "string"}
         }, "required": ["name", "description", "code"]}
@@ -562,7 +562,13 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> 
     elif name == "get_strategy":
         return json.dumps(tool_get_strategy(args.get("id",0)), ensure_ascii=False)
     elif name == "generate_strategy":
-        result = {"name": args.get("name",""), "description": args.get("description",""), "code": args.get("code","")}
+        code = args.get("code","")
+        # Validate code format
+        if "def decide(ctx)" not in code:
+            code = f"# 格式错误，请重新生成\ndef decide(ctx):\n    return {{'action': 'HOLD', 'quantity': 0}}"
+        if "pandas" in code or "DataFrame" in code or "get_all_securities" in code:
+            code = f"# 检测到禁用API，请重新生成\ndef decide(ctx):\n    return {{'action': 'HOLD', 'quantity': 0}}"
+        result = {"name": args.get("name",""), "description": args.get("description",""), "code": code}
         print(f"[STRATEGY] {json.dumps(result, ensure_ascii=False)}", flush=True)
         return json.dumps(result, ensure_ascii=False)
     elif name == "get_stock_price":

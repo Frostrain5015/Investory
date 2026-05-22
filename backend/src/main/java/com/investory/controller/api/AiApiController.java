@@ -2,6 +2,7 @@ package com.investory.controller.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.investory.crawler.AiSessionManager;
+import org.springframework.jdbc.core.JdbcTemplate;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -23,47 +24,66 @@ public class AiApiController {
     private static final ObjectMapper json = new ObjectMapper();
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final AiSessionManager session;
+    private final JdbcTemplate jdbc;
 
     @Value("${python.executable:python3}")
     private String pythonExecutable;
 
+    private static final String DEFAULT_KEY = "REDACTED";
+    private static final String DEFAULT_PROVIDER = "bailian";
+    private static final String DEFAULT_MODEL = "qwen-plus";
+    private static final String DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+
     @Autowired
-    public AiApiController(AiSessionManager session) {
+    public AiApiController(AiSessionManager session, JdbcTemplate jdbc) {
         this.session = session;
+        this.jdbc = jdbc;
     }
 
     @PostMapping("/chat")
     public Map<String, Object> chat(@RequestBody Map<String, Object> body,
                                      HttpServletRequest req) {
-        String aiKey = req.getHeader("X-AI-Key");
-        String aiProvider = req.getHeader("X-AI-Provider");
-        String aiModel = req.getHeader("X-AI-Model");
-        String aiBaseUrl = req.getHeader("X-AI-Base-URL");
-
-        if (aiKey == null || aiKey.isBlank()) return Map.of("error", "API key required");
-        final String provider;
-        if ("anthropic".equals(aiProvider)) {
-            provider = "anthropic";
-        } else if (aiProvider != null && !"openai".equals(aiProvider)) {
-            provider = "openai_compat";
-        } else {
-            provider = "openai";
+        jakarta.servlet.http.HttpSession s = req.getSession(false);
+        long userId = 0;
+        if (s != null) {
+            Object uid = s.getAttribute("userId");
+            if (uid instanceof Number) userId = ((Number) uid).longValue();
         }
-        final String model = (aiModel != null && !aiModel.isBlank()) ? aiModel : "gpt-4o-mini";
+
+        // Resolve AI config: user's saved settings > defaults
+        String aiKey = DEFAULT_KEY;
+        String aiProvider = DEFAULT_PROVIDER;
+        String aiModel = DEFAULT_MODEL;
+        String aiBaseUrl = DEFAULT_BASE_URL;
+
+        if (userId > 0) {
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT provider, model, base_url, api_key FROM ai_settings WHERE user_id = ?", userId);
+            if (!rows.isEmpty()) {
+                Map<String, Object> row = rows.get(0);
+                String savedKey = (String) row.get("api_key");
+                if (savedKey != null && !savedKey.isBlank()) {
+                    aiKey = savedKey;
+                    aiProvider = row.getOrDefault("provider", DEFAULT_PROVIDER).toString();
+                    aiModel = row.getOrDefault("model", DEFAULT_MODEL).toString();
+                    aiBaseUrl = row.getOrDefault("base_url", DEFAULT_BASE_URL).toString();
+                }
+            }
+        }
+
+        final String provider = "anthropic".equals(aiProvider) ? "anthropic" : "openai".equals(aiProvider) ? "openai" : "openai_compat";
+        final String model = aiModel;
         final String key = aiKey;
-        final String baseUrl = (aiBaseUrl != null) ? aiBaseUrl : "";
+        final String baseUrl = aiBaseUrl;
         final boolean deepThink = Boolean.TRUE.equals(body.get("deepThink"));
 
-        // Get portfolio ID from session
-        jakarta.servlet.http.HttpSession s = req.getSession(false);
         long portfolioId = 0;
         if (s != null) {
             Object pid = s.getAttribute("portfolioId");
             if (pid instanceof Number) portfolioId = ((Number) pid).longValue();
         }
         final long pid = portfolioId;
-        final long uid = (s != null && s.getAttribute("userId") instanceof Number)
-            ? ((Number) s.getAttribute("userId")).longValue() : 0;
+        final long uid = userId;
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> messages = (List<Map<String, Object>>) body.get("messages");

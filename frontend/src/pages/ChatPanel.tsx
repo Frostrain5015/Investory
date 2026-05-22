@@ -56,23 +56,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     const text = input.trim()
     if (!text || streaming) return
 
-    // Get settings from server
-    let apiKey = ''; let provider = 'openai'; let model = 'gpt-4o-mini'; let baseUrl = ''
-    try {
-      const r = await fetch('/investory/api/ai/settings', { credentials: 'include' })
-      const s = await r.json()
-      if (!s.hasKey) { alert('请先在设置页配置 AI API Key'); return }
-      provider = s.provider || 'openai'
-      model = s.model || 'gpt-4o-mini'
-      baseUrl = s.baseUrl || ''
-      const kr = await fetch('/investory/api/ai/key', { method: 'POST', credentials: 'include' })
-      const kd = await kr.json()
-      apiKey = kd.apiKey || ''
-    } catch { alert('无法获取 AI 配置'); return }
-    if (!apiKey) { alert('请先在设置页配置 AI API Key'); return }
-
     setInput('')
-    // Send deepThink flag separately, not in visible message
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
     setStreaming(true)
@@ -82,7 +66,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     try {
       const resp = await fetch('/investory/api/ai/chat', {
         method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json', 'X-AI-Key': apiKey, 'X-AI-Provider': provider, 'X-AI-Model': model, 'X-AI-Base-URL': baseUrl, 'X-AI-Deep-Think': deepThink ? '1' : '0' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: newMessages, deepThink }),
       })
       if (!resp.ok) { setStreamText(`[错误] HTTP ${resp.status}`); setStreaming(false); return }

@@ -132,11 +132,7 @@ export default function Layout() {
 
       {/* Floating AI Ball */}
       <div className="fixed bottom-6 right-6 z-40">
-        <button onClick={() => {
-          const key = localStorage.getItem('ai_key')
-          if (!key) { alert('请先在设置页配置 AI API Key'); return }
-          setChatOpen(!chatOpen)
-        }}
+        <button onClick={() => setChatOpen(!chatOpen)}
           className="w-12 h-12 rounded-full bg-slate-900 text-white shadow-lg hover:scale-110 transition-transform flex items-center justify-center">
           <Sparkles className="w-5 h-5" />
         </button>
