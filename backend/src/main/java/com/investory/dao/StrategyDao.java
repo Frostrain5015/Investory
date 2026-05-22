@@ -20,7 +20,7 @@ public class StrategyDao extends BaseDao {
 
     public List<Map<String, Object>> findByUser(long userId) {
         return jdbc.queryForList(
-            "SELECT id, name, strategy_type, LEFT(strategy_json,200) AS strategy_preview, created_at, updated_at " +
+            "SELECT * " +
             "FROM backtest_strategies WHERE user_id = ? ORDER BY updated_at DESC",
             userId
         );
