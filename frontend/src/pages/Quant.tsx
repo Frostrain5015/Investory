@@ -1,12 +1,12 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { getQuantData, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks } from '@/services/api'
+import { getQuantData, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings } from '@/services/api'
 import { useToast } from '@/components/Toast'
 import { useSettings } from '@/hooks/use-settings'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, TrendingUp, Target, AlertTriangle, BarChart3, Activity, ChevronDown, ChevronRight } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { displaySymbol } from '@/lib/format'
-import { ResponsiveContainer, ComposedChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Scatter } from 'recharts'
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import type { ScenarioResult, PortfolioRiskSummary, ScenarioHoldingDetail, BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent } from '@/types'
 
 const SCENARIO_META: Record<string, { borderColor: string; bgColor: string; benchmark: string }> = {
@@ -315,7 +315,22 @@ function BacktestSection() {
               </div>
 
               <div>
-                <label className="text-xs font-medium text-slate-600 mb-1 block">测试股票</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-slate-600">测试股票</label>
+                  <button type="button" onClick={async () => {
+                    try {
+                      const data = await getHoldings()
+                      const snaps = (data as any).snapshots || []
+                      for (const s of snaps) {
+                        const sym = s.stockSymbol?.includes('.') ? s.stockSymbol : `${s.stockSymbol}.${s.market}`
+                        if (!selectedStocks.find(x => x.symbol === sym)) {
+                          setSelectedStocks(prev => [...prev, { symbol: sym, name: s.stockName || sym }])
+                        }
+                      }
+                    } catch {}
+                  }}
+                    className="text-[10px] text-blue-600 hover:text-blue-800">导入持仓</button>
+                </div>
                 {selectedStocks.length > 0 && (
                   <div className="flex flex-wrap gap-1 mb-2">
                     {selectedStocks.map(s => (
@@ -449,28 +464,39 @@ function BacktestSection() {
                 <span className="text-slate-400">初始权益 {Number(equityCurve[0]?.equity).toLocaleString()}</span>
               </div>
               <ResponsiveContainer width="100%" height={280}>
-                {(() => {
-                  const eqMap = new Map(equityCurve.map(e => [e.date, e.equity]))
-                  const buys = (tradeLog || []).filter(t => t.action === 'BUY').map(t => ({ date: t.date, equity: eqMap.get(t.date) || 0, quantity: t.quantity })).filter(d => d.equity > 0)
-                  const sells = (tradeLog || []).filter(t => t.action === 'SELL').map(t => ({ date: t.date, equity: eqMap.get(t.date) || 0, quantity: t.quantity })).filter(d => d.equity > 0)
-                  return (
-                    <ComposedChart data={equityCurve}>
-                      <defs>
-                        <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#2563eb" stopOpacity={0.12} />
-                          <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v: string) => v.slice(5)} />
-                      <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} domain={['auto', 'auto']} tickFormatter={(v: number) => `${(v / 10000).toFixed(0)}万`} />
-                      <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: any) => Number(v) > 0 ? [Number(v).toLocaleString(), '权益'] : ['—', '权益']} labelFormatter={(l: any) => `日期: ${l}`} />
-                      <Area type="monotone" dataKey="equity" stroke="#2563eb" fill="url(#colorEquity)" strokeWidth={2} name="equity" />
-                      {buys.length > 0 && <Scatter data={buys} name="买入(B)" fill={positiveHex} stroke={positiveHex} shape="triangle" legendType="triangle" dataKey="equity" />}
-                      {sells.length > 0 && <Scatter data={sells} name="卖出(S)" fill={negativeHex} stroke={negativeHex} shape="triangle" legendType="triangle" dataKey="equity" />}
-                    </ComposedChart>
-                  )
-                })()}
+                <AreaChart data={equityCurve}>
+                  <defs>
+                    <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#2563eb" stopOpacity={0.12} />
+                      <stop offset="95%" stopColor="#2563eb" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v: string) => v.slice(5)} />
+                  <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} domain={['auto', 'auto']} tickFormatter={(v: number) => `${(v / 10000).toFixed(0)}万`} />
+                  <Tooltip content={({ active, payload, label }) => {
+                    if (!active || !payload?.[0]) return null
+                    const v = payload[0].value
+                    const trade = tradeLog?.find(t => t.date === label)
+                    return (
+                      <div className="bg-white border border-slate-200 rounded-lg p-2 shadow text-xs">
+                        <div className="text-slate-500 mb-1">日期: {label}</div>
+                        <div className="font-medium">权益: {Number(v).toLocaleString()}</div>
+                        {trade && <div className={`mt-1 ${trade.action === 'BUY' ? positiveClass : negativeClass}`}>{trade.action === 'BUY' ? '买入' : '卖出'} {trade.symbol} {trade.quantity}股 @ {trade.price?.toFixed(2)}</div>}
+                      </div>
+                    )
+                  }} />
+                  <Area type="monotone" dataKey="equity" stroke="#2563eb" fill="url(#colorEquity)" strokeWidth={2}
+                    dot={(props: any) => {
+                      const { cx, cy, index } = props
+                      const date = equityCurve[index]?.date
+                      const trade = tradeLog?.find(t => t.date === date)
+                      if (!trade) return <circle cx={cx} cy={cy} r={0} fill="none" />
+                      const isBuy = trade.action === 'BUY'
+                      return <circle cx={cx} cy={cy} r={4} fill={isBuy ? positiveHex : negativeHex} stroke="white" strokeWidth={1.5} />
+                    }}
+                  />
+                </AreaChart>
               </ResponsiveContainer>
             </CardContent>}
           </Card>
