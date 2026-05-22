@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { useToast } from '@/components/Toast'
+import { useConfirm } from '@/hooks/use-confirm'
 import { useSettings, type BaseCurrency } from '@/hooks/use-settings'
 import { useTheme } from '@/hooks/use-theme'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -10,6 +11,7 @@ const CURRENCY_LABELS: Record<BaseCurrency, string> = { CNY: '人民币 (¥)', H
 
 export default function Settings() {
   const { username, logout } = useAuth()
+  const confirm = useConfirm()
   const toast = useToast()
   const { colorScheme, toggleColorScheme, positiveClass, negativeClass, baseCurrency, setBaseCurrency, showRiskMetrics, toggleRiskMetrics } = useSettings()
   const { pref, setPref } = useTheme()
@@ -69,7 +71,7 @@ export default function Settings() {
   }
 
   async function handleDeleteAccount() {
-    if (!confirm('确认注销账户？此操作不可撤销。')) return
+    if (!(await confirm('确认注销账户？此操作不可撤销。'))) return
     setDeleting(true)
     try {
       const res = await fetch('/investory/api/account', { method: 'DELETE', credentials: 'include' })
@@ -130,7 +132,7 @@ export default function Settings() {
         <CardContent>
           <div className="flex items-center justify-between">
             <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{colorScheme === 'cn' ? '红涨绿跌（A股习惯）' : '绿涨红跌（海外习惯）'}</p>
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{colorScheme === 'cn' ? '红涨绿跌' : '绿涨红跌'}</p>
               <div className="flex items-center gap-3 text-sm">
                 <span className={positiveClass}>+5.20%</span><span className="text-slate-300">/</span><span className={negativeClass}>-3.10%</span>
               </div>

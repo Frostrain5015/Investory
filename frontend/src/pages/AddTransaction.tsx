@@ -107,9 +107,9 @@ export default function AddTransaction() {
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         if (body.error === 'INSUFFICIENT_CASH') {
-          setSubmitError(`现金余额不足：${CURRENCY_SYMBOL[currency] ?? currency}${Number(body.balance).toFixed(2)}，本次需要 ${CURRENCY_SYMBOL[currency] ?? currency}${Number(body.required).toFixed(2)}，请先转入资金`)
+          setSubmitError(`现金余额不足：${CURRENCY_SYMBOL[currency] ?? currency}${Number(body.balance).toFixed(2)}，本次需要 ${CURRENCY_SYMBOL[currency] ?? currency}${Number(body.required).toFixed(2)}，请转入资金`)
         } else {
-          setSubmitError('提交失败，请稍后重试')
+          setSubmitError('提交失败，请重试')
         }
         setSubmitting(false)
         return
@@ -142,9 +142,9 @@ export default function AddTransaction() {
           const sym = CURRENCY_SYMBOL[cur] ?? cur
           const bal = typeof body.balance === 'number' ? body.balance.toFixed(2) : Number(body.balance).toFixed(2)
           const req = typeof body.required === 'number' ? body.required.toFixed(2) : Number(body.required).toFixed(2)
-          setSubmitError(`现金余额不足：${sym}${bal}，本次需要 ${sym}${req}，请先转入资金`)
+          setSubmitError(`现金余额不足：${sym}${bal}，本次需要 ${sym}${req}，请转入资金`)
         } else {
-          setSubmitError('提交失败，请稍后重试')
+          setSubmitError('提交失败，请重试')
         }
         setSubmitting(false)
         return

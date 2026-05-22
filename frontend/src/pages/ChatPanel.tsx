@@ -224,7 +224,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                   })()
                 : (!toolMsg && <span className="inline-flex gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>)
               }
-              {toolMsg && <div className="flex items-center gap-2 text-xs text-slate-400 mt-2 pt-2 border-t border-slate-200"><span className="w-3 h-3 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />{toolMsg}</div>}
+              {toolMsg && <div className="flex items-center gap-2 text-sm text-slate-500 mt-2 pt-2 border-t border-slate-200"><span className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />{toolMsg}</div>}
             </div>
             {askData && (
               <div className="mt-2 space-y-1.5">

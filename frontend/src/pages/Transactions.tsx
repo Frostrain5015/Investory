@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
+import { useConfirm } from '@/hooks/use-confirm'
 import { Card, CardContent } from '@/components/ui/card'
 import { displaySymbol } from '@/lib/format'
 import { Pencil, Trash2, Plus } from 'lucide-react'
@@ -13,6 +14,7 @@ interface Activity {
 }
 
 export default function Transactions() {
+  const confirm = useConfirm()
   const { portfolioId } = useAuth()
   const [items, setItems] = useState<Activity[]>([])
   const [loading, setLoading] = useState(true)
@@ -28,7 +30,7 @@ export default function Transactions() {
   useEffect(() => { load() }, [])
 
   async function handleDelete(id: number, type: string) {
-    if (!confirm(type === 'DIV' ? '确认删除这笔分红记录？' : '确认删除这笔交易？')) return
+    if (!(await confirm(type === 'DIV' ? '确认删除这笔分红？' : '确认删除这笔交易？'))) return
     const endpoint = type === 'DIV' ? `/api/dividends/${id}` : `/api/transactions/${id}`
     await fetch(`/investory${endpoint}`, { method: 'DELETE', credentials: 'include' })
     load()

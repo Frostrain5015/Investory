@@ -620,7 +620,7 @@ def run_walk_forward(strategy: dict, config: dict, conn, result_id: int):
             break
 
     if len(windows) < 2:
-        print("[ERROR] Walk-forward需要至少2个窗口，请扩大日期范围", flush=True)
+        print("[ERROR] 日期范围不足以生成 Walk-Forward 窗口", flush=True)
         return None
 
     print(f"=== Walk-Forward: {len(windows)} 个窗口 "

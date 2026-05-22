@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from '@/hooks/use-auth'
 import { SettingsProvider } from '@/hooks/use-settings'
 import { ThemeProvider } from '@/hooks/use-theme'
 import { ToastProvider } from '@/components/Toast'
+import { ConfirmProvider } from '@/hooks/use-confirm'
 import Layout from '@/components/Layout'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
@@ -44,6 +45,7 @@ export default function App() {
       <SettingsProvider>
       <ThemeProvider>
       <ToastProvider>
+      <ConfirmProvider>
       <Routes>
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
@@ -64,6 +66,7 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
+      </ConfirmProvider>
       </ToastProvider>
       </ThemeProvider>
       </SettingsProvider>

@@ -59,7 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return { success: false, error: text !== 'error' ? text : '用户名或密码错误' }
     } catch {
-      return { success: false, error: '系统错误，请稍后重试' }
+      return { success: false, error: '系统错误，请重试' }
     }
   }
 
@@ -69,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (text === 'ok') return { success: true }
       return { success: false, error: text || '注册失败' }
     } catch {
-      return { success: false, error: '系统错误，请稍后重试' }
+      return { success: false, error: '系统错误，请重试' }
     }
   }
 

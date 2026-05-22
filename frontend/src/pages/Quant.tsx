@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings } from '@/services/api'
 import { useToast } from '@/components/Toast'
+import { useConfirm } from '@/hooks/use-confirm'
 import { useSettings } from '@/hooks/use-settings'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, Activity, ChevronDown, ChevronRight } from 'lucide-react'
@@ -143,7 +144,7 @@ function RiskSection() {
                 <p className="font-medium">{r.title}</p><p className="mt-0.5 opacity-80">{r.detail}</p>
               </div>
             ))}
-            {!styleData.recommendations?.length && <p className="text-xs text-slate-400">当前组合结构合理，无需调整</p>}
+            {!styleData.recommendations?.length && <p className="text-xs text-slate-400">组合结构合理</p>}
           </CardContent>
         </Card>
       </div>
@@ -151,13 +152,14 @@ function RiskSection() {
 
     {loading && <div className="flex flex-col items-center justify-center h-48 gap-2"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-xs text-slate-400">正在分析组合风格...</span></div>}
     {!loading && !styleData && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">暂无数据</p></CardContent></Card>}
-    {!loading && styleData?._error && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">{styleData._error === 'no holdings' ? '当前组合没有持仓数据，请先添加交易' : styleData._error}</p></CardContent></Card>}
+    {!loading && styleData?._error && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">{styleData._error === 'no holdings' ? '暂无持仓数据，请添加交易' : styleData._error}</p></CardContent></Card>}
   </>)
 }
 
 // ── Backtest Section ────────────────────────────────────────────────────
 
 function BacktestSection() {
+  const confirm = useConfirm()
   const toast = useToast()
   const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
   const [view, setView] = useState<'list' | 'builder' | 'run'>('list')
@@ -333,7 +335,7 @@ function BacktestSection() {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm('确认删除？')) return
+    if (!(await confirm('确认删除？'))) return
     await deleteBacktest(id)
     if (selectedId === id) { setSelectedId(null); setEquityCurve(null); setMetrics(null); setTradeLog(null) }
     loadHistory()
@@ -367,7 +369,7 @@ function BacktestSection() {
   }
 
   async function deleteStrategy(id: number) {
-    if (!confirm('确认删除此策略？')) return
+    if (!(await confirm('确认删除此策略？'))) return
     await fetch(`/investory/api/backtest/strategies/${id}`, { method: 'DELETE', credentials: 'include' })
     loadStrategies()
   }

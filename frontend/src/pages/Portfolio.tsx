@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/hooks/use-auth'
+import { useConfirm } from '@/hooks/use-confirm'
 import { Card, CardContent } from '@/components/ui/card'
 import { Plus, Trash2, Pencil } from 'lucide-react'
 
 interface Portfolio { id: number; userId: number; name: string }
 
 export default function Portfolio() {
+  const confirm = useConfirm()
   const { portfolioId, setPortfolioId, setPortfolioName } = useAuth()
   const [portfolios, setPortfolios] = useState<Portfolio[]>([])
   const [newName, setNewName] = useState('')
@@ -54,7 +56,7 @@ export default function Portfolio() {
   }
 
   async function handleDelete(id: number) {
-    if (!confirm('确认删除该组合？')) return
+    if (!(await confirm('确认删除该组合？'))) return
     await fetch(`/investory/api/portfolios/${id}`, { method: 'DELETE', credentials: 'include' })
     load()
   }

@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { shortSymbol } from '@/lib/format'
+import { useConfirm } from '@/hooks/use-confirm'
 import { Plus } from 'lucide-react'
 
 interface Div { id: number; stockName?: string; stockSymbol?: string; amountPerShare: number; sharesHeld: number; totalAmount: number; recordDate: string }
 
 export default function Dividends() {
+  const confirm = useConfirm()
   const [dividends, setDividends] = useState<Div[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -19,7 +21,7 @@ export default function Dividends() {
   useEffect(() => { load() }, [])
 
   async function handleDelete(id: number) {
-    if (!confirm('确认删除？')) return
+    if (!(await confirm('确认删除？'))) return
     await fetch(`/investory/api/dividends/${id}`, { method: 'DELETE', credentials: 'include' })
     load()
   }

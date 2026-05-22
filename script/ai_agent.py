@@ -130,7 +130,7 @@ def tool_get_stock_metrics(symbol: str) -> dict:
     cur.execute("SELECT percentile_5y, beta_1y, volatility_1y, max_drawdown_1y FROM stock_metric_cache WHERE stock_id=%s", (sid,))
     m = cur.fetchone()
     cur.close(); conn.close()
-    if not m: return {"symbol": symbol, "metrics": None, "note": "暂无缓存数据，请在量化页面刷新指标"}
+    if not m: return {"symbol": symbol, "metrics": None, "note": "暂无缓存数据"}
     return {"symbol": symbol, "percentile_5y": round(float(m[0]),1) if m[0] else None,
             "beta": round(float(m[1]),2) if m[1] else None,
             "volatility": round(float(m[2]),1) if m[2] else None,
@@ -516,7 +516,7 @@ def tool_get_fundamentals(symbol: str) -> dict:
     cur.close(); conn.close()
 
     if not r:
-        return {"symbol": symbol, "note": "暂无基本面数据，请先运行 fetch_fundamentals.py"}
+        return {"symbol": symbol, "note": "暂无基本面数据"}
 
     return {
         "symbol": symbol,
@@ -663,23 +663,23 @@ TOOLS = [
 ]
 
 TOOL_LABELS = {
-    "get_portfolio": "正在读取持仓...",
-    "get_stock_metrics": "正在查询量化指标...",
-    "get_backtests": "正在获取回测记录...",
-    "get_style_analysis": "正在分析组合风格...",
-    "list_strategies": "正在获取策略列表...",
-    "get_strategy": "正在读取策略详情...",
-    "generate_strategy": "正在生成策略...",
-    "get_stock_price": "正在查询股价...",
-    "get_pnl_history": "正在获取组合走势...",
-    "get_transactions": "正在获取交易记录...",
-    "get_stock_price_history": "正在加载K线数据...",
-    "compute_correlation": "正在计算相关性...",
-    "compute_sector_breakdown": "正在分析行业分布...",
-    "benchmark_compare": "正在对比基准...",
-    "analyze_backtest": "正在分析回测...",
-    "web_search": "正在联网搜索...",
-    "remember": "正在保存记忆...",
+    "get_portfolio": "读取持仓",
+    "get_stock_metrics": "查询量化指标",
+    "get_backtests": "获取回测记录",
+    "get_style_analysis": "分析组合风格",
+    "list_strategies": "获取策略列表",
+    "get_strategy": "读取策略详情",
+    "generate_strategy": "生成策略",
+    "get_stock_price": "查询股价",
+    "get_pnl_history": "获取组合走势",
+    "get_transactions": "获取交易记录",
+    "get_stock_price_history": "加载K线数据",
+    "compute_correlation": "计算相关性",
+    "compute_sector_breakdown": "分析行业分布",
+    "benchmark_compare": "对比基准",
+    "analyze_backtest": "分析回测",
+    "web_search": "联网搜索",
+    "remember": "保存记忆",
     "ask_user": "",
 }
 
@@ -709,9 +709,9 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> 
         code = args.get("code","")
         # Validate code format
         if "def decide(ctx)" not in code:
-            code = f"# 格式错误，请重新生成\ndef decide(ctx):\n    return {{'action': 'HOLD', 'quantity': 0}}"
+            code = f"# 格式错误\ndef decide(ctx):\n    return {{'action': 'HOLD', 'quantity': 0}}"
         if "pandas" in code or "DataFrame" in code or "get_all_securities" in code:
-            code = f"# 检测到禁用API，请重新生成\ndef decide(ctx):\n    return {{'action': 'HOLD', 'quantity': 0}}"
+            code = f"# 检测到禁用API\ndef decide(ctx):\n    return {{'action': 'HOLD', 'quantity': 0}}"
         result = {"name": args.get("name",""), "description": args.get("description",""), "code": code}
         print(f"[STRATEGY] {json.dumps(result, ensure_ascii=False)}", flush=True)
         return json.dumps(result, ensure_ascii=False)
@@ -883,15 +883,15 @@ def main():
     except Exception as e:
         msg = str(e)
         if "401" in msg or "Unauthorized" in msg or "Authentication" in msg:
-            print(f"[ERROR] API Key 无效或未授权，请检查设置", flush=True)
+            print(f"[ERROR] API Key 无效或未授权", flush=True)
         elif "timeout" in msg.lower() or "timed out" in msg.lower():
-            print(f"[ERROR] 请求超时，模型响应过慢或网络问题", flush=True)
+            print(f"[ERROR] 请求超时", flush=True)
         elif "connection" in msg.lower() or "ConnectError" in msg:
-            print(f"[ERROR] 无法连接 API 服务，请检查网络和代理设置", flush=True)
+            print(f"[ERROR] 无法连接 API 服务", flush=True)
         elif "Rate" in msg or "429" in msg:
-            print(f"[ERROR] API 调用频率超限，请稍后重试", flush=True)
+            print(f"[ERROR] API 调用频率超限", flush=True)
         elif "Insufficient" in msg or "quota" in msg.lower():
-            print(f"[ERROR] API 额度不足，请检查账户余额", flush=True)
+            print(f"[ERROR] API 额度不足", flush=True)
         else:
             print(f"[ERROR] 请求失败: {msg[:200]}", flush=True)
         traceback.print_exc(file=sys.stderr)

@@ -156,8 +156,8 @@ export default function Dashboard() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
               </svg>
             </div>
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">开始你的投资之旅</h3>
-            <p className="text-sm text-slate-500 mb-6">添加第一笔交易记录，Investory 将为你追踪持仓、计算盈亏。</p>
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">还没有交易记录</h3>
+            <p className="text-sm text-slate-500 mb-6">添加第一笔交易以开始追踪持仓盈亏。</p>
             <Link to="/transactions/add"
               className="inline-flex items-center gap-2 h-10 px-6 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
               添加第一笔交易

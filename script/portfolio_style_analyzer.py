@@ -188,63 +188,56 @@ def analyze_portfolio(conn, portfolio_id: int) -> dict:
     for hd in holdings_data:
         market_allocation[hd["market"]] += hd["weightPct"]
 
-    # 5. Generate recommendations
+    # 5. Generate observations — factual, no advice
     recommendations = []
 
-    # Concentration check
     if top1_weight > 20:
         recommendations.append({
             "severity": "warning",
             "title": "单票集中度偏高",
-            "detail": f"{holdings_data[0]['name']} 占比 {top1_weight:.0f}%，单一标的风险过大。建议将单票上限控制在 15-20% 以内。",
+            "detail": f"{holdings_data[0]['name']} 占比 {top1_weight:.0f}%",
         })
     if top3_weight > 50:
         recommendations.append({
             "severity": "warning",
             "title": "前三大持仓占比过高",
-            "detail": f"前三大持仓合计 {top3_weight:.0f}%，尾部风险集中。建议分散到更多标的中。",
+            "detail": f"前三大持仓合计 {top3_weight:.0f}%",
         })
 
-    # Style concentration
     if top_style_pct > 50:
-        style_name = top_style_name
         recommendations.append({
             "severity": "info",
-            "title": f"{style_name}风格占比过高 ({top_style_pct:.0f}%)",
-            "detail": f"你的持仓中{style_name}类标的占比超过一半，建议适当配置其他风格以降低风格轮动风险。",
+            "title": f"{top_style_name}风格占比 {top_style_pct:.0f}%",
+            "detail": f"{top_style_name}类标的价值占组合一半以上",
         })
 
-    # Risk level diagnosis
     if weighted_beta is not None:
         if weighted_beta > 1.3:
             recommendations.append({
                 "severity": "info",
-                "title": f"高波动偏好 (Beta={weighted_beta})",
-                "detail": "你的组合加权 Beta 偏高，属于进取型风格。牛市中弹性大，但熊市中回撤也会更剧烈。建议配置部分低 Beta 防御标的。",
+                "title": f"加权 Beta = {weighted_beta}",
+                "detail": "高于市场水平",
             })
         elif weighted_beta < 0.7:
             recommendations.append({
                 "severity": "info",
-                "title": f"防御型配置 (Beta={weighted_beta})",
-                "detail": "你的组合偏防御，Beta 较低。适合稳健型投资者，但可能在牛市中弹性不足。可适当增加成长型标的。",
+                "title": f"加权 Beta = {weighted_beta}",
+                "detail": "低于市场水平",
             })
 
-    # Market diversification
-    market_count = len(market_allocation)
-    if market_count < 2:
+    if len(market_allocation) < 2:
         recommendations.append({
             "severity": "info",
-            "title": "市场过于集中",
-            "detail": "你的持仓集中在单一市场。跨市场配置（A股+港股+美股）可以有效分散地域和政策风险。",
+            "title": "持仓集中在单一市场",
+            "detail": ", ".join(market_allocation.keys()),
         })
 
-    # Cash / position suggestion
     position_count = len(holdings_data)
     if position_count < 5:
         recommendations.append({
             "severity": "info",
-            "title": "持仓数量偏少",
-            "detail": f"当前仅有 {position_count} 只标的。学术研究表明 8-15 只标的可消除大部分非系统性风险。",
+            "title": f"持仓 {position_count} 只标的",
+            "detail": "标的数量偏少",
         })
     if position_count > 30:
         recommendations.append({

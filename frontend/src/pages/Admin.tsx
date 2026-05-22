@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { useToast } from '@/components/Toast'
+import { useConfirm } from '@/hooks/use-confirm'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Database, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock, Square, Pause, PlayCircle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -74,6 +75,7 @@ function useCrawlStore() {
 export default function Admin() {
   const { isAdmin } = useAuth()
   const toast = useToast()
+  const confirm = useConfirm()
   const [status, setStatus] = useState<DbStatus | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
   const cs = useCrawlStore()
@@ -308,13 +310,13 @@ export default function Admin() {
   }
 
   async function impersonate(userId: number) {
-    if (!confirm('确认以该用户身份登录？你可以通过侧栏"管理后台"返回。')) return
+    if (!(await confirm('确认以该用户身份登录？'))) return
     await fetch(`/investory/api/admin/impersonate/${userId}`, { method: 'POST', credentials: 'include' })
     window.location.href = '/investory/dashboard'
   }
 
   async function deleteUser(userId: number, username: string) {
-    if (!confirm(`确认注销用户 "${username}" 及其所有数据？此操作不可撤销。`)) return
+    if (!(await confirm(`确认注销用户 "${username}"？此操作不可撤销。`))) return
     const res = await fetch(`/investory/api/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
     const data = await res.json()
     if (data.error) { toast(data.error, false); return }
@@ -406,7 +408,7 @@ export default function Admin() {
                   <span className="flex items-center gap-2"><Clock className="w-3.5 h-3.5" />最近定时抓取</span>
                   <button
                     onClick={async () => {
-                      if (!confirm('确认清空所有定时抓取记录？')) return
+                      if (!(await confirm('确认清空所有定时抓取记录？'))) return
                       await fetch('/investory/api/admin/crawl-history', { method: 'DELETE', credentials: 'include' })
                       fetchCrawlHistory()
                     }}

@@ -65,12 +65,12 @@ export default function Register() {
               className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-300 transition-colors" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">密码（至少6位）</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">密码</label>
             <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required minLength={6}
               className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-300 transition-colors" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">邮箱（选填）</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">邮箱</label>
             <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
               className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-300 transition-colors" />
           </div>

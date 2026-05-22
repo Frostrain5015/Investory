@@ -288,7 +288,7 @@ public class AdminController {
                     currentProcess = null;
 
                     if (stopRequested) {
-                        session.emitStopped(market, label + " 抓取已停止（断点已保存）");
+                        session.emitStopped(market, label + " 抓取已停止");
                         break;
                     }
                     if (exitCode == 0) {
@@ -297,14 +297,14 @@ public class AdminController {
                     }
 
                     if (pauseRequested) {
-                        session.emitInfo("已暂停（断点已保存）");
+                        session.emitInfo("已暂停");
                         synchronized (pauseLock) {
                             while (pauseRequested && !stopRequested) {
                                 try { pauseLock.wait(1000); } catch (InterruptedException e) { break; }
                             }
                         }
                         if (stopRequested) {
-                            session.emitStopped(market, label + " 抓取已停止（断点已保存）");
+                            session.emitStopped(market, label + " 抓取已停止");
                             break;
                         }
                         session.emitInfo("继续抓取...");
