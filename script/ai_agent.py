@@ -797,27 +797,47 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         elif delta.content:
             sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
 
-    if has_tools:
+    total_tool_calls = 0
+    while has_tools:
         sorted_tools = [tool_calls[i] for i in sorted(tool_calls)]
         formatted.append({"role": "assistant", "content": None, "tool_calls": [
             {"id": t["id"], "type": "function", "function": {"name": t["name"], "arguments": t["args"]}}
             for t in sorted_tools
         ]})
+        has_ask = False
         for i, t in enumerate(sorted_tools):
-            if i >= MAX_TOOL_CALLS:
+            if total_tool_calls >= MAX_TOOL_CALLS:
                 formatted.append({"role": "tool", "tool_call_id": t["id"], "content": json.dumps({"error": "已达到本轮对话最大工具调用次数"})})
                 break
             try: args = json.loads(t["args"])
             except: args = {}
             result = execute_tool(t["name"], args, portfolio_id, user_id)
             formatted.append({"role": "tool", "tool_call_id": t["id"], "content": result})
+            total_tool_calls += 1
             if t["name"] == "ask_user":
+                has_ask = True
                 print("\n[DONE]", flush=True); return
 
-        stream2 = client.chat.completions.create(model=model, messages=formatted, stream=True, temperature=0.7, max_tokens=max_tokens)
-        for chunk in stream2:
+        if has_ask:
+            break
+
+        # Call again — may produce more tool calls or final content
+        stream = client.chat.completions.create(model=model, messages=formatted, tools=TOOLS, stream=True, temperature=0.7, max_tokens=max_tokens)
+        tool_calls = {}
+        has_tools = False
+        for chunk in stream:
             delta = chunk.choices[0].delta
-            if delta.content:
+            if delta.tool_calls:
+                has_tools = True
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tool_calls:
+                        tool_calls[idx] = {"id": "", "name": "", "args": ""}
+                    if tc.id: tool_calls[idx]["id"] = tc.id
+                    if tc.function:
+                        if tc.function.name: tool_calls[idx]["name"] += tc.function.name
+                        if tc.function.arguments: tool_calls[idx]["args"] += tc.function.arguments
+            elif delta.content:
                 sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
 
     print("\n[DONE]", flush=True)

@@ -95,8 +95,8 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       es.addEventListener('done', () => {
         setStreamText(prev => {
           const s = pendingStrategy.current
-          // Don't create empty bubble if only ask options were shown
-          if (!prev && askData) { setStreaming(false); es.close(); esRef.current = null; return '' }
+          // Don't create empty bubble
+          if (!prev || !prev.trim()) { setStreaming(false); es.close(); esRef.current = null; return '' }
           const msg: Message = { role: 'assistant', content: prev }
           if (s) {
             msg.hasCode = true
