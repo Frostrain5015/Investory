@@ -1,73 +1,200 @@
-# 盈亏鉴 Investory
+# Investory
 
-个人股票投资组合管理工具，支持 A 股、港股、美股多市场持仓追踪与盈亏分析。
+A full-featured personal investment portfolio tracker with quantitative analysis, strategy backtesting, and an AI-powered investment assistant.
 
-## 技术栈
+Supports A-shares (Shanghai/Shenzhen), Hong Kong stocks, and US equities with multi-currency P&L tracking.
 
-| 层 | 技术 |
-|---|------|
-| 后端 | Java 17, Spring Boot 3.3.5, Spring MVC, JdbcTemplate |
-| 前端 | React 18, TypeScript, Vite, Tailwind CSS, shadcn/ui, Recharts |
-| 数据库 | MySQL 8+ |
-| 实时报价 | 东方财富、新浪财经、Yahoo Finance 三源并发 |
-| 历史数据 | BaoStock（A 股）、腾讯财经（港股）、Yahoo Finance（美股）|
+---
 
-## 功能
+## Features
 
-### 总览仪表盘
-- 总资产曲线，支持 1M / 3M / 6M / 1Y / 全部 时间范围切换
-- 持仓占比扇形图与词云图
-- 盈亏排行：涨跌幅最大的持仓一览
+### Portfolio Management
+- Multiple independent portfolios per user
+- BUY / SELL / TRANSFER_IN / TRANSFER_OUT transactions
+- Dividend recording with per-share amount tracking
+- Cash balance breakdown by currency (CNY / HKD / USD)
+- Closed positions history
 
-### 持仓明细
-- 实时市价（0.5 秒响应，三数据源赛马取最快）
-- 平均成本、摊薄成本、浮动盈亏金额与百分比
-- 支持 CNY / HKD / USD 统一换算展示
+### Dashboard
+- Total asset value curve with selectable time ranges (1M / 6M / 1Y / all / custom)
+- Today's P&L and cumulative P&L summary cards
+- Position allocation — toggle between pie chart and word cloud
+- P&L ranking across holdings — cumulative or daily
 
-### 交易记录
-- 买入、卖出、股息/分红、转入资金、转出资金统一时间线
-- 支持增删改；买入时自动校验现金余额
-- 搜索股票支持拼音缩写（如 `gzmt` → 贵州茅台）
+### Holdings & Watchlist
+- Drag-to-reorder watchlist
+- 30-day price sparkline per stock
+- Optional quantitative columns: Beta, volatility, historical percentile
+- Inline distinction between held positions and watched-only stocks
 
-### 个股详情
-- 日 K 线走势图，叠加成本线
-- 买入/卖出标记点
-- 国旗标识区分市场
+### Market Overview
+- Interactive world map with country-level index performance coloring
+- Live indices: Shanghai Composite, Hang Seng, S&P 500 and more
+- Real-time exchange rates (CNY / HKD / USD)
+- Geolocated news pins (finance / geopolitics) with click-through links
 
-### 盈亏日历
-- 年度 / 月度视图
-- 金额与涨跌幅两种模式切换
+### P&L Calendar
+- Yearly heat-map grid (12 months) and monthly day-level calendar
+- Color intensity mapped to P&L amount or return percentage
+- Click any cell for a breakdown: per-stock contribution and transactions that day
 
-### 投资组合
-- 创建多个组合并随时切换
-- 每个组合独立记账
+### Quantitative Analysis
+- **Risk tab**: portfolio style diagnosis (growth / value / defensive), weighted Beta, allocation chart, optimization recommendations
+- **Backtest tab**:
+  - Simple rule builder — SMA, EMA, RSI, MACD, Bollinger Bands, Volume, KDJ, stop-loss, take-profit conditions
+  - Advanced Python strategy editor for custom logic
+  - Real-time progress stream during backtest execution (SSE)
+  - Equity curve with buy/sell markers, Sharpe ratio, max drawdown, win rate, profit factor
 
-### 设置
-- 颜色偏好：红涨绿跌 / 绿涨红跌
-- 本位币：CNY / HKD / USD
-- 修改密码
+### AI Assistant — Guanlan
+- Floating chat panel with multi-turn conversation
+- Streaming token-by-token responses via SSE
+- Deep thinking mode for complex analysis
+- Tool use: can trigger portfolio analysis and backtests mid-conversation
+- Saves AI-generated strategies directly to the backtest library
+- Configurable provider: Alibaba Cloud Bailian (default, `qwen-plus`), OpenAI, DeepSeek, Moonshot, Zhipu GLM, Anthropic Claude, or any OpenAI-compatible endpoint
 
-## 使用指南
+### Settings
+- Light / dark / system theme
+- Color scheme: red-up/green-down (A-share convention) or green-up/red-down (international)
+- Base currency selection
+- Avatar upload
+- Password change and account deletion
 
-### 第一步：转入资金
+### Admin Panel
+- Live database status: table sizes, stock counts, price row counts per market
+- Data crawler control: start / pause / resume / stop per market
+- Crawl history audit log
+- User management: list, delete, impersonate
 
-点击「交易记录」→「添加交易」，选择操作类型「转入」，填写金额与币种，完成初始资金入账。
+---
 
-### 第二步：添加买入记录
+## Tech Stack
 
-搜索股票（支持股票代码、中文名称或拼音缩写），选中后填写股数、价格、手续费和交易日期，确认提交。若当前币种现金余额不足，系统会提示先转入资金。
+### Backend
 
-### 第三步：查看持仓与曲线
+| | |
+|---|---|
+| Language | Java 17 |
+| Framework | Spring Boot 3.3.5 |
+| Database | MySQL (JdbcTemplate — no ORM) |
+| JSON | Gson 2.10.1 |
+| Password hashing | jBCrypt 0.4 |
+| Pinyin search | Pinyin4j 2.5.1 |
+| Build | Maven 3.x |
 
-返回首页「总览」查看总资产曲线与持仓占比；点击「持仓」查看每只股票的实时盈亏。
+### Frontend
 
-### 卖出 / 股息
+| | |
+|---|---|
+| Framework | React 19 |
+| Language | TypeScript |
+| Build tool | Vite 8 |
+| Routing | React Router 7 |
+| Styling | Tailwind CSS 4 |
+| Component primitives | Radix UI |
+| Charts | Recharts 3 · ECharts 6 |
+| Animation | Framer Motion 12 |
+| Icons | Lucide React |
 
-与买入操作相同入口，切换操作类型为「卖出」或「股息/分红」。
+The Maven build automatically compiles the frontend (`tsc -b && vite build`) and copies the output into `backend/src/main/resources/static/` before packaging the JAR.
 
-### 多组合管理
+---
 
-在「投资组合」页面创建新组合，点击切换后所有数据视角随之切换。
+## Project Structure
+
+```
+investory/
+├── backend/
+│   ├── pom.xml
+│   └── src/main/java/com/investory/
+│       ├── InvestoryApplication.java
+│       ├── controller/
+│       │   ├── api/          # REST endpoints
+│       │   └── page/         # Thymeleaf page controllers
+│       ├── dao/              # JdbcTemplate repositories
+│       ├── service/
+│       ├── model/
+│       ├── crawler/          # Scheduled market data crawlers
+│       └── config/
+└── frontend/
+    ├── package.json
+    ├── vite.config.ts
+    └── src/
+        ├── pages/            # Dashboard, Holdings, Transactions, Market, Quant, ...
+        ├── components/       # Layout, ChatPanel, CloudChart, ui/*
+        ├── hooks/            # useAuth, useSettings, useTheme
+        ├── services/api.ts
+        └── types/index.ts
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Java 17
+- Maven 3.9+
+- Node.js 20+ / npm
+- MySQL 8
+
+### Database
+
+Create a schema and update credentials in `backend/src/main/resources/application.properties`:
+
+```sql
+CREATE DATABASE investory_db CHARACTER SET utf8mb4;
+```
+
+### Run in development
+
+**Full stack via Spring Boot:**
+
+```bash
+export JAVA_HOME=/path/to/jdk-17
+mvn -f backend/pom.xml spring-boot:run -DskipTests
+```
+
+**Frontend hot-reload (Vite dev server):**
+
+```bash
+cd frontend && npm install && npm run dev
+# → http://localhost:5173/investory/
+# API calls are proxied to localhost:8080
+```
+
+### Build production JAR
+
+```bash
+mvn -f backend/pom.xml package -DskipTests
+java -jar backend/target/investory.jar
+```
+
+App is served at `https://localhost:8443/investory/`.
+
+---
+
+## API Overview
+
+| Group | Endpoints |
+|---|---|
+| Auth | `GET /api/session` · `POST /api/password` · `DELETE /api/account` |
+| Portfolios | CRUD `/api/portfolios` · `POST /api/portfolio/refresh` |
+| Dashboard | `GET /api/dashboard` · `GET /api/cash` · `GET /api/closed-positions` |
+| Holdings | `GET /api/holdings` |
+| Transactions | CRUD `/api/transactions` |
+| Dividends | CRUD `/api/dividends` |
+| Stocks | `GET /api/search` · `GET /api/quote/{symbol}` · `GET /api/chart` · `GET /api/stocks/{symbol}` |
+| P&L | `GET /api/daily-detail` · `GET /api/monthly-detail` |
+| Watchlist | CRUD `/api/watchlist` · `PUT /api/watchlist/reorder` |
+| Market | `GET /api/market/indices` · `/exchange-rates` · `/news` |
+| Quant | `GET /api/quant/holdings-metrics` · `/portfolio-style` · `/portfolio-scenario` |
+| Backtest | CRUD `/api/backtest/strategies` · `POST /api/backtest/start` · `GET /api/backtest/stream` (SSE) |
+| AI | `POST /api/ai/chat` · `GET /api/ai/stream` (SSE) · `GET/POST /api/ai/settings` |
+| Admin | `/api/admin/status` · `/users` · `/crawl-history` · `/crawl/{market}` |
+
+---
 
 ## License
 
