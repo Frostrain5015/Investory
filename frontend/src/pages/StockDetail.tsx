@@ -5,7 +5,7 @@ import { chartAPI, getStockDetail, searchStocks } from '@/services/api'
 import { useSettings } from '@/hooks/use-settings'
 import type { StockDetailResponse, Transaction, Dividend, PriceData } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot, Legend, Line } from 'recharts'
 import { displaySymbol, fmtPriceTs } from '@/lib/format'
 
 export default function StockDetail() {
@@ -24,16 +24,39 @@ export default function StockDetail() {
   const [loading, setLoading] = useState(true)
   const [watching, setWatching] = useState(false)
   const [watchId, setWatchId] = useState<number | null>(null)
+  const [benchmark, setBenchmark] = useState('')
+  const [bmData, setBmData] = useState<{ date: string; base100: number; bmBase100: number; bmName: string }[] | null>(null)
+
+  // Benchmarks per market
+  const BENCHMARKS: Record<string, { symbol: string; name: string }[]> = {
+    SH: [{ symbol: '000001.SH', name: '上证指数' }],
+    SZ: [{ symbol: '399001.SZ', name: '深证成指' }],
+    HK: [{ symbol: 'HSI.HK', name: '恒生指数' }, { symbol: 'HSTECH.HK', name: '恒生科技' }],
+    US: [{ symbol: 'GSPC.US', name: '标普500' }, { symbol: 'IXIC.US', name: '纳斯达克' }],
+  }
 
   useEffect(() => {
     if (!symbol || !portfolioId) return
     setLoading(true)
     Promise.all([
       getStockDetail(symbol),
-      chartAPI.price(symbol, chartParams.days, chartParams.start, chartParams.end),
-    ]).then(([detail, prices]) => {
+      chartAPI.price(symbol, chartParams.days, chartParams.start, chartParams.end, benchmark || undefined),
+    ]).then(([detail, rawPrices]) => {
       setData(detail)
-      setPriceData(prices)
+      // rawPrices is array when no benchmark, { prices, benchmark } when benchmark set
+      if (Array.isArray(rawPrices)) {
+        setPriceData(rawPrices)
+        setBmData(null)
+      } else {
+        setPriceData(rawPrices.prices)
+        const bm = rawPrices.benchmark
+        if (bm && bm.length > 0) {
+          const bmName = BENCHMARKS[stock?.market || '']?.find(b => b.symbol === benchmark)?.name || benchmark
+          setBmData(bm.map((d: any) => ({ date: d.date, base100: d.base100, bmBase100: d.bmBase100, bmName })))
+        } else {
+          setBmData(null)
+        }
+      }
     }).finally(() => setLoading(false))
     // Check watchlist status
     fetch('/investory/api/watchlist', { credentials: 'include' })
@@ -203,6 +226,16 @@ export default function StockDetail() {
                 )
               })}
             </div>
+            {/* Benchmark selector */}
+            {stock && BENCHMARKS[stock.market] && (
+              <select value={benchmark} onChange={e => setBenchmark(e.target.value)}
+                className="h-7 px-2 rounded-md border border-slate-200 text-xs text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
+                <option value="">无对比</option>
+                {BENCHMARKS[stock.market].map(b => (
+                  <option key={b.symbol} value={b.symbol}>vs {b.name}</option>
+                ))}
+              </select>
+            )}
             {period === 'custom' && (
               <div className="flex items-center gap-1.5">
                 <input type="date" value={customStart} onChange={e => setCustomStart(e.target.value)}
@@ -221,40 +254,79 @@ export default function StockDetail() {
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={priceData}>
-              <defs>
-                <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={chartColor} stopOpacity={0.1} />
-                  <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-              <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8"
-                tickFormatter={(v: string) => period === '1M' ? v.substring(5) : v.substring(0, 7)}
-                interval="preserveStartEnd" />
-              <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" domain={['auto', 'auto']} />
-              {holding?.dilutedCost && Number(holding.dilutedCost) > 0 && (
-                <ReferenceLine y={Number(holding.dilutedCost)} stroke="#0ea5e9" strokeDasharray="6 4" strokeWidth={1.5}
-                  label={{ value: `摊薄 ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
+            <AreaChart data={(bmData || priceData) as any}>
+              {!bmData ? (
+                <>
+                  <defs>
+                    <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={chartColor} stopOpacity={0.1} />
+                      <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8"
+                    tickFormatter={(v: string) => period === '1M' ? v.substring(5) : v.substring(0, 7)}
+                    interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" domain={['auto', 'auto']} />
+                  {holding?.dilutedCost && Number(holding.dilutedCost) > 0 && (
+                    <ReferenceLine y={Number(holding.dilutedCost)} stroke="#0ea5e9" strokeDasharray="6 4" strokeWidth={1.5}
+                      label={{ value: `摊薄 ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
+                  )}
+                  <Tooltip />
+                  <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
+                  {transactions.map(t => {
+                    const match = priceData.find(p => p.date === t.tradeDate)
+                    const y = match ? Number(match.close) : Number(t.price)
+                    return (
+                    <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={y}
+                      r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}
+                      label={{ value: t.type === 'BUY' ? 'B' : 'S', position: 'top', fontSize: 11, fill: t.type === 'BUY' ? '#ef4444' : '#10b981', fontWeight: 'bold' }} />
+                  )})}
+                  {dividends.map(d => {
+                    const match = priceData.find(p => p.date === d.recordDate)
+                    return match ? (
+                      <ReferenceDot key={`div-${d.id}`} x={d.recordDate} y={match.close}
+                        r={5} fill="#0ea5e9" stroke="#fff" strokeWidth={2}
+                        label={{ value: 'D', position: 'top', fontSize: 11, fill: '#0ea5e9', fontWeight: 'bold' }} />
+                    ) : null
+                  })}
+                </>
+              ) : (
+                <>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#94a3b8"
+                    tickFormatter={(v: string) => period === '1M' ? v.substring(5) : v.substring(0, 7)}
+                    interval="preserveStartEnd" />
+                  <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8"
+                    label={{ value: '基准 100', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#94a3b8' }}
+                    domain={['auto', 'auto']} />
+                  <Tooltip formatter={(value: any, name: any) => {
+                    const v = Number(value)
+                    if (name === 'base100') return [v.toFixed(2), stock?.name || 'Stock']
+                    if (name === 'bmBase100') return [v.toFixed(2), bmData?.[0]?.bmName || 'BM']
+                    return [v, name]
+                  }} />
+                  <Legend />
+                  <defs>
+                    <linearGradient id="colorPrice" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor={chartColor} stopOpacity={0.1} />
+                      <stop offset="95%" stopColor={chartColor} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <Line name={bmData?.[0]?.bmName || 'Benchmark'} type="monotone" dataKey="bmBase100" stroke="#f59e0b" strokeWidth={2} dot={false}
+                    strokeDasharray="5 3" />
+                  <Area name={stock?.name || 'Stock'} type="monotone" dataKey="base100" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
+                  {transactions.map(t => {
+                    const match = bmData!.find(p => p.date === t.tradeDate)
+                    const y = match ? match.base100 : undefined
+                    return y != null ? (
+                    <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={y}
+                      r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}
+                      label={{ value: t.type === 'BUY' ? 'B' : 'S', position: 'top', fontSize: 11, fill: t.type === 'BUY' ? '#ef4444' : '#10b981', fontWeight: 'bold' }} />
+                    ) : null
+                  })}
+                </>
               )}
-              <Tooltip />
-              <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
-              {transactions.map(t => {
-                const match = priceData.find(p => p.date === t.tradeDate)
-                const y = match ? Number(match.close) : Number(t.price)
-                return (
-                <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={y}
-                  r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}
-                  label={{ value: t.type === 'BUY' ? 'B' : 'S', position: 'top', fontSize: 11, fill: t.type === 'BUY' ? '#ef4444' : '#10b981', fontWeight: 'bold' }} />
-              )})}
-              {dividends.map(d => {
-                const match = priceData.find(p => p.date === d.recordDate)
-                return match ? (
-                  <ReferenceDot key={`div-${d.id}`} x={d.recordDate} y={match.close}
-                    r={5} fill="#0ea5e9" stroke="#fff" strokeWidth={2}
-                    label={{ value: 'D', position: 'top', fontSize: 11, fill: '#0ea5e9', fontWeight: 'bold' }} />
-                ) : null
-              })}
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>

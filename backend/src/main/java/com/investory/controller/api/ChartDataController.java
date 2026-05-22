@@ -44,6 +44,7 @@ public class ChartDataController {
                         @RequestParam(required = false) String end,
                         @RequestParam(required = false) Long portfolioId,
                         @RequestParam(required = false) Integer year,
+                        @RequestParam(required = false) String benchmark,
                         HttpServletRequest req, HttpServletResponse resp) throws Exception {
         HttpSession session = req.getSession(false);
         if (session == null || session.getAttribute("userId") == null) {
@@ -53,7 +54,7 @@ public class ChartDataController {
         long pid = resolvePortfolioId(portfolioId, session);
         try {
             return switch (type != null ? type : "") {
-                case "price"             -> priceData(symbol, days != null ? days : 180, start, end);
+                case "price"             -> priceData(symbol, days != null ? days : 180, start, end, benchmark);
                 case "allocation"        -> allocationData(pid);
                 case "pnl_rank"          -> pnlRankData(pid);
                 case "pnl_calendar"      -> pnlCalendarData(pid, year);
@@ -66,7 +67,7 @@ public class ChartDataController {
         }
     }
 
-    private String priceData(String symbol, int days, String startStr, String endStr) {
+    private String priceData(String symbol, int days, String startStr, String endStr, String benchmarkSymbol) {
         Stock stock = stockDao.findBySymbol(symbol);
         if (stock == null) return "[]";
         LocalDate to, from;
@@ -94,6 +95,48 @@ public class ChartDataController {
             m.put("low",    p.getLow());
             m.put("volume", p.getVolume());
             result.add(m);
+        }
+
+        // Benchmark comparison: fetch benchmark price data and normalize both to 100 base
+        List<Map<String, Object>> benchmarkData = null;
+        if (benchmarkSymbol != null && !benchmarkSymbol.isBlank()) {
+            Stock bmStock = stockDao.findBySymbol(benchmarkSymbol);
+            if (bmStock != null) {
+                List<StockPrice> bmPrices = stockPriceDao.findRange(bmStock.getId(), from, to);
+                if (!bmPrices.isEmpty() && !prices.isEmpty()) {
+                    // Build date → close maps
+                    Map<String, BigDecimal> stockCloses = new LinkedHashMap<>();
+                    for (StockPrice p : prices) stockCloses.put(p.getTradeDate().toString(), p.getClose());
+                    Map<String, BigDecimal> bmCloses = new LinkedHashMap<>();
+                    for (StockPrice p : bmPrices) bmCloses.put(p.getTradeDate().toString(), p.getClose());
+
+                    // Find shared dates and normalize to 100 base
+                    BigDecimal stockBase = null, bmBase = null;
+                    benchmarkData = new ArrayList<>();
+                    for (StockPrice p : prices) {
+                        String date = p.getTradeDate().toString();
+                        BigDecimal bmClose = bmCloses.get(date);
+                        if (bmClose == null) continue;
+                        if (stockBase == null) { stockBase = p.getClose(); bmBase = bmClose; }
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        m.put("date",   date);
+                        m.put("close",  p.getClose());
+                        m.put("base100", p.getClose().divide(stockBase, 6, RoundingMode.HALF_UP)
+                                    .multiply(BigDecimal.valueOf(100)));
+                        m.put("bmClose", bmClose);
+                        m.put("bmBase100", bmClose.divide(bmBase, 6, RoundingMode.HALF_UP)
+                                    .multiply(BigDecimal.valueOf(100)));
+                        benchmarkData.add(m);
+                    }
+                }
+            }
+        }
+
+        if (benchmarkData != null) {
+            Map<String, Object> wrapper = new LinkedHashMap<>();
+            wrapper.put("prices", result);
+            wrapper.put("benchmark", benchmarkData);
+            return JsonUtil.toJson(wrapper);
         }
         return JsonUtil.toJson(result);
     }

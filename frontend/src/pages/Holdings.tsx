@@ -44,7 +44,8 @@ export default function Holdings() {
     if (items.length === 0) return
     items.forEach(item => {
       if (sparkData[item.symbol]) return
-      chartAPI.price(item.symbol, 30).then((prices: PriceData[]) => {
+      chartAPI.price(item.symbol, 30).then((raw: any) => {
+        const prices: PriceData[] = Array.isArray(raw) ? raw : raw.prices
         setSparkData(prev => ({ ...prev, [item.symbol]: prices.map(p => p.close) }))
       }).catch(() => {})
     })

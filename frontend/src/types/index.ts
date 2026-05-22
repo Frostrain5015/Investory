@@ -92,6 +92,14 @@ export interface PriceData {
   volume: number
 }
 
+export interface BenchmarkItem {
+  date: string
+  close: number
+  base100: number    // stock normalized to 100
+  bmClose: number    // benchmark raw close
+  bmBase100: number  // benchmark normalized to 100
+}
+
 export interface User {
   id: number
   username: string

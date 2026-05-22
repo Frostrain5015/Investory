@@ -95,7 +95,9 @@ public class MarketIndexController {
                     m.put("fetchedAt", java.time.Instant.now().toString());
                 }
             }
-        } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
+        } catch (Exception ignored) {}
+        // Fallback: use latest close vs previous close from DB
+        if (!m.containsKey("price")) fillFromHistory(m, symbol);
         return m;
     }
 
@@ -125,7 +127,8 @@ public class MarketIndexController {
             m.put("change",    price.subtract(prev));
             m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
             m.put("fetchedAt", java.time.Instant.now().toString());
-        } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
+        } catch (Exception ignored) {}
+        if (!m.containsKey("price")) fillFromHistory(m, dbSymbol);
         return m;
     }
 
@@ -151,8 +154,69 @@ public class MarketIndexController {
             m.put("change",    price.subtract(prev));
             m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
             m.put("fetchedAt", java.time.Instant.now().toString());
-        } catch (Exception e) { m.put("price", BigDecimal.ZERO); }
+        } catch (Exception ignored) {}
+        if (!m.containsKey("price")) fillFromHistoryIndicators(m, dbSymbol);
         return m;
+    }
+
+    // ── DB fallback: compute change from last 2 closes in stock_prices ──
+
+    /** Convert dbSymbol (e.g. "000001.SH") to stocks.symbol (e.g. "1.000001"). */
+    private String toStockSymbol(String dbSymbol) {
+        if (dbSymbol == null || !dbSymbol.contains(".")) return dbSymbol;
+        String suffix = dbSymbol.substring(0, dbSymbol.lastIndexOf('.'));
+        String market = dbSymbol.substring(dbSymbol.lastIndexOf('.') + 1);
+        String prefix = switch (market) {
+            case "SH" -> "1"; case "SZ" -> "2"; case "HK" -> "116"; case "US" -> "105";
+            case "JP" -> "3"; case "KR" -> "6"; case "GB" -> "7"; case "DE" -> "8";
+            case "FR" -> "9"; case "TW" -> "10"; case "SG" -> "11";
+            case "IN" -> "12"; case "AU" -> "13"; case "CA" -> "14"; case "BR" -> "15";
+            default    -> null;
+        };
+        return prefix != null ? prefix + "." + suffix : dbSymbol;
+    }
+
+    private void fillFromHistory(Map<String, Object> m, String dbSymbol) {
+        String stockSymbol = toStockSymbol(dbSymbol);
+        try {
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT sp.close FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id " +
+                "WHERE s.symbol = ? ORDER BY sp.trade_date DESC LIMIT 2", stockSymbol);
+            if (rows.size() >= 2) {
+                BigDecimal today  = (BigDecimal) rows.get(0).get("close");
+                BigDecimal yest   = (BigDecimal) rows.get(1).get("close");
+                if (today != null && yest != null && yest.compareTo(BigDecimal.ZERO) != 0) {
+                    m.put("price",     today);
+                    m.put("change",    today.subtract(yest));
+                    m.put("changePct", today.subtract(yest).divide(yest, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+                    m.put("fetchedAt", "close"); // indicates historical close, not real-time
+                    return;
+                }
+            }
+        } catch (Exception ignored) {}
+        m.put("price", BigDecimal.ZERO);
+    }
+
+    /** Indicators (DXY/XAU/BTC/CL) don't have stock_prices — try close-only lookup by symbol name. */
+    private void fillFromHistoryIndicators(Map<String, Object> m, String dbSymbol) {
+        try {
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT sp.close FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id " +
+                "WHERE s.symbol LIKE ? ORDER BY sp.trade_date DESC LIMIT 2",
+                "%" + dbSymbol.substring(dbSymbol.lastIndexOf('.') + 1));
+            if (rows.size() >= 2) {
+                BigDecimal today  = (BigDecimal) rows.get(0).get("close");
+                BigDecimal yest   = (BigDecimal) rows.get(1).get("close");
+                if (today != null && yest != null && yest.compareTo(BigDecimal.ZERO) != 0) {
+                    m.put("price",     today);
+                    m.put("change",    today.subtract(yest));
+                    m.put("changePct", today.subtract(yest).divide(yest, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+                    m.put("fetchedAt", "close");
+                    return;
+                }
+            }
+        } catch (Exception ignored) {}
+        m.put("price", BigDecimal.ZERO);
     }
 
     @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;

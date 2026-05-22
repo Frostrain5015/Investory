@@ -139,10 +139,12 @@ export function deletePortfolio(id: number): Promise<Response> {
 // ── Charts ─────────────────────────────────────────────────────────────
 
 export const chartAPI = {
-  price(symbol: string, days: number, start?: string, end?: string): Promise<PriceData[]> {
-    if (start && end)
-      return request<PriceData[]>(`/api/chart?type=price&symbol=${encodeURIComponent(symbol)}&start=${start}&end=${end}`)
-    return request<PriceData[]>(`/api/chart?type=price&symbol=${encodeURIComponent(symbol)}&days=${days}`)
+  price(symbol: string, days: number, start?: string, end?: string, benchmark?: string): Promise<PriceData[] | { prices: PriceData[]; benchmark: any[] }> {
+    let url = start && end
+      ? `/api/chart?type=price&symbol=${encodeURIComponent(symbol)}&start=${start}&end=${end}`
+      : `/api/chart?type=price&symbol=${encodeURIComponent(symbol)}&days=${days}`
+    if (benchmark) url += `&benchmark=${encodeURIComponent(benchmark)}`
+    return request(url)
   },
   allocation(portfolioId: number): Promise<AllocationItem[]> {
     return request<AllocationItem[]>(`/api/chart?type=allocation&portfolioId=${portfolioId}`)

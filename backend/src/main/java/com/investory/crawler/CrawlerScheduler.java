@@ -14,6 +14,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.List;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.logging.Logger;
@@ -88,6 +90,31 @@ public class CrawlerScheduler {
     @Scheduled(cron = "0 0 3 * * SUN", zone = "Asia/Shanghai")
     public void refreshQuantMetricsWeekly() {
         runQuantScript("metrics");
+    }
+
+    // ── Auto-retry failed crawls at 23:00 ──────────────────────────────
+
+    @Scheduled(cron = "0 0 23 * * MON-FRI", zone = "Asia/Shanghai")
+    public void autoRetryFailedCrawls() {
+        if (isWeekend()) return;
+        LocalDate today = LocalDate.now(SHANGHAI);
+        try {
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT id, market FROM crawl_history WHERE DATE(started_at) = ? AND status != 'ok'",
+                today);
+            for (Map<String, Object> row : rows) {
+                String market = (String) row.get("market");
+                log.info("Retrying failed crawl: market=" + market);
+                switch (market) {
+                    case "a"  -> syncAShares();
+                    case "hk" -> syncHKStocks();
+                    case "us" -> syncUSStocks();
+                    default   -> log.info("Unknown market, skipping: " + market);
+                }
+            }
+        } catch (Exception e) {
+            log.warning("Auto-retry check failed: " + e.getMessage());
+        }
     }
 
     private void runQuantScript(String mode) {
