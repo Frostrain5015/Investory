@@ -32,10 +32,11 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
 
   function getAiConfig() {
+    const provider = localStorage.getItem('ai_provider') || 'openai'
     return {
-      provider: localStorage.getItem('ai_provider') || 'openai',
-      key: localStorage.getItem('ai_key') || '',
-      model: localStorage.getItem('ai_model') || (localStorage.getItem('ai_provider') === 'anthropic' ? 'claude-haiku-4-5' : 'gpt-4o-mini'),
+      provider, key: localStorage.getItem('ai_key') || '',
+      baseUrl: localStorage.getItem('ai_base_url') || '',
+      model: localStorage.getItem('ai_model') || 'gpt-4o-mini',
     }
   }
 
@@ -54,7 +55,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     try {
       const resp = await fetch('/investory/api/ai/chat', {
         method: 'POST', credentials: 'include',
-        headers: { 'Content-Type': 'application/json', 'X-AI-Key': config.key, 'X-AI-Provider': config.provider, 'X-AI-Model': config.model },
+        headers: { 'Content-Type': 'application/json', 'X-AI-Key': config.key, 'X-AI-Provider': config.provider, 'X-AI-Model': config.model, 'X-AI-Base-URL': config.baseUrl },
         body: JSON.stringify({ messages: newMessages }),
       })
       if (!resp.ok) { setStreamText(`[错误] HTTP ${resp.status}`); setStreaming(false); return }

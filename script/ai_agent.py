@@ -65,13 +65,16 @@ def build_system_prompt(kb: dict) -> str:
 - 你无法获取实时行情，所有数据均来自系统的历史数据库
 - 不确定时明确说"我不确定"或"我需要更多信息来判断"
 - 用中文回复，专业术语保留英文（如 ROE、DCF、Sharpe Ratio）
-- 系统名称为 Investory（盈亏鉴），你属于该系统的一部分"""
+- 系统名称为 Investory，你属于该系统的一部分"""
 
 
-def call_openai_stream(api_key: str, model: str, messages: list):
-    """OpenAI streaming chat completion"""
+def call_openai_stream(api_key: str, model: str, messages: list, api_base: str = ""):
+    """OpenAI streaming chat completion (supports custom base URL)"""
     from openai import OpenAI
-    client = OpenAI(api_key=api_key)
+    kwargs = {"api_key": api_key}
+    if api_base:
+        kwargs["base_url"] = api_base
+    client = OpenAI(**kwargs)
 
     # Convert messages to ensure assistant role (not 'assistant')
     formatted = []
@@ -126,9 +129,10 @@ def call_anthropic_stream(api_key: str, model: str, messages: list):
 
 def main():
     parser = argparse.ArgumentParser(description="Investory 观澜 AI Agent")
-    parser.add_argument("--provider", default="openai", choices=["openai", "anthropic"])
+    parser.add_argument("--provider", default="openai", choices=["openai", "anthropic", "openai_compat"])
     parser.add_argument("--model", default="gpt-4o-mini")
     parser.add_argument("--api-key", required=True)
+    parser.add_argument("--api-base", default="", help="Custom API base URL for OpenAI-compatible providers")
     parser.add_argument("--input", required=True, help="Path to input JSON file with messages")
     args = parser.parse_args()
 
@@ -152,7 +156,7 @@ def main():
         if args.provider == "anthropic":
             call_anthropic_stream(args.api_key, args.model, full_messages)
         else:
-            call_openai_stream(args.api_key, args.model, full_messages)
+            call_openai_stream(args.api_key, args.model, full_messages, args.api_base)
     except Exception as e:
         print(f"[ERROR] {e}", flush=True)
         traceback.print_exc(file=sys.stderr)

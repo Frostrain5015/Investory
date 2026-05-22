@@ -21,7 +21,18 @@ export default function Settings() {
   const [deleting, setDeleting] = useState(false)
   const [aiProvider, setAiProvider] = useState(() => localStorage.getItem('ai_provider') || 'openai')
   const [aiKey, setAiKey] = useState(() => localStorage.getItem('ai_key') || '')
+  const [aiBaseUrl, setAiBaseUrl] = useState(() => localStorage.getItem('ai_base_url') || '')
   const [aiModel, setAiModel] = useState(() => localStorage.getItem('ai_model') || '')
+
+  const AI_PRESETS: Record<string, { label: string; baseUrl: string; model: string }> = {
+    openai:     { label: 'OpenAI',       baseUrl: '',                                           model: 'gpt-4o-mini' },
+    deepseek:   { label: 'DeepSeek',     baseUrl: 'https://api.deepseek.com/v1',                model: 'deepseek-chat' },
+    moonshot:   { label: 'Moonshot',     baseUrl: 'https://api.moonshot.cn/v1',                 model: 'moonshot-v1-8k' },
+    zhipu:      { label: '智谱 GLM',     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',       model: 'glm-4-flash' },
+    qwen:       { label: '通义千问',     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-turbo' },
+    anthropic:  { label: 'Anthropic',    baseUrl: '',                                           model: 'claude-haiku-4-5' },
+    custom:     { label: '自定义',       baseUrl: '',                                           model: '' },
+  }
 
   function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -156,20 +167,32 @@ export default function Settings() {
       <Card>
         <CardHeader><CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" />观澜 AI 助手</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex bg-slate-100 rounded-lg p-0.5">
-            {(['openai', 'anthropic'] as const).map(p => (
-              <button key={p} onClick={() => { setAiProvider(p); localStorage.setItem('ai_provider', p) }}
-                className={`flex-1 py-1.5 rounded-md text-xs font-medium transition-colors ${aiProvider === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-                {p === 'openai' ? 'OpenAI' : 'Anthropic'}
-              </button>
+          <select value={aiProvider} onChange={e => {
+            const p = e.target.value; setAiProvider(p)
+            const preset = AI_PRESETS[p]
+            if (preset && p !== 'custom') { setAiBaseUrl(preset.baseUrl); setAiModel(preset.model) }
+          }} className="w-full h-10 rounded-xl border border-slate-200 px-3 text-sm">
+            {Object.entries(AI_PRESETS).map(([key, p]) => (
+              <option key={key} value={key}>{p.label}{key === 'custom' ? '' : ` (${p.model})`}</option>
             ))}
-          </div>
-          <input type="password" value={aiKey} onChange={e => { setAiKey(e.target.value); localStorage.setItem('ai_key', e.target.value) }}
-            placeholder={aiProvider === 'openai' ? 'sk-...' : 'sk-ant-...'}
-            className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
-          <input type="text" value={aiModel} onChange={e => { setAiModel(e.target.value); localStorage.setItem('ai_model', e.target.value) }}
-            placeholder={aiProvider === 'openai' ? 'gpt-4o-mini' : 'claude-haiku-4-5'}
-            className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
+          </select>
+          <input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)}
+            placeholder="API Key" className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
+          {aiProvider === 'custom' && (
+            <input type="text" value={aiBaseUrl} onChange={e => setAiBaseUrl(e.target.value)}
+              placeholder="API Base URL (例如 https://api.deepseek.com/v1)" className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
+          )}
+          <input type="text" value={aiModel} onChange={e => setAiModel(e.target.value)}
+            placeholder="模型名称" className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
+          <button onClick={() => {
+            localStorage.setItem('ai_provider', aiProvider)
+            localStorage.setItem('ai_key', aiKey)
+            localStorage.setItem('ai_base_url', aiBaseUrl)
+            localStorage.setItem('ai_model', aiModel)
+            toast('AI 设置已保存', true)
+          }} className="w-full h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
+            保存设置
+          </button>
         </CardContent>
       </Card>
 

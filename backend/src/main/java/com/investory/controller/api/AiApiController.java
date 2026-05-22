@@ -38,12 +38,21 @@ public class AiApiController {
         String aiKey = req.getHeader("X-AI-Key");
         String aiProvider = req.getHeader("X-AI-Provider");
         String aiModel = req.getHeader("X-AI-Model");
+        String aiBaseUrl = req.getHeader("X-AI-Base-URL");
 
         if (aiKey == null || aiKey.isBlank()) return Map.of("error", "API key required");
-        final String provider = aiProvider != null ? aiProvider : "openai";
-        final String model = (aiModel != null && !aiModel.isBlank()) ? aiModel
-            : "anthropic".equals(provider) ? "claude-haiku-4-5" : "gpt-4o-mini";
+        // Map custom providers to "openai_compat" for the Python agent
+        final String provider;
+        if ("anthropic".equals(aiProvider)) {
+            provider = "anthropic";
+        } else if (aiProvider != null && !"openai".equals(aiProvider)) {
+            provider = "openai_compat";  // DeepSeek, Moonshot, custom, etc.
+        } else {
+            provider = "openai";
+        }
+        final String model = (aiModel != null && !aiModel.isBlank()) ? aiModel : "gpt-4o-mini";
         final String key = aiKey;
+        final String baseUrl = (aiBaseUrl != null) ? aiBaseUrl : "";
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> messages = (List<Map<String, Object>>) body.get("messages");
@@ -70,13 +79,14 @@ public class AiApiController {
                 input.put("messages", messages);
                 Files.writeString(tmpInput, json.writeValueAsString(input));
 
-                ProcessBuilder pb = new ProcessBuilder(
-                    pythonExecutable, "-u", script.getAbsolutePath(),
-                    "--provider", provider,
-                    "--model", model,
-                    "--api-key", key,
-                    "--input", tmpInput.toString()
-                );
+                java.util.List<String> cmd = new java.util.ArrayList<>();
+                cmd.add(pythonExecutable); cmd.add("-u"); cmd.add(script.getAbsolutePath());
+                cmd.add("--provider"); cmd.add(provider);
+                cmd.add("--model"); cmd.add(model);
+                cmd.add("--api-key"); cmd.add(key);
+                cmd.add("--input"); cmd.add(tmpInput.toString());
+                if (!baseUrl.isBlank()) { cmd.add("--api-base"); cmd.add(baseUrl); }
+                ProcessBuilder pb = new ProcessBuilder(cmd);
                 pb.directory(scriptDir);
                 pb.redirectErrorStream(true);
                 pb.environment().put("PYTHONUNBUFFERED", "1");
