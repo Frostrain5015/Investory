@@ -63,6 +63,6 @@ public class SpaController {
     public String logoutGet(HttpServletRequest req) {
         HttpSession session = req.getSession(false);
         if (session != null) session.invalidate();
-        return "redirect:/login";
+        return "redirect:/";
     }
 }

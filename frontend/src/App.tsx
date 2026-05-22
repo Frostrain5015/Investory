@@ -5,6 +5,7 @@ import { ThemeProvider } from '@/hooks/use-theme'
 import { ToastProvider } from '@/components/Toast'
 import { ConfirmProvider } from '@/hooks/use-confirm'
 import Layout from '@/components/Layout'
+import Hero from '@/pages/Hero'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
 import Admin from '@/pages/Admin'
@@ -30,7 +31,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
       </div>
     )
   }
-  return authenticated ? children : <Navigate to="/login" replace />
+  return authenticated ? children : <Navigate to="/" replace />
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
@@ -47,6 +48,7 @@ export default function App() {
       <ToastProvider>
       <ConfirmProvider>
       <Routes>
+        <Route path="/" element={<PublicRoute><Hero /></PublicRoute>} />
         <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
         <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
         <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>

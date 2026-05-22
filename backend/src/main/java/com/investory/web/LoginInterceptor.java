@@ -21,7 +21,7 @@ public class LoginInterceptor implements HandlerInterceptor {
             resp.getWriter().write("{\"error\":\"unauthorized\"}");
             return false;
         }
-        resp.sendRedirect(req.getContextPath() + "/login");
+        resp.sendRedirect(req.getContextPath() + "/");
         return false;
     }
 }
