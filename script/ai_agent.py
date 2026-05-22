@@ -326,6 +326,20 @@ def tool_analyze_backtest(backtest_id: int = None) -> dict:
         "equityPoints": len(curve),
     }
 
+def tool_web_search(query: str, count: int = 5) -> dict:
+    """联网搜索（DuckDuckGo，免费无API key）"""
+    try:
+        from duckduckgo_search import DDGS
+        results = []
+        with DDGS() as ddgs:
+            for r in ddgs.text(query, max_results=min(count, 8)):
+                results.append({"title": r.get("title",""), "snippet": r.get("body","")[:300], "url": r.get("href","")})
+        return {"query": query, "results": results, "note": "搜索结果来自公开网络，仅供参考"}
+    except ImportError:
+        return {"error": "搜索模块未安装 (duckduckgo-search)", "note": "请在云端执行 pip3 install --break-system-packages duckduckgo-search"}
+    except Exception as e:
+        return {"error": f"搜索失败: {str(e)[:100]}"}
+
 def tool_get_backtests(limit: int = 5) -> list:
     """获取最近的回测结果"""
     conn = get_db_conn()
@@ -447,6 +461,13 @@ TOOLS = [
         "name": "analyze_backtest", "description": "获取最新回测结果并给出全面客观的评价，覆盖收益、风险、稳定性、改进方向",
         "parameters": {"type": "object", "properties": {"id": {"type": "integer", "description": "回测结果ID，不传则取最新一次"}}, "required": []}
     }},
+    {"type": "function", "function": {
+        "name": "web_search", "description": "联网搜索最新信息。当用户问的问题你无法从数据库回答时（例如公司新闻、宏观经济、行业动态），先调用此工具查询",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "搜索关键词"},
+            "count": {"type": "integer", "description": "返回条数，默认5，最多8"}
+        }, "required": ["query"]}
+    }},
 ]
 
 TOOL_LABELS = {
@@ -465,6 +486,7 @@ TOOL_LABELS = {
     "compute_sector_breakdown": "正在分析行业分布...",
     "benchmark_compare": "正在对比基准...",
     "analyze_backtest": "正在分析回测...",
+    "web_search": "正在联网搜索...",
 }
 
 def execute_tool(name: str, args: dict, portfolio_id: int) -> str:
@@ -503,6 +525,8 @@ def execute_tool(name: str, args: dict, portfolio_id: int) -> str:
         return json.dumps(tool_benchmark_compare(portfolio_id, args.get("benchmark","000001.SH"), args.get("days",252)), ensure_ascii=False)
     elif name == "analyze_backtest":
         return json.dumps(tool_analyze_backtest(args.get("id")), ensure_ascii=False)
+    elif name == "web_search":
+        return json.dumps(tool_web_search(args.get("query",""), args.get("count",5)), ensure_ascii=False)
     return json.dumps({"error": f"unknown tool: {name}"})
 
 
