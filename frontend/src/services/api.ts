@@ -218,3 +218,54 @@ export function deleteBacktest(id: number): Promise<{ status: string }> {
 export async function getBacktestStream(): Promise<Response> {
   return fetch(`${BASE}/api/backtest/stream`, { credentials: 'include' })
 }
+
+// ── Admin ────────────────────────────────────────────────────────────────
+
+export function adminGetStatus(): Promise<any> { return request('/api/admin/status') }
+export function adminGetUsers(): Promise<any[]> { return request('/api/admin/users') }
+export function adminImpersonate(userId: number): Promise<any> { return request('/api/admin/impersonate/' + userId, { method: 'POST' }) }
+export function adminDeleteUser(userId: number): Promise<any> { return request('/api/admin/users/' + userId, { method: 'DELETE' }) }
+export function adminGetCrawlHistory(): Promise<any[]> { return request('/api/admin/crawl-history') }
+export function adminClearCrawlHistory(): Promise<any> { return request('/api/admin/crawl-history', { method: 'DELETE' }) }
+export function adminCrawlStart(market: string): Promise<Response> { return fetch(`${BASE}/api/admin/crawl/${market}`, { credentials: 'include' }) }
+export function adminCrawlStop(): Promise<Response> { return fetch(`${BASE}/api/admin/crawl/stop`, { method: 'POST', credentials: 'include' }) }
+export function adminCrawlPause(): Promise<Response> { return fetch(`${BASE}/api/admin/crawl/pause`, { method: 'POST', credentials: 'include' }) }
+export function adminCrawlResume(): Promise<Response> { return fetch(`${BASE}/api/admin/crawl/resume`, { method: 'POST', credentials: 'include' }) }
+export function adminCrawlStream(): EventSource { return new EventSource(`${BASE}/api/admin/crawl/sse`) }
+
+// ── Watchlist ────────────────────────────────────────────────────────────
+
+export function getWatchlist(): Promise<any[]> { return request('/api/watchlist') }
+export function addToWatchlist(stockId: number): Promise<any> {
+  return request('/api/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ stockId: String(stockId) }).toString() })
+}
+export function removeFromWatchlist(stockId: number): Promise<any> { return request(`/api/watchlist/${stockId}`, { method: 'DELETE' }) }
+export function reorderWatchlist(items: { id: number; sortOrder: number }[]): Promise<any> {
+  return request('/api/watchlist/reorder', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(items) })
+}
+
+// ── AI ────────────────────────────────────────────────────────────────────
+
+export function aiChat(messages: any[], deepThink?: boolean): Promise<any> {
+  return request('/api/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, deepThink }) })
+}
+export function aiClear(): Promise<any> { return request('/api/ai/clear', { method: 'POST' }) }
+export function aiStream(): EventSource { return new EventSource(`${BASE}/api/ai/stream`) }
+export function aiGetSettings(): Promise<any> { return request('/api/ai/settings') }
+export function aiSaveSettings(data: any): Promise<any> {
+  return request('/api/ai/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+}
+
+// ── Market ────────────────────────────────────────────────────────────────
+
+export function getMarketIndices(): Promise<any> { return request('/api/market/indices') }
+export function getExchangeRates(): Promise<any> { return request('/api/market/exchange-rates') }
+export function getMarketNews(): Promise<any[]> { return request('/api/market/news') }
+
+// ── Account ───────────────────────────────────────────────────────────────
+
+export function changePassword(oldPassword: string, newPassword: string): Promise<any> {
+  return request('/api/password', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ oldPassword, newPassword }).toString() })
+}
+export function deleteAccount(): Promise<any> { return request('/api/account', { method: 'DELETE' }) }
+export function refreshPortfolio(): Promise<any> { return request('/api/portfolio/refresh', { method: 'POST' }) }
