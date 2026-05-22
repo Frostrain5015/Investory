@@ -176,6 +176,10 @@ function RiskSection() {
 function BacktestSection() {
   const toast = useToast()
   const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
+  const [view, setView] = useState<'list' | 'builder' | 'run'>('list')
+  const [strategies, setStrategies] = useState<any[]>([])
+  const [editId, setEditId] = useState<number | null>(null)
+  const [runStrategyId, setRunStrategyId] = useState<number | null>(null)
   const [results, setResults] = useState<BacktestResult[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -183,8 +187,6 @@ function BacktestSection() {
   const [metrics, setMetrics] = useState<BacktestMetrics | null>(null)
   const [tradeLog, setTradeLog] = useState<TradeLogEntry[] | null>(null)
 
-  // Builder
-  const [showBuilder, setShowBuilder] = useState(false)
   const [strategyType, setStrategyType] = useState<'simple' | 'advanced'>('simple')
   const [strategyName, setStrategyName] = useState('')
   const [stockInput, setStockInput] = useState('')
@@ -254,12 +256,14 @@ function BacktestSection() {
     const manualStocks = stockInput.split(/[,;\s]+/).filter(Boolean)
     const stocks = [...selectedStocks.map(s => s.symbol), ...manualStocks]
     if (stocks.length === 0) { toast('请至少输入一只股票', false); return }
-    const strategy = strategyType === 'simple'
-      ? { stocks, entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules }, positionSizing: { method: 'equal_weight', value: 10 } }
-      : { stocks, code: advancedCode }
+    if (!runStrategyId) { toast('请先选择策略', false); return }
+    const savedStrat = strategies.find(s => s.id === runStrategyId)
+    if (!savedStrat) { toast('策略未找到', false); return }
+    const strategyData = JSON.parse(savedStrat.strategy_json)
+    const strategy = { ...strategyData, stocks }
     const config = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.0003, slippagePct: 0.001 }
     setRunning(true); setProgress(null); setSseLogs([]); setDoneMsg(null); setErrorMsg(null)
-    const resp = await startBacktest({ name: strategyName || `${strategyType === 'simple' ? '简单' : '高级'}策略`, strategyType, strategy, config })
+    const resp = await startBacktest({ name: savedStrat.name, strategyType: savedStrat.strategy_type, strategy, config })
     if (!resp.ok) { setErrorMsg(`HTTP ${resp.status}`); setRunning(false); return }
     if (esRef.current) { esRef.current.close(); esRef.current = null }
     const es = new EventSource(`${window.location.origin}/investory/api/backtest/stream`)
@@ -272,7 +276,7 @@ function BacktestSection() {
       try { setEquityCurve(JSON.parse(r.equity_curve_json)) } catch { setEquityCurve(null) }
       try { setMetrics(JSON.parse(r.metrics_json)) } catch { setMetrics(null) }
       try { setTradeLog(JSON.parse(r.trade_log_json)) } catch { setTradeLog(null) }
-      setShowBuilder(false)
+      setView('list')
     }).catch(() => {})
   }
 
@@ -288,17 +292,67 @@ function BacktestSection() {
     if (target === 'entry') setEntryRules([...entryRules, rule]); else setExitRules([...exitRules, rule])
   }
 
+  // ── Load strategies ────────────────────────────────────────────────
+  const loadStrategies = useCallback(() => {
+    fetch('/investory/api/backtest/strategies', { credentials: 'include' })
+      .then(r => r.json()).then(setStrategies).catch(() => {})
+  }, [])
+  useEffect(() => { loadStrategies() }, [loadStrategies])
+
+  // ── Save strategy ───────────────────────────────────────────────────
+  async function saveStrategy() {
+    const strategy = strategyType === 'simple'
+      ? { entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules }, positionSizing: { method: 'equal_weight', value: 10 } }
+      : { code: advancedCode }
+    const body: any = { name: strategyName || `${strategyType === 'simple' ? '简单' : '高级'}策略`, strategyType, strategy }
+    if (editId) body.id = editId
+    const resp = await fetch('/investory/api/backtest/strategies', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const data = await resp.json()
+    if (data.error) { toast(data.error, false); return }
+    toast(editId ? '策略已更新' : '策略已保存', true)
+    setView('list'); setEditId(null)
+    loadStrategies()
+  }
+
+  async function deleteStrategy(id: number) {
+    if (!confirm('确认删除此策略？')) return
+    await fetch(`/investory/api/backtest/strategies/${id}`, { method: 'DELETE', credentials: 'include' })
+    loadStrategies()
+  }
+
+  function editStrategy(s: any) {
+    setEditId(s.id); setStrategyName(s.name); setStrategyType(s.strategy_type)
+    try {
+      const parsed = JSON.parse(s.strategy_json)
+      if (s.strategy_type === 'advanced') { setAdvancedCode(parsed.code || '') }
+      else {
+        setEntryLogic(parsed.entry?.logic || 'all')
+        setEntryRules(parsed.entry?.rules || [])
+        setExitRules(parsed.exit?.rules || [])
+      }
+    } catch { setAdvancedCode('') }
+    setView('builder')
+  }
+
+  function startNewStrategy() { setEditId(null); setStrategyName(''); setEntryRules([]); setExitRules([]); setStockInput(''); setSelectedStocks([]); setAdvancedCode(`def decide(ctx):\n    if not ctx['has_position']:\n        return {'action': 'BUY', 'quantity': 100}\n    return {'action': 'HOLD', 'quantity': 0}`); setView('builder') }
+
   return (<>
     <div className="flex items-center gap-2">
-      <button onClick={() => setShowBuilder(!showBuilder)}
-        className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-xl text-xs font-medium transition-colors ${showBuilder ? 'bg-slate-200 text-slate-700' : 'bg-slate-900 text-white hover:bg-slate-800'}`}>
-        <FlaskConical className="w-3.5 h-3.5" />{showBuilder ? '关闭' : '新建回测'}
+      <button onClick={startNewStrategy}
+        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
+        <FlaskConical className="w-3.5 h-3.5" />新建策略
       </button>
+      {strategies.length > 0 && (
+        <button onClick={() => setView('run')}
+          className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-xl text-xs font-medium transition-colors border ${view === 'run' ? 'bg-slate-200 text-slate-700 border-slate-300' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+          <Play className="w-3.5 h-3.5" />开始回测
+        </button>
+      )}
     </div>
 
-    {/* Builder */}
+    {/* ── Strategy Builder ────────────────────────────────────────── */}
     <AnimatePresence>
-      {showBuilder && (
+      {view === 'builder' && (
         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }}>
           <Card>
             <CardHeader><CardTitle className="text-sm">策略配置</CardTitle></CardHeader>
@@ -406,8 +460,97 @@ function BacktestSection() {
                 <div><label className="text-[10px] text-slate-500">结束日期</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
                 <div><label className="text-[10px] text-slate-500">初始资金</label><input type="number" value={initialCapital} onChange={e => setInitialCapital(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
                 <div><label className="text-[10px] text-slate-500">基准货币</label><select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} className="w-full h-8 px-1 rounded-lg border border-slate-200 text-xs"><option value="CNY">CNY 人民币</option><option value="HKD">HKD 港币</option><option value="USD">USD 美元</option></select></div>
-                <div className="flex items-end">
-                  <button onClick={handleStart} disabled={running} className="w-full h-8 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 disabled:opacity-40 inline-flex items-center justify-center gap-1"><Play className="w-3 h-3" />开始回测</button>
+                <div className="flex items-end gap-2">
+                  <button onClick={() => { setView('list'); setEditId(null) }} className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">取消</button>
+                  <button onClick={saveStrategy} className="flex-1 h-8 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 inline-flex items-center justify-center gap-1">保存策略</button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      )}
+    </AnimatePresence>
+
+    {/* ── Strategy List ──────────────────────────────────────────── */}
+    {view === 'list' && (
+      loading ? (
+        <div className="flex items-center justify-center h-32"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /></div>
+      ) : strategies.length === 0 ? (
+        <div className="text-center py-12 text-slate-400 text-sm">暂无策略，点击"新建策略"开始</div>
+      ) : (
+        <div className="space-y-2">
+          {strategies.map((s: any) => (
+            <Card key={s.id} className="hover:border-blue-200 transition-colors">
+              <CardContent className="flex items-center justify-between py-3">
+                <div className="flex items-center gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-slate-900">{s.name}</div>
+                    <div className="text-xs text-slate-400">{s.strategy_type === 'advanced' ? '高级模式' : '简单模式'} · {s.updated_at?.slice(0, 10)}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button onClick={() => editStrategy(s)}
+                    className="h-7 px-2.5 rounded-md text-xs text-slate-600 hover:bg-slate-100">编辑</button>
+                  <button onClick={() => deleteStrategy(s.id)}
+                    className="h-7 px-2.5 rounded-md text-xs text-red-500 hover:bg-red-50"><Trash2 className="w-3 h-3" /></button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )
+    )}
+
+    {/* ── Run Backtest ────────────────────────────────────────────── */}
+    <AnimatePresence>
+      {view === 'run' && (
+        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }}>
+          <Card>
+            <CardHeader><CardTitle className="text-sm">配置回测</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <div>
+                <label className="text-xs font-medium text-slate-600 mb-1 block">选择策略</label>
+                <select value={runStrategyId || ''} onChange={e => setRunStrategyId(Number(e.target.value) || null)}
+                  className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs">
+                  <option value="">请选择...</option>
+                  {strategies.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.strategy_type === 'advanced' ? '高级' : '简单'})</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-slate-600">测试股票</label>
+                  <button type="button" onClick={async () => {
+                    try { const data = await getHoldings(); const snaps = (data as any).snapshots || []; for (const s of snaps) { const sym = s.stockSymbol?.includes('.') ? s.stockSymbol : `${s.stockSymbol}.${s.market}`; if (!selectedStocks.find(x => x.symbol === sym)) setSelectedStocks(prev => [...prev, { symbol: sym, name: s.stockName || sym }]) } } catch {}
+                  }} className="text-[10px] text-blue-600 hover:text-blue-800">导入持仓</button>
+                </div>
+                {selectedStocks.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {selectedStocks.map(s => (<span key={s.symbol} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-xs text-blue-700">{s.name} ({s.symbol})<button onClick={() => setSelectedStocks(selectedStocks.filter(x => x.symbol !== s.symbol))} className="text-blue-400 hover:text-red-500">×</button></span>))}
+                  </div>
+                )}
+                <div className="relative">
+                  <input type="text" value={stockInput} onChange={e => { setStockInput(e.target.value); if (e.target.value.length >= 1) searchStocks(e.target.value).then(setStockSearchResults).catch(() => {}) }}
+                    onFocus={() => { if (stockInput.length >= 1) searchStocks(stockInput).then(setStockSearchResults).catch(() => {}) }}
+                    onBlur={() => setTimeout(() => setStockSearchResults([]), 200)} placeholder="搜索或输入代码..." className="w-full h-8 px-3 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
+                  {stockSearchResults.length > 0 && (
+                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 max-h-48 overflow-auto">
+                      {stockSearchResults.map((r: any) => {
+                        const sym = displaySymbol(r.symbol, r.market)
+                        return <button key={r.id} type="button" onMouseDown={e => e.preventDefault()} onClick={() => { if (!selectedStocks.find(s => s.symbol === sym)) setSelectedStocks([...selectedStocks, { symbol: sym, name: r.name }]); setStockInput(''); setStockSearchResults([]) }}
+                          className="w-full flex items-center justify-between px-3 py-2 hover:bg-slate-50 text-left text-xs"><span className="font-medium text-slate-700">{r.name}</span><span className="text-slate-400">{sym}</span></button>
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-4 gap-3">
+                <div><label className="text-[10px] text-slate-500">起始日期</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
+                <div><label className="text-[10px] text-slate-500">结束日期</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
+                <div><label className="text-[10px] text-slate-500">初始资金</label><input type="number" value={initialCapital} onChange={e => setInitialCapital(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
+                <div className="flex items-end gap-2">
+                  <button onClick={() => setView('list')} className="h-8 px-2 rounded-lg border border-slate-200 text-xs text-slate-500">取消</button>
+                  <button onClick={handleStart} disabled={running || !runStrategyId}
+                    className="flex-1 h-8 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 disabled:opacity-40 inline-flex items-center justify-center gap-1"><Play className="w-3 h-3" />开始回测</button>
                 </div>
               </div>
             </CardContent>
