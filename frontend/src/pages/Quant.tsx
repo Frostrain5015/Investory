@@ -63,7 +63,7 @@ function RiskSection() {
   const loadStyle = useCallback(() => {
     setLoading(true)
     fetch('/investory/api/quant/portfolio-style', { credentials: 'include' })
-      .then(r => r.json()).then(d => { if (!d.error) setStyleData(d) })
+      .then(r => r.json()).then(d => { if (!d.error) setStyleData(d); else setStyleData({ _error: d.error }) })
       .catch(() => {}).finally(() => setLoading(false))
   }, [])
 
@@ -144,6 +144,7 @@ function RiskSection() {
 
     {loading && <div className="flex flex-col items-center justify-center h-48 gap-2"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-xs text-slate-400">正在分析组合风格...</span></div>}
     {!loading && !styleData && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">暂无数据</p></CardContent></Card>}
+    {!loading && styleData?._error && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">{styleData._error === 'no holdings' ? '当前组合没有持仓数据，请先添加交易' : styleData._error}</p></CardContent></Card>}
   </>)
 }
 
@@ -620,9 +621,9 @@ function BacktestSection() {
         <CardHeader><CardTitle className="text-sm flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5" />回测历史</CardTitle></CardHeader>
         <CardContent className="p-0"><table className="w-full text-xs"><thead><tr className="border-b border-slate-100"><th className="text-left font-medium text-slate-500 px-4 py-2">名称</th><th className="text-left font-medium text-slate-500 px-3 py-2">类型</th><th className="text-left font-medium text-slate-500 px-3 py-2">区间</th><th className="text-left font-medium text-slate-500 px-3 py-2">时间</th><th className="text-right font-medium text-slate-500 px-4 py-2"></th></tr></thead><tbody>{results.map(r => (<tr key={r.id} className={`border-b border-slate-50 hover:bg-slate-50/50 cursor-pointer ${r.id === selectedId ? 'bg-blue-50/50' : ''}`} onClick={() => selectResult(r.id)}><td className="px-4 py-2 font-medium text-slate-700">{r.name}</td><td className="px-3 py-2"><span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">{r.strategy_type === 'advanced' ? '高级' : '简单'}</span></td><td className="px-3 py-2 text-slate-400">{r.start_date} ~ {r.end_date}</td><td className="px-3 py-2 text-slate-400">{r.created_at?.slice(0, 10)}</td><td className="px-4 py-2 text-right"><button onClick={e => { e.stopPropagation(); handleDelete(r.id) }} className="text-slate-400 hover:text-red-500"><Trash2 className="w-3 h-3" /></button></td></tr>))}</tbody></table></CardContent>
       </Card>
-    ) : (
-      <div className="text-center py-12 text-slate-400 text-sm">暂无回测记录，点击"新建回测"开始</div>
-    )}
+    ) : results.length === 0 && strategies.length > 0 ? (
+      <div className="text-center py-12 text-slate-400 text-sm">暂无回测记录</div>
+    ) : null}
   </>)
 }
 

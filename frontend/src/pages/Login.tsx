@@ -61,7 +61,7 @@ export default function Login() {
             <TrendingUp className="w-6 h-6 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Investory</h1>
-          <p className="text-sm text-slate-500 mt-1">登录以管理你的投资组合</p>
+          <p className="text-sm text-slate-500 mt-1">与时间为友 与价值同行</p>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6 space-y-4">
