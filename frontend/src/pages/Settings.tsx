@@ -179,8 +179,8 @@ export default function Settings() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" />观澜 AI 助手</CardTitle>
-            <span className="text-[10px] text-slate-400">默认：阿里云百炼</span>
+            <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" />观澜 AI</CardTitle>
+            <span className="text-[10px] text-slate-400">默认服务商：阿里云百炼</span>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -194,7 +194,7 @@ export default function Settings() {
             ))}
           </select>
           <input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)}
-            placeholder={aiHasKey ? '已保存自定义Key（留空不修改）' : '自定义 API Key（留空则使用系统默认）'}
+            placeholder={aiHasKey ? '已保存自定义Key' : '自定义 API Key'}
             className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
           {aiProvider === 'custom' && (
             <input type="text" value={aiBaseUrl} onChange={e => setAiBaseUrl(e.target.value)}
