@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react'
 import { useAuth } from '@/hooks/use-auth'
+import { useToast } from '@/components/Toast'
 import { useSettings, type BaseCurrency } from '@/hooks/use-settings'
 import { useTheme } from '@/hooks/use-theme'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,6 +10,7 @@ const CURRENCY_LABELS: Record<BaseCurrency, string> = { CNY: '人民币 (¥)', H
 
 export default function Settings() {
   const { username, logout } = useAuth()
+  const toast = useToast()
   const { colorScheme, toggleColorScheme, positiveClass, negativeClass, baseCurrency, setBaseCurrency, showRiskMetrics, toggleRiskMetrics } = useSettings()
   const { pref, setPref } = useTheme()
   const fileRef = useRef<HTMLInputElement>(null)
@@ -45,9 +47,9 @@ export default function Settings() {
     setDeleting(true)
     try {
       const res = await fetch('/investory/api/account', { method: 'DELETE', credentials: 'include' })
-      if (res.ok) { alert('账户已注销'); logout() }
-      else alert('注销失败')
-    } catch { alert('网络错误') }
+      if (res.ok) { toast('账户已注销', true); setTimeout(logout, 1500) }
+      else toast('注销失败', false)
+    } catch { toast('网络错误', false) }
     setDeleting(false)
   }
 

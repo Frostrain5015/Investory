@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
@@ -12,6 +12,19 @@ import { Search, X, Plus, GripVertical } from 'lucide-react'
 
 interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number; changeToday?: number; changePctToday?: number; priceTimestamp?: string }
 
+interface MarketGroup { key: string; label: string; flag: string; items: WatchItem[] }
+
+function marketToGroup(market: string): string {
+  if (market === 'SH' || market === 'SZ') return 'A'
+  return market
+}
+
+const GROUP_DEFS: Omit<MarketGroup, 'items'>[] = [
+  { key: 'A',  label: '中国A股', flag: 'https://flagcdn.com/cn.svg' },
+  { key: 'HK', label: '香港股市', flag: 'https://flagcdn.com/hk.svg' },
+  { key: 'US', label: '美国股市', flag: 'https://flagcdn.com/us.svg' },
+]
+
 export default function Holdings() {
   const { portfolioId } = useAuth()
   const { positiveClass, negativeClass, showRiskMetrics } = useSettings()
@@ -22,6 +35,7 @@ export default function Holdings() {
   const [showAdd, setShowAdd] = useState(false)
   const [managing, setManaging] = useState(false)
   const [sparkData, setSparkData] = useState<Record<string, number[]>>({})
+  const [dragKey, setDragKey] = useState<string | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropIdx, setDropIdx] = useState<number | null>(null)
   const [metrics, setMetrics] = useState<Record<string, StockMetrics>>({})
@@ -41,22 +55,31 @@ export default function Holdings() {
     getHoldingsMetrics().then(r => setMetrics(r.metrics)).catch(() => {})
   }, [showRiskMetrics, items.length])
 
-  function handleDragStart(idx: number) {
+  function handleDragStart(groupKey: string, idx: number) {
+    setDragKey(groupKey)
     setDragIdx(idx)
   }
-  function handleDragOver(e: React.DragEvent, idx: number) {
+  function handleDragOver(e: React.DragEvent, groupKey: string, idx: number) {
     e.preventDefault()
+    if (dragKey !== groupKey) return // block cross-market drop
     setDropIdx(idx)
   }
-  function handleDrop(idx: number) {
-    if (dragIdx == null || dragIdx === idx) { setDragIdx(null); setDropIdx(null); return }
+  function handleDrop(group: MarketGroup, idx: number) {
+    if (dragIdx == null || dragIdx === idx || dragKey !== group.key) {
+      setDragKey(null); setDragIdx(null); setDropIdx(null); return
+    }
     const next = [...items]
-    const [moved] = next.splice(dragIdx, 1)
-    next.splice(idx, 0, moved)
+    // Find global indices within the full items array
+    const groupStart = groups.findIndex(g => g.key === group.key)
+    const globalStart = groups.slice(0, groupStart).reduce((s, g) => s + g.items.length, 0)
+    const from = globalStart + dragIdx
+    const to = globalStart + idx
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
     setItems(next)
+    setDragKey(null)
     setDragIdx(null)
     setDropIdx(null)
-    // Persist new order
     const body = next.map((item, i) => ({ id: item.id, sortOrder: i }))
     fetch('/investory/api/watchlist/reorder', {
       method: 'PUT', credentials: 'include',
@@ -120,6 +143,13 @@ export default function Holdings() {
     load()
   }
 
+  const groups = useMemo<MarketGroup[]>(() => {
+    return GROUP_DEFS.map(def => ({
+      ...def,
+      items: items.filter(item => marketToGroup(item.market) === def.key),
+    })).filter(g => g.items.length > 0)
+  }, [items])
+
   if (loading) {
     return <div className="flex flex-col items-center justify-center gap-3 h-96">
       <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
@@ -172,102 +202,111 @@ export default function Holdings() {
         </div>
       </div>
 
-      <Card>
-        <CardContent className="p-0">
-          {items.length === 0 ? (
-            <div className="py-12 text-center text-slate-500 text-sm">暂无数据，请添加自选或录入交易</div>
-          ) : (
-            <div className="overflow-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100">
-                    <th className="text-left text-xs font-medium text-slate-500 px-6 py-3">股票</th>
-                    <th className="text-center text-xs font-medium text-slate-500 px-1 py-3 w-[68px]">1M</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">现价</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">今日涨跌</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">涨跌幅</th>
-                    {showRiskMetrics && <>
-                      <th className="text-center text-xs font-medium text-slate-500 px-3 py-3">分位数</th>
-                      <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">Beta</th>
-                      <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">波动率</th>
-                    </>}
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3 w-10"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((item, idx) => {
-                    const valid = item.price != null && Number(item.price) !== 0
-                    const chg = Number(item.changeToday ?? 0)
-                    const chgPct = Number(item.changePctToday ?? 0)
-                    const up = chg >= 0
-                    return (
-                      <tr key={`${item.stock_id}-${item.id}`}
-                        draggable={managing}
-                        onDragStart={() => handleDragStart(idx)}
-                        onDragOver={(e) => handleDragOver(e, idx)}
-                        onDrop={() => handleDrop(idx)}
-                        onDragEnd={() => { setDragIdx(null); setDropIdx(null) }}
-                        className={`border-b border-slate-50 hover:bg-slate-50/50 transition-colors ${managing ? 'cursor-grab active:cursor-grabbing' : ''} ${dropIdx === idx && dragIdx !== idx ? 'border-t-2 border-t-slate-900' : ''}`}>
-                        <td className="px-6 py-3">
-                          <div className="flex items-center gap-2">
-                            {managing && <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
-                            <Link to={`/stock?symbol=${encodeURIComponent(item.symbol)}`}
-                              className="font-medium text-slate-900 hover:text-blue-600">{item.name}</Link>
-                          </div>
-                          <div className="text-xs text-slate-400">{displaySymbol(item.symbol, item.market)}</div>
-                        </td>
-                        <td className="px-1 py-3 flex justify-center">
-                          {sparkData[item.symbol]?.length > 0
-                            ? <Sparkline data={sparkData[item.symbol]} />
-                            : <div className="w-[60px] h-6 bg-slate-50 rounded" />}
-                        </td>
-                        <td className="px-3 py-3 text-right tabular-nums">
-                          <div>{valid ? Number(item.price).toFixed(2) : '—'}</div>
-                          {item.priceTimestamp && <div className="text-[10px] text-slate-400">{fmtPriceTs(item.priceTimestamp)}</div>}
-                        </td>
-                        <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
-                          {valid ? `${up ? '+' : ''}${chg.toFixed(2)}` : '—'}
-                        </td>
-                        <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
-                          {valid ? `${up ? '+' : ''}${chgPct.toFixed(2)}%` : '—'}
-                        </td>
-                        {showRiskMetrics && (() => {
-                          const m = metrics[String(item.stock_id)]
-                          const pct = m?.percentile_5y ?? null
-                          const badgeColor = pct == null
-                            ? 'bg-slate-100 text-slate-400'
-                            : pct < 30 ? 'bg-blue-100 text-blue-700'
-                            : pct > 70 ? 'bg-red-100 text-red-600'
-                            : 'bg-slate-100 text-slate-600'
-                          return <>
-                            <td className="px-3 py-3 text-center">
-                              {pct != null
-                                ? <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${badgeColor}`}>{pct.toFixed(0)}%</span>
-                                : <span className="text-slate-300 text-xs">—</span>}
-                            </td>
-                            <td className="px-3 py-3 text-right tabular-nums text-xs text-slate-700">
-                              {m?.beta_1y != null ? m.beta_1y.toFixed(2) : <span className="text-slate-300">—</span>}
-                            </td>
-                            <td className="px-3 py-3 text-right tabular-nums text-xs text-slate-700">
-                              {m?.volatility_1y != null ? `${m.volatility_1y.toFixed(1)}%` : <span className="text-slate-300">—</span>}
-                            </td>
-                          </>
-                        })()}
-                        <td className="px-3 py-3 text-right">
-                          {managing && (
-                            <button onClick={() => removeWatch(item.stock_id)}
-                              className="text-slate-400 hover:text-red-500 transition-colors"><X className="w-3.5 h-3.5" /></button>
-                          )}
-                        </td>
+      {items.length === 0 ? (
+        <div className="py-12 text-center text-slate-500 text-sm">暂无数据</div>
+      ) : (
+        <div className="space-y-6">
+          {groups.map(group => (
+            <Card key={group.key}>
+              <div className="flex items-center gap-2 px-6 pt-4 pb-2">
+                <img src={group.flag} alt="" className="w-5 h-3.5 rounded-sm shadow-sm" />
+                <h3 className="text-sm font-bold text-slate-700">{group.label}</h3>
+                <span className="text-xs text-slate-400">{group.items.length}只</span>
+              </div>
+              <CardContent className="p-0">
+                <div className="overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="text-left text-xs font-medium text-slate-500 px-6 py-2">股票</th>
+                        <th className="text-center text-xs font-medium text-slate-500 px-1 py-2 w-[68px]">1M</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">现价</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">今日涨跌</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">涨跌幅</th>
+                        {showRiskMetrics && <>
+                          <th className="text-center text-xs font-medium text-slate-500 px-3 py-2">分位数</th>
+                          <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">Beta</th>
+                          <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">波动率</th>
+                        </>}
+                        <th className="text-right text-xs font-medium text-slate-500 px-3 py-2 w-10"></th>
                       </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+                    </thead>
+                    <tbody>
+                      {group.items.map((item, idx) => {
+                        const valid = item.price != null && Number(item.price) !== 0
+                        const chg = Number(item.changeToday ?? 0)
+                        const chgPct = Number(item.changePctToday ?? 0)
+                        const up = chg >= 0
+                        return (
+                          <tr key={`${item.stock_id}-${item.id}`}
+                            draggable={managing}
+                            onDragStart={() => handleDragStart(group.key, idx)}
+                            onDragOver={(e) => handleDragOver(e, group.key, idx)}
+                            onDrop={() => handleDrop(group, idx)}
+                            onDragEnd={() => { setDragKey(null); setDragIdx(null); setDropIdx(null) }}
+                            className={`border-b border-slate-50 hover:bg-slate-50/50 transition-colors ${managing ? 'cursor-grab active:cursor-grabbing' : ''} ${dropIdx === idx && dragIdx !== idx && dragKey === group.key ? 'border-t-2 border-t-slate-900' : ''}`}>
+                            <td className="px-6 py-3">
+                              <div className="flex items-center gap-2">
+                                {managing && <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
+                                <Link to={`/stock?symbol=${encodeURIComponent(item.symbol)}`}
+                                  className="font-medium text-slate-900 hover:text-blue-600">{item.name}</Link>
+                              </div>
+                              <div className="text-xs text-slate-400">{displaySymbol(item.symbol, item.market)}</div>
+                            </td>
+                            <td className="px-1 py-3 flex justify-center">
+                              {sparkData[item.symbol]?.length > 0
+                                ? <Sparkline data={sparkData[item.symbol]} />
+                                : <div className="w-[60px] h-6 bg-slate-50 rounded" />}
+                            </td>
+                            <td className="px-3 py-3 text-right tabular-nums">
+                              <div>{valid ? Number(item.price).toFixed(2) : '—'}</div>
+                              {item.priceTimestamp && <div className="text-[10px] text-slate-400">{fmtPriceTs(item.priceTimestamp)}</div>}
+                            </td>
+                            <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
+                              {valid ? `${up ? '+' : ''}${chg.toFixed(2)}` : '—'}
+                            </td>
+                            <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
+                              {valid ? `${up ? '+' : ''}${chgPct.toFixed(2)}%` : '—'}
+                            </td>
+                            {showRiskMetrics && (() => {
+                              const m = metrics[String(item.stock_id)]
+                              const pct = m?.percentile_5y ?? null
+                              const badgeColor = pct == null
+                                ? 'bg-slate-100 text-slate-400'
+                                : pct < 30 ? 'bg-blue-100 text-blue-700'
+                                : pct > 70 ? 'bg-red-100 text-red-600'
+                                : 'bg-slate-100 text-slate-600'
+                              return <>
+                                <td className="px-3 py-3 text-center">
+                                  {pct != null
+                                    ? <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${badgeColor}`}>{pct.toFixed(0)}%</span>
+                                    : <span className="text-slate-300 text-xs">—</span>}
+                                </td>
+                                <td className="px-3 py-3 text-right tabular-nums text-xs text-slate-700">
+                                  {m?.beta_1y != null ? m.beta_1y.toFixed(2) : <span className="text-slate-300">—</span>}
+                                </td>
+                                <td className="px-3 py-3 text-right tabular-nums text-xs text-slate-700">
+                                  {m?.volatility_1y != null ? `${m.volatility_1y.toFixed(1)}%` : <span className="text-slate-300">—</span>}
+                                </td>
+                              </>
+                            })()}
+                            <td className="px-3 py-3 text-right">
+                              {managing && (
+                                <button onClick={() => removeWatch(item.stock_id)}
+                                  className="text-slate-400 hover:text-red-500 transition-colors"><X className="w-3.5 h-3.5" /></button>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

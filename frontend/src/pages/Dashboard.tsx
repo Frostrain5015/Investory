@@ -9,6 +9,7 @@ import { useSettings } from '@/hooks/use-settings'
 import { chartAPI } from '@/services/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { AllocationItem, CumulativeReturnItem } from '@/types'
+import { ArrowLeftRight } from 'lucide-react'
 import {
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
   AreaChart, Area, Tooltip, ResponsiveContainer
@@ -128,7 +129,7 @@ export default function Dashboard() {
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <Link to="/portfolio" className="text-xl font-bold text-slate-900 hover:text-blue-600 transition-colors tracking-tight">{portfolioName || '总览'}</Link>
+        <Link to="/portfolio" className="text-xl font-bold text-slate-900 hover:text-blue-600 transition-colors tracking-tight inline-flex items-center gap-1.5">{portfolioName || '总览'}<ArrowLeftRight className="w-4 h-4 text-slate-300" /></Link>
         <div className="flex items-center gap-2">
           {lastRefresh && (
             <span className="text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>
@@ -177,7 +178,10 @@ export default function Dashboard() {
         </Card>
         <Card className="cursor-pointer select-none" onClick={() => setCashCardMode(cashCardMode === 'mv' ? 'cash' : 'mv')}>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">{cashCardMode === 'mv' ? '总市值' : '现金余额'}</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-slate-500 font-medium">{cashCardMode === 'mv' ? '总市值' : '现金余额'}</p>
+              <ArrowLeftRight className="w-3 h-3 text-slate-300" />
+            </div>
             {cashCardMode === 'mv' ? (<>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
               {formatCurrency(animMarketValue)}
@@ -206,7 +210,10 @@ export default function Dashboard() {
         </Card>
         <Card className="cursor-pointer select-none" onClick={() => setPnlCardMode(pnlCardMode === 'today' ? 'holding' : 'today')}>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">{pnlCardMode === 'today' ? '今日盈亏' : '持仓盈亏'}</p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs text-slate-500 font-medium">{pnlCardMode === 'today' ? '今日盈亏' : '持仓盈亏'}</p>
+              <ArrowLeftRight className="w-3 h-3 text-slate-300" />
+            </div>
             {pnlCardMode === 'today' ? (<>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.todayPnl >= 0 ? positiveClass : negativeClass}`}>
               {animTodayPnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(animTodayPnl))}

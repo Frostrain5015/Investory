@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAuth } from '@/hooks/use-auth'
+import { useToast } from '@/components/Toast'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Database, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock, Square, Pause, PlayCircle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -72,6 +73,7 @@ function useCrawlStore() {
 
 export default function Admin() {
   const { isAdmin } = useAuth()
+  const toast = useToast()
   const [status, setStatus] = useState<DbStatus | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
   const cs = useCrawlStore()
@@ -315,7 +317,7 @@ export default function Admin() {
     if (!confirm(`确认注销用户 "${username}" 及其所有数据？此操作不可撤销。`)) return
     const res = await fetch(`/investory/api/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
     const data = await res.json()
-    if (data.error) { alert(data.error); return }
+    if (data.error) { toast(data.error, false); return }
     fetchUsers()
   }
 
@@ -329,12 +331,12 @@ export default function Admin() {
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">管理后台</h2>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs">
-            <input type="text" value={dateStart} onChange={e => { const v = e.target.value.replace(/[^0-9-]/g, '').slice(0, 10); setDateStart(v) }}
+            <input type="text" value={dateStart} onChange={e => { let v = e.target.value.replace(/[^0-9]/g, ''); if (v.length > 4) v = v.slice(0, 4) + '-' + v.slice(4); if (v.length > 7) v = v.slice(0, 7) + '-' + v.slice(7); v = v.slice(0, 10); setDateStart(v) }}
               onBlur={e => { if (!/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) setDateStart(daysAgoStr(10)) }}
               placeholder="YYY-MM-DD" style={{ width: 110 }}
               className="h-8 rounded-lg border border-slate-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10 font-mono" />
             <span className="text-slate-400">—</span>
-            <input type="text" value={dateEnd} onChange={e => { const v = e.target.value.replace(/[^0-9-]/g, '').slice(0, 10); setDateEnd(v) }}
+            <input type="text" value={dateEnd} onChange={e => { let v = e.target.value.replace(/[^0-9]/g, ''); if (v.length > 4) v = v.slice(0, 4) + '-' + v.slice(4); if (v.length > 7) v = v.slice(0, 7) + '-' + v.slice(7); v = v.slice(0, 10); setDateEnd(v) }}
               onBlur={e => { if (!/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) setDateEnd(todayStr()) }}
               placeholder="YYY-MM-DD" style={{ width: 110 }}
               className="h-8 rounded-lg border border-slate-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10 font-mono" />

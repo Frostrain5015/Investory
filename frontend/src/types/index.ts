@@ -218,3 +218,86 @@ export interface QuantData {
 export interface HoldingsMetricsResponse {
   metrics: Record<string, StockMetrics>
 }
+
+export interface SseEvent { event: string; msg?: string; current?: number; total?: number; pct?: number; name?: string; market?: string; resultId?: number }
+
+// ── Backtest types ───────────────────────────────────────────────────────
+
+export interface BacktestConfig {
+  startDate: string
+  endDate: string
+  initialCapital: number
+  commissionPct: number
+  slippagePct: number
+  minCommission?: number
+}
+
+export interface SimpleRule {
+  indicator: string
+  params: Record<string, number>
+  condition?: string
+  threshold?: number
+  direction?: string
+}
+
+export interface SimpleStrategy {
+  stocks: string[]
+  entry: { logic: 'all' | 'any'; rules: SimpleRule[] }
+  exit: {
+    stopLossPct?: number
+    takeProfitPct?: number
+    trailingStopPct?: number
+    rules: SimpleRule[]
+  }
+  positionSizing: { method: 'equal_weight' | 'fixed_pct'; value: number }
+}
+
+export interface BacktestMetrics {
+  totalReturnPct: number
+  annualReturnPct: number
+  sharpeRatio: number
+  maxDrawdownPct: number
+  winRatePct: number
+  totalTrades: number
+  avgProfitPct: number
+  avgLossPct: number
+  profitFactor: number
+}
+
+export interface TradeLogEntry {
+  date: string
+  symbol: string
+  action: 'BUY' | 'SELL'
+  quantity: number
+  price: number
+  pnl: number | null
+  pnlPct: number | null
+  reason: string
+}
+
+export interface EquityPoint {
+  date: string
+  equity: number
+  cash: number
+}
+
+export interface BacktestResult {
+  id: number
+  name: string
+  strategy_type: string
+  strategy_json: string
+  config_json: string
+  start_date: string
+  end_date: string
+  equity_curve_json: string
+  metrics_json: string
+  trade_log_json: string
+  created_at: string
+}
+
+export interface IndicatorDef {
+  name: string
+  label: string
+  params: { name: string; label: string; type: 'number'; default: number; min?: number; max?: number }[]
+  conditions?: { value: string; label: string }[]
+}

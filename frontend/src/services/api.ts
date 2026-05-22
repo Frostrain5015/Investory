@@ -3,7 +3,7 @@ import type {
   TransactionsResponse, DividendsResponse, StockDetailResponse,
   AllocationItem, PnlCalendarItem, CumulativeReturnItem,
   StockSearchItem, PriceData, Portfolio,
-  HoldingsMetricsResponse, QuantData,
+  HoldingsMetricsResponse, QuantData, BacktestResult,
 } from '@/types'
 
 const BASE = '/investory'
@@ -183,4 +183,36 @@ export function getHoldingsMetrics(): Promise<HoldingsMetricsResponse> {
 
 export function getQuantData(): Promise<QuantData> {
   return request<QuantData>('/api/quant/portfolio-scenario')
+}
+
+// ── Backtest ─────────────────────────────────────────────────────────────
+
+export async function startBacktest(data: {
+  name: string
+  strategyType: string
+  strategy: any
+  config: any
+}): Promise<Response> {
+  return fetch(`${BASE}/api/backtest/start`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export function getBacktestHistory(): Promise<BacktestResult[]> {
+  return request<BacktestResult[]>('/api/backtest/history')
+}
+
+export function getBacktest(id: number): Promise<BacktestResult> {
+  return request<BacktestResult>(`/api/backtest/${id}`)
+}
+
+export function deleteBacktest(id: number): Promise<{ status: string }> {
+  return request<{ status: string }>(`/api/backtest/${id}`, { method: 'DELETE' })
+}
+
+export async function getBacktestStream(): Promise<Response> {
+  return fetch(`${BASE}/api/backtest/stream`, { credentials: 'include' })
 }
