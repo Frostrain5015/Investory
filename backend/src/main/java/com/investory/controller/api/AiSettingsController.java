@@ -70,15 +70,4 @@ public class AiSettingsController {
         return Map.of("status", "ok");
     }
 
-    @PostMapping("/key")
-    public Map<String, Object> getKey(HttpServletRequest req) {
-        long userId = getUserId(req);
-        if (userId == 0) return Map.of("error", "not authenticated");
-
-        List<Map<String, Object>> rows = jdbc.queryForList(
-            "SELECT api_key FROM ai_settings WHERE user_id = ?", userId);
-        if (rows.isEmpty()) return Map.of("apiKey", "");
-
-        return Map.of("apiKey", rows.get(0).get("api_key"));
-    }
 }

@@ -116,7 +116,6 @@ public class AiApiController {
                 cmd.add(pythonExecutable); cmd.add("-u"); cmd.add(script.getAbsolutePath());
                 cmd.add("--provider"); cmd.add(provider);
                 cmd.add("--model"); cmd.add(model);
-                cmd.add("--api-key"); cmd.add(key);
                 cmd.add("--portfolio-id"); cmd.add(String.valueOf(pid));
                 cmd.add("--user-id"); cmd.add(String.valueOf(uid));
                 cmd.add("--input"); cmd.add(tmpInput.toString());
@@ -126,6 +125,7 @@ public class AiApiController {
                 pb.directory(scriptDir);
                 pb.redirectErrorStream(true);
                 pb.environment().put("PYTHONUNBUFFERED", "1");
+                pb.environment().put("AI_API_KEY", key);  // env var, not CLI arg (ps aux invisible)
 
                 Process p = pb.start();
                 try (BufferedReader reader = new BufferedReader(

@@ -851,7 +851,7 @@ def main():
     parser = argparse.ArgumentParser(description="Investory 观澜 AI Agent")
     parser.add_argument("--provider", default="openai", choices=["openai", "anthropic", "openai_compat"])
     parser.add_argument("--model", default="gpt-4o-mini")
-    parser.add_argument("--api-key", required=True)
+    parser.add_argument("--api-key", default=os.environ.get("AI_API_KEY", ""))
     parser.add_argument("--api-base", default="")
     parser.add_argument("--deep-think", action="store_true")
     parser.add_argument("--portfolio-id", type=int, default=0)

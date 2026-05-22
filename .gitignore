@@ -13,3 +13,4 @@ CLAUDE.md
 .vscode/
 __pycache__/
 script/.checkpoints/
+script/config.ini
