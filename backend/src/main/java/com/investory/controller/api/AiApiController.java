@@ -29,7 +29,7 @@ public class AiApiController {
     @Value("${python.executable:python3}")
     private String pythonExecutable;
 
-    private static final String DEFAULT_KEY = "REDACTED";
+    private static final String DEFAULT_KEY = "";
     private static final String DEFAULT_PROVIDER = "bailian";
     private static final String DEFAULT_MODEL = "qwen-plus";
     private static final String DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
