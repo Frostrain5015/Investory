@@ -1,19 +1,17 @@
 package com.investory.service;
 
 import com.investory.util.PinyinUtil;
-import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.logging.Logger;
 
-/**
- * Adds name_pinyin column to stocks table on first run and keeps it populated
- * as new stocks are inserted. Runs in a background thread to avoid delaying startup.
- */
 @Component
 public class StockSearchIndexService {
 
@@ -21,20 +19,13 @@ public class StockSearchIndexService {
 
     @Autowired private JdbcTemplate jdbc;
 
-    @PostConstruct
+    @EventListener(ApplicationReadyEvent.class)
     public void init() {
-        new Thread(this::buildIndex, "pinyin-index").start();
+        buildIndex();
     }
 
     private void buildIndex() {
         try {
-            // Add column if not already present (MySQL 8.0+ IF NOT EXISTS)
-            try {
-                jdbc.execute("ALTER TABLE stocks ADD COLUMN IF NOT EXISTS name_pinyin VARCHAR(50) DEFAULT NULL");
-            } catch (Exception e) {
-                log.fine("name_pinyin column already exists or cannot be added: " + e.getMessage());
-            }
-
             // Populate rows where name_pinyin is still null, in batches
             long lastId = 0;
             int total = 0;

@@ -14,6 +14,7 @@ import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -265,6 +266,7 @@ public class DataApiController {
         return list;
     }
 
+    @Transactional(rollbackFor = Exception.class)
     @PostMapping("/transactions")
     public ResponseEntity<Map<String, Object>> createTransaction(
             @RequestParam long stockId, @RequestParam String type,
@@ -347,6 +349,7 @@ public class DataApiController {
         return ResponseEntity.ok(result);
     }
 
+    @Transactional(rollbackFor = Exception.class)
     @PutMapping("/transactions/{id}")
     public ResponseEntity<Map<String, Object>> updateTransaction(@PathVariable long id,
             @RequestParam long stockId, @RequestParam String type,
@@ -491,6 +494,7 @@ public class DataApiController {
         }
     }
 
+    @Transactional(rollbackFor = Exception.class)
     @DeleteMapping("/transactions/{id}")
     public Map<String, String> deleteTransaction(@PathVariable long id, HttpServletRequest req) {
         long portfolioId = getPortfolioId(req);

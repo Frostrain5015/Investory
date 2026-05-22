@@ -7,6 +7,7 @@ import com.investory.model.User;
 import org.mindrot.jbcrypt.BCrypt;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AuthService {
@@ -14,6 +15,7 @@ public class AuthService {
     @Autowired private UserDao userDao;
     @Autowired private PortfolioDao portfolioDao;
 
+    @Transactional(rollbackFor = Exception.class)
     public String register(String username, String password, String email) {
         if (username == null || username.isBlank()) return "用户名不能为空";
         if (password == null || password.length() < 6) return "密码至少6位";
