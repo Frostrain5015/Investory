@@ -54,7 +54,7 @@ export default function Hero() {
           </motion.h1>
           <motion.p initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35, duration: 0.6 }}
             className="text-base text-slate-400 mb-10 tracking-wide">
-            多市场量化投研平台 · A股 / 港股 / 美股
+            和时间为友 与价值同行
           </motion.p>
 
           {!mode ? (
