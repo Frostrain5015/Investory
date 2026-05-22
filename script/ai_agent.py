@@ -415,14 +415,83 @@ def tool_list_strategies() -> list:
 
 
 def tool_get_strategy(strategy_id: int) -> dict:
-    """获取单个策略的详情"""
+    """获取单个策略的详情（含入场/离场规则、指标参数、逻辑组合）"""
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute("SELECT id, name, strategy_type, strategy_json FROM backtest_strategies WHERE id=%s", (strategy_id,))
     r = cur.fetchone()
     cur.close(); conn.close()
     if not r: return {"error": "策略未找到"}
-    return {"id": r[0], "name": r[1], "type": r[2], "config": r[3][:500]}
+
+    result = {"id": r[0], "name": r[1], "type": r[2]}
+
+    try:
+        strat = json.loads(r[3])
+        if r[2] == "advanced":
+            result["mode"] = "advanced"
+            code = strat.get("code", "")
+            result["code"] = code[:1200]
+        else:
+            result["mode"] = "rule-based"
+            entry = strat.get("entry", {})
+            exit_r = strat.get("exit", {})
+
+            # Format entry rules
+            entry_logic = entry.get("logic", "all")
+            entry_rules = entry.get("rules", [])
+            result["entry_logic"] = "全部满足" if entry_logic == "all" else "任一满足"
+            result["entry_rules"] = [_format_rule(rl) for rl in entry_rules]
+
+            # Format exit rules
+            exit_rules = exit_r.get("rules", [])
+            result["exit_rules"] = [_format_rule(rl) for rl in exit_rules]
+
+            # Position sizing
+            ps = strat.get("positionSizing", {})
+            result["position_sizing"] = ps.get("method", "equal_weight") + (
+                f" (基础股数: {ps['value']})" if "value" in ps and ps.get("method") == "equal_weight" else ""
+            )
+    except Exception:
+        result["raw"] = r[3][:500]
+
+    return result
+
+
+def _format_rule(rule: dict) -> str:
+    """将单条规则转为人类可读描述，例如 'SMA(20) 上穿，阈值 0'"""
+    indicator = rule.get("indicator", "")
+    params = rule.get("params", {})
+    condition = rule.get("condition", "")
+    threshold = rule.get("threshold", 0)
+
+    # Indicator label mapping
+    labels = {
+        "sma": "SMA", "ema": "EMA", "rsi": "RSI", "macd_histogram": "MACD柱",
+        "bollinger_lower": "布林下轨", "volume_ma": "成交量MA", "kdj_k": "KDJ-K",
+        "stop_loss": "止损", "take_profit": "止盈", "trailing_stop": "移动止损",
+    }
+    cond_labels = {
+        "above": ">", "below": "<", "oversold": "超卖", "overbought": "超买",
+        "triggered": "触发",
+    }
+
+    name = labels.get(indicator, indicator)
+    cond = cond_labels.get(condition, condition)
+
+    # Format params
+    param_strs = []
+    for k, v in params.items():
+        if k == "period": param_strs.append(f"周期{v}")
+        elif k == "fast": param_strs.append(f"快线{v}")
+        elif k == "slow": param_strs.append(f"慢线{v}")
+        elif k == "pct": param_strs.append(f"{v}%")
+        else: param_strs.append(f"{k}={v}")
+
+    base = f"{name}"
+    if param_strs: base += f"({', '.join(param_strs)})"
+    base += f" {cond}"
+    if threshold != 0: base += f" {threshold}"
+    return base
 
 
 # ── Tool definitions (OpenAI format) ────────────────────────────────────
@@ -453,9 +522,9 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}, "required": []}
     }},
     {"type": "function", "function": {
-        "name": "get_strategy", "description": "获取某个策略的详细配置",
+        "name": "get_strategy", "description": "获取策略的完整规则详情（入场条件、离场条件、指标参数、逻辑组合、仓位管理）。用户要求评价或分析某个策略时必须调用此工具。",
         "parameters": {"type": "object", "properties": {
-            "id": {"type": "integer", "description": "策略ID"}
+            "id": {"type": "integer", "description": "策略ID，从 list_strategies 获取"}
         }, "required": ["id"]}
     }},
     {"type": "function", "function": {
