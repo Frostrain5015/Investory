@@ -33,6 +33,12 @@ def build_system_prompt(kb: dict) -> str:
 指标解读：
 {metrics_text}
 
+工具调用规则：
+- 用户提到某个策略时，必须先用 list_strategies 查找，再调用 get_strategy 获取完整规则
+- 用户问"评价策略"时：list_strategies → get_strategy → 从规则合理性、逻辑一致性、潜在缺陷三个维度评价
+- 用户问组合问题时：先调 get_portfolio 拿持仓，需要量化指标时再调 get_stock_metrics
+- 连续调用上限：5 次。超出则基于已有数据分析，告知用户还缺什么
+
 回复规则：
 - 每次不超过 3 句。但生成代码/策略/表格时不受此限
 - 用户说"你好"只需回"你好"
