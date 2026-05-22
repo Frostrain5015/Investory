@@ -189,9 +189,9 @@ def analyze_portfolio(conn, portfolio_id: int) -> dict:
     for h in holdings:
         sid, shares, avg_cost, invested, divs, sym, name, market, currency = h
         price = price_map.get(sid, 0)
-        mv = shares * price if price > 0 else invested
+        mv = float(shares) * price if price > 0 else float(invested or 0)
         pnl = mv - float(invested or 0) + float(divs or 0)
-        pnl_pct = (pnl / float(invested)) * 100 if invested and invested > 0 else 0
+        pnl_pct = (pnl / float(invested)) * 100 if invested and float(invested) > 0 else 0
         weight_pct = 0  # will compute after total
 
         m = metric_rows.get(sid, {})
@@ -202,8 +202,8 @@ def analyze_portfolio(conn, portfolio_id: int) -> dict:
         total_value += mv
         holdings_data.append({
             "symbol": sym, "name": name, "market": market, "currency": currency,
-            "shares": int(shares), "avgCost": float(avg_cost or 0),
-            "invested": float(invested or 0), "marketValue": mv, "pnl": pnl,
+            "shares": int(float(shares)), "avgCost": float(avg_cost or 0),
+            "invested": float(invested or 0), "marketValue": float(mv), "pnl": float(pnl),
             "pnlPct": round(pnl_pct, 2), "price": price,
             "beta": round(beta, 2) if beta else None,
             "volatility": round(vol, 1) if vol else None,
