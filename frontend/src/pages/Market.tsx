@@ -275,8 +275,9 @@ export default function Market() {
     return () => chart.dispose()
   }, [markers, countryRegions, positiveHex, negativeHex, newsPoints])
 
-  if (loading) return <div className="flex items-center justify-center h-screen">
+  if (loading) return <div className="flex flex-col items-center justify-center gap-3 h-screen">
     <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+    <span className="text-sm text-slate-400">正在加载市场...</span>
   </div>
 
   return (

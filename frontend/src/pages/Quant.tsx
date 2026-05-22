@@ -211,8 +211,9 @@ export default function Quant() {
           <CardHeader><CardTitle className="text-base">组合风险汇总</CardTitle></CardHeader>
           <CardContent>
             {loading ? (
-              <div className="h-16 flex items-center justify-center">
+              <div className="h-16 flex flex-col items-center justify-center gap-2">
                 <div className="w-5 h-5 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+                <span className="text-xs text-slate-400">正在加载量化数据...</span>
               </div>
             ) : risk ? (
               <>

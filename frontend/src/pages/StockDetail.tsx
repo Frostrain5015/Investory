@@ -44,7 +44,7 @@ export default function StockDetail() {
   }, [symbol, portfolioId, chartParams])
 
   if (loading) {
-    return <div className="flex items-center justify-center h-96"><div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /></div>
+    return <div className="flex flex-col items-center justify-center gap-3 h-96"><div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-sm text-slate-400">正在加载股票详情...</span></div>
   }
 
   const stock = data?.stock

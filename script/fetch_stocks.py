@@ -876,12 +876,15 @@ def fetch_indices(cfg: dict, start: str, end: str, dry_run: bool, log: logging.L
                 db_rows = [(sid, r[0], r[1], r[2], r[3], r[4], r[5]) for r in rows]
                 n = upsert_prices(conn, db_rows)
                 total_rows += n
-                log.info(f"  [{seq}/{len(_INDICES)}] {name}({db_sym}) → {n}行")
+                pct = seq / len(_INDICES) * 100
+                log.info(f"  [{seq}/{len(_INDICES)} {pct:.1f}%] {name}({db_sym}) → {n}行")
             else:
-                log.info(f"  [{seq}/{len(_INDICES)}] {name}({db_sym}) → 无数据")
+                pct = seq / len(_INDICES) * 100
+                log.info(f"  [{seq}/{len(_INDICES)} {pct:.1f}%] {name}({db_sym}) → 无数据")
         except Exception as e:
             errors += 1
-            log.info(f"  [{seq}/{len(_INDICES)}] {name}({db_sym}) → 错误: {e}")
+            pct = seq / len(_INDICES) * 100
+            log.info(f"  [{seq}/{len(_INDICES)} {pct:.1f}%] {name}({db_sym}) → 错误: {e}")
         time.sleep(0.3)
 
     if conn:

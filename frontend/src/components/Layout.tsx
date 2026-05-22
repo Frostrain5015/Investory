@@ -15,7 +15,7 @@ const navItems = [
   { to: '/market',    icon: TrendingUp,       label: '市场' },
   { to: '/holdings', icon: Wallet, label: '自选' },
   { to: '/transactions', icon: ArrowRightLeft, label: '交易' },
-  { to: '/pnl-calendar', icon: CalendarDays, label: '盈亏日历' },
+  { to: '/pnl-calendar', icon: CalendarDays, label: '日历' },
   { to: '/quant', icon: BarChart2, label: '量化' },
 ]
 

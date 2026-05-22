@@ -1,9 +1,11 @@
 package com.investory.controller.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.investory.crawler.CrawlSessionManager;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
@@ -25,6 +27,7 @@ public class AdminController {
     private static final ObjectMapper json = new ObjectMapper();
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final JdbcTemplate jdbc;
+    private final CrawlSessionManager session;
 
     private volatile Process  currentProcess  = null;
     private volatile boolean  stopRequested   = false;
@@ -38,8 +41,9 @@ public class AdminController {
     @Value("${python.executable:python3}")
     private String pythonExecutable;
 
-    public AdminController(JdbcTemplate jdbc) {
+    public AdminController(JdbcTemplate jdbc, @Autowired CrawlSessionManager session) {
         this.jdbc = jdbc;
+        this.session = session;
     }
 
     private boolean checkAdmin(HttpServletRequest req) {
@@ -57,7 +61,7 @@ public class AdminController {
         Map<String, Object> result = new LinkedHashMap<>();
 
         List<Map<String, Object>> markets = jdbc.queryForList("""
-            SELECT s.market,
+            SELECT CASE WHEN s.market IN ('SH','SZ') THEN 'A' ELSE s.market END AS market,
                    COUNT(DISTINCT s.id) AS stock_count,
                    COUNT(sp.id)          AS price_rows,
                    COALESCE(MAX(sp.trade_date), '-') AS latest_date,
@@ -65,8 +69,8 @@ public class AdminController {
             FROM stocks s
             LEFT JOIN stock_prices sp ON sp.stock_id = s.id
             WHERE s.market IN ('SH','SZ','HK','US')
-            GROUP BY s.market
-            ORDER BY FIELD(s.market,'SH','SZ','HK','US')
+            GROUP BY CASE WHEN s.market IN ('SH','SZ') THEN 'A' ELSE s.market END
+            ORDER BY market
             """);
         // Add index stats separately (aggregate across JP/KR/GB/.../CMD/CCY)
         Map<String, Object> idxStats = jdbc.queryForMap("""
@@ -176,10 +180,17 @@ public class AdminController {
             """);
     }
 
+    @GetMapping("/crawl/status")
+    public Map<String, Object> crawlStatus(HttpServletRequest req) {
+        if (!checkAdmin(req)) return Map.of("error", "unauthorized");
+        return session.getStatus();
+    }
+
     @GetMapping("/crawl/{market}")
     public SseEmitter startCrawl(@PathVariable String market,
             @RequestParam(defaultValue = "") String start,
             @RequestParam(defaultValue = "") String end,
+            @RequestParam(defaultValue = "false") boolean reconnect,
             HttpServletRequest req,
             HttpServletResponse response) {
         // Tell nginx/CDN not to buffer this streaming response
@@ -199,104 +210,145 @@ public class AdminController {
             return emitter;
         }
 
+        // Reconnect: join an existing crawl session
+        if (reconnect && session.isActive() && market.equals(session.getMarket())) {
+            SseEmitter sub = session.subscribe();
+            // Copy settings from the session manager into this emitter
+            sub.onCompletion(() -> {}); // don't clear session on subscriber disconnect
+            return sub;
+        }
+
+        // Start a new crawl session
         Map<String, String> LABELS = Map.of(
             "all", "全市场", "a", "A股", "sh", "A股(沪)", "sz", "A股(深)",
             "hk", "港股", "us", "美股", "idx", "指数"
         );
         String label = LABELS.getOrDefault(market, market.toUpperCase());
-        // Use custom date range if provided; fallback to 10 days
         final String startDate = start.isBlank() ? java.time.LocalDate.now().minusDays(10).toString() : start;
         final String endDate = end.isBlank() ? java.time.LocalDate.now().toString() : end;
+
+        session.startSession(market, label, startDate, endDate);
+        SseEmitter sub = session.subscribe();
 
         System.err.println("[SSE] market=" + market + " start=" + startDate + " end=" + endDate + " python=" + pythonExecutable);
         executor.submit(() -> {
             try {
                 System.err.println("[SSE] task started");
-                emit(emitter, "status", Map.of("msg",
-                    String.format("启动 %s 抓取 (%s ~ %s)...", label, startDate, endDate), "market", market));
-                System.err.println("[SSE] status emitted");
-                // Try multiple paths: working dir/script (cloud), then ../script (local dev)
                 File script = new File("script/fetch_stocks.py");
                 if (!script.exists()) {
                     script = new File("../script/fetch_stocks.py").getCanonicalFile();
                 }
                 if (!script.exists()) {
-                    emit(emitter, "error", Map.of("msg", "脚本未找到: " + script.getAbsolutePath()));
-                    emitter.complete();
+                    session.emitError("脚本未找到: " + script.getAbsolutePath());
+                    session.clearSession();
                     return;
                 }
                 File scriptDir = script.getParentFile();
+                boolean isFirstStart = true;
 
-                ProcessBuilder pb = new ProcessBuilder(
-                    pythonExecutable, "-u", script.getAbsolutePath(),
-                    "-m", market, "--start", startDate, "--end", endDate
-                );
-                pb.directory(scriptDir);
-                pb.redirectErrorStream(true);
-                pb.environment().put("PYTHONUNBUFFERED", "1");
+                while (!stopRequested) {
+                    if (isFirstStart) {
+                        session.emitStatus(
+                            String.format("启动 %s 抓取 (%s ~ %s)...", label, startDate, endDate), market);
+                        isFirstStart = false;
+                    }
 
-                Process p = pb.start();
-                currentProcess = p;
-                try (BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(p.getInputStream(), "UTF-8"))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        // Cross-platform pause: wait here until resumed
+                    ProcessBuilder pb = new ProcessBuilder(
+                        pythonExecutable, "-u", script.getAbsolutePath(),
+                        "-m", market, "--start", startDate, "--end", endDate
+                    );
+                    pb.directory(scriptDir);
+                    pb.redirectErrorStream(true);
+                    pb.environment().put("PYTHONUNBUFFERED", "1");
+
+                    Process p = pb.start();
+                    currentProcess = p;
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(p.getInputStream(), "UTF-8"))) {
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            if (stopRequested) { p.destroyForcibly(); break; }
+                            Matcher m = PROGRESS_RE.matcher(line);
+                            if (m.find()) {
+                                Map<String, Object> prog = new LinkedHashMap<>();
+                                prog.put("current", Integer.parseInt(m.group(1)));
+                                prog.put("total",   Integer.parseInt(m.group(2)));
+                                prog.put("pct",     Double.parseDouble(m.group(3)));
+                                prog.put("name",    m.group(4).trim());
+                                session.updateProgress(prog);
+                            } else if (line.contains("===") || line.contains("完成")) {
+                                session.emitInfo(line.replaceFirst("^.*?INFO\\s*", "").trim());
+                            } else {
+                                session.addLog(line.trim());
+                            }
+                        }
+                    }
+
+                    int exitCode = p.waitFor();
+                    currentProcess = null;
+
+                    if (stopRequested) {
+                        session.emitStopped(market, label + " 抓取已停止（断点已保存）");
+                        break;
+                    }
+                    if (exitCode == 0) {
+                        session.emitDone(market, label + " 抓取完成");
+                        break;
+                    }
+
+                    if (pauseRequested) {
+                        session.emitInfo("已暂停（断点已保存）");
                         synchronized (pauseLock) {
                             while (pauseRequested && !stopRequested) {
                                 try { pauseLock.wait(1000); } catch (InterruptedException e) { break; }
                             }
                         }
-                        if (stopRequested) break;
-                        Matcher m = PROGRESS_RE.matcher(line);
-                        if (m.find()) {
-                            Map<String, Object> prog = new LinkedHashMap<>();
-                            prog.put("current", Integer.parseInt(m.group(1)));
-                            prog.put("total",   Integer.parseInt(m.group(2)));
-                            prog.put("pct",     Double.parseDouble(m.group(3)));
-                            prog.put("name",    m.group(4).trim());
-                            emit(emitter, "progress", prog);
-                        } else if (line.contains("===") || line.contains("完成")) {
-                            emit(emitter, "info", Map.of("msg", line.replaceFirst("^.*?INFO\\s*", "").trim()));
-                        } else {
-                            emit(emitter, "log", Map.of("msg", line.trim()));
+                        if (stopRequested) {
+                            session.emitStopped(market, label + " 抓取已停止（断点已保存）");
+                            break;
                         }
+                        session.emitInfo("继续抓取...");
+                        continue;
                     }
-                }
-                int exitCode = p.waitFor();
-                boolean wasStopped = stopRequested;
-                stopRequested = false;
-                currentProcess = null;
-                if (wasStopped) {
-                    emit(emitter, "stopped", Map.of("market", market, "msg", label + " 抓取已停止（断点已保存）"));
-                } else if (exitCode == 0) {
-                    emit(emitter, "done", Map.of("market", market, "msg", label + " 抓取完成"));
-                } else {
-                    emit(emitter, "error", Map.of("msg", "脚本退出码: " + exitCode));
+
+                    session.emitError("脚本退出码: " + exitCode);
+                    break;
                 }
             } catch (Exception e) {
-                emit(emitter, "error", Map.of("msg", e.getMessage()));
+                session.emitError(e.getMessage());
             } finally {
                 stopRequested = false;
                 pauseRequested = false;
                 currentProcess = null;
-                emitter.complete();
+                session.clearSession();
             }
         });
 
-        return emitter;
+        return sub;
     }
 
     @PostMapping("/crawl/stop")
     public Map<String, Object> stopCrawl(HttpServletRequest req) {
         if (!checkAdmin(req)) return Map.of("error", "unauthorized");
-        Process p = currentProcess;
-        if (p == null) return Map.of("status", "no_process");
         stopRequested = true;
-        // Kill the entire process tree (Python spawns child processes)
-        p.descendants().forEach(ProcessHandle::destroyForcibly);
-        p.destroyForcibly();
+        // Wake up the background thread if it's waiting (paused state)
+        synchronized (pauseLock) {
+            pauseLock.notifyAll();
+        }
+        // Kill process if still running; if paused, currentProcess is null
+        Process p = currentProcess;
+        if (p != null) {
+            p.descendants().forEach(ProcessHandle::destroyForcibly);
+            p.destroyForcibly();
+        }
         return Map.of("status", "stopping");
+    }
+
+    @DeleteMapping("/crawl-history")
+    public Map<String, Object> clearCrawlHistory(HttpServletRequest req) {
+        if (!checkAdmin(req)) return Map.of("error", "unauthorized");
+        int deleted = jdbc.update("DELETE FROM crawl_history");
+        return Map.of("status", "ok", "deleted", deleted);
     }
 
     @PostMapping("/crawl/pause")
@@ -304,6 +356,9 @@ public class AdminController {
         if (!checkAdmin(req)) return Map.of("error", "unauthorized");
         if (currentProcess == null) return Map.of("status", "no_process");
         pauseRequested = true;
+        // Kill the Python process — the outer loop will detect pauseRequested
+        // and wait, then restart from checkpoint when resumed
+        currentProcess.destroyForcibly();
         return Map.of("status", "paused");
     }
 

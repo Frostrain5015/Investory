@@ -36,9 +36,11 @@ public class CrawlerScheduler {
         "写入\\s+(\\d+)\\s+行.*?无数据.*?(\\d+)\\s+只");
 
     private final JdbcTemplate jdbc;
+    private final CrawlSessionManager sessionManager;
 
-    public CrawlerScheduler(JdbcTemplate jdbc) {
+    public CrawlerScheduler(JdbcTemplate jdbc, @org.springframework.beans.factory.annotation.Autowired CrawlSessionManager sessionManager) {
         this.jdbc = jdbc;
+        this.sessionManager = sessionManager;
     }
 
     @Value("${python.executable:python3}")
@@ -229,10 +231,21 @@ public class CrawlerScheduler {
             marketCode, startedAt);
         long historyId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
 
+        // Register with the shared session manager so admin UI can reconnect
+        String startDate = java.time.LocalDate.now().minusDays(3).toString();
+        String endDate = java.time.LocalDate.now().toString();
+        sessionManager.startSession(marketCode, label, startDate, endDate);
+        sessionManager.emitStatus(
+            String.format("启动 %s 定时抓取 (%s ~ %s)...", label, startDate, endDate), marketCode);
+
         StringBuilder logTail = new StringBuilder();
         int[] rowsWritten = {0};
         int[] stocksFailed = {0};
         String[] status = {"error"};
+
+        // Progress regex — same as AdminController
+        java.util.regex.Pattern progressRe = java.util.regex.Pattern.compile(
+            "\\[(\\d+)/(\\d+)\\s+(\\d+(?:\\.\\d+)?)%\\]\\s+(.+)");
 
         try {
             java.util.List<String> cmd = new java.util.ArrayList<>();
@@ -253,6 +266,19 @@ public class CrawlerScheduler {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     logTail.append(line).append("\n");
+                    // Report progress via shared session
+                    java.util.regex.Matcher pm = progressRe.matcher(line);
+                    if (pm.find()) {
+                        java.util.Map<String, Object> prog = new java.util.LinkedHashMap<>();
+                        prog.put("current", Integer.parseInt(pm.group(1)));
+                        prog.put("total",   Integer.parseInt(pm.group(2)));
+                        prog.put("pct",     Double.parseDouble(pm.group(3)));
+                        prog.put("name",    pm.group(4).trim());
+                        sessionManager.updateProgress(prog);
+                    } else if (!line.contains("===") && !line.contains("完成")) {
+                        sessionManager.addLog(line.trim());
+                    }
+                    // Parse summary
                     Matcher m = SUMMARY_RE.matcher(line);
                     if (m.find()) {
                         rowsWritten[0] = Integer.parseInt(m.group(1));
@@ -267,7 +293,16 @@ public class CrawlerScheduler {
         } catch (Exception e) {
             logTail.append("Error: ").append(e.getMessage());
             log.warning(label + " sync error: " + e.getMessage());
+            sessionManager.emitError(e.getMessage());
         } finally {
+            // Emit done/error to SSE subscribers
+            if ("ok".equals(status[0])) {
+                sessionManager.emitDone(marketCode, label + " 定时抓取完成");
+            } else if (!sessionManager.isActive()) {
+                // Already cleared by error handler
+            }
+            sessionManager.clearSession();
+
             // Always record the result — even if the JVM is shutting down mid-run
             String tail = logTail.toString();
             if (tail.length() > 6000) tail = tail.substring(tail.length() - 6000);

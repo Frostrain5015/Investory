@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Database, HardDrive, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock, Square, Pause, PlayCircle } from 'lucide-react'
+import { Database, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock, Square, Pause, PlayCircle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 
 interface MarketStat { market: string; stock_count: number; price_rows: number; latest_date: string; earliest_date: string }
@@ -11,28 +11,75 @@ interface SseEvent { event: string; msg?: string; current?: number; total?: numb
 interface UserRow { id: number; username: string; email: string | null; created_at: string; txn_count: number; portfolio_count: number }
 interface CrawlHistoryRow { market: string; started_at: string; ended_at: string; rows_written: number; stocks_failed: number; status: string }
 
-const MARKET_LABELS: Record<string, string> = { SH: 'A股(沪)', SZ: 'A股(深)', HK: '港股', US: '美股', IDX: '全球指数' }
-const MARKET_FLAGS: Record<string, string> = { SH: 'cn', SZ: 'cn', HK: 'hk', US: 'us', IDX: 'un' }
+const MARKET_LABELS: Record<string, string> = { A: 'A股', HK: '港股', US: '美股', IDX: '全球指数' }
+const MARKET_FLAGS: Record<string, string> = { A: 'cn', HK: 'hk', US: 'us', IDX: 'un' }
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
 function daysAgoStr(n: number) { const d = new Date(); d.setDate(d.getDate() - n); return d.toISOString().slice(0, 10) }
+
+// ── Module-level crawl state (survives SPA navigation) ──────────────
+const crawlListeners = new Set<() => void>()
+function notifyCrawlListeners() { crawlListeners.forEach(fn => fn()) }
+
+let gCrawling: string | null = null
+let gProgress: ProgressData | null = null
+let gLogs: string[] = []
+let gDoneMsg: string | null = null
+let gPaused = false
+let gEsRef: EventSource | null = null
+let gHeartbeat: ReturnType<typeof setInterval> | null = null
+let gLastBump = 0
+
+function resetCrawlState() {
+  gCrawling = null
+  gProgress = null
+  gLogs = []
+  gDoneMsg = null
+  gPaused = false
+  if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
+  if (gEsRef) { gEsRef.close(); gEsRef = null }
+  notifyCrawlListeners()
+}
+
+function useCrawlStore() {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const fn = () => setTick(t => t + 1)
+    crawlListeners.add(fn)
+    return () => { crawlListeners.delete(fn) }
+  }, [])
+  return {
+    get crawling() { return gCrawling },
+    get progress() { return gProgress },
+    get logs() { return gLogs },
+    get doneMsg() { return gDoneMsg },
+    get paused() { return gPaused },
+    get esRef() { return gEsRef },
+    setCrawling(v: string | null) { gCrawling = v; notifyCrawlListeners() },
+    setProgress(v: ProgressData | null) { gProgress = v; notifyCrawlListeners() },
+    setLogs(v: string[] | ((prev: string[]) => string[])) {
+      gLogs = typeof v === 'function' ? v(gLogs) : v
+      notifyCrawlListeners()
+    },
+    setDoneMsg(v: string | null) { gDoneMsg = v; notifyCrawlListeners() },
+    setPaused(v: boolean) { gPaused = v; notifyCrawlListeners() },
+    setEsRef(v: EventSource | null) { gEsRef = v },
+    bump() { gLastBump = Date.now() },
+    heartbeat() { return gHeartbeat },
+    setHeartbeat(v: ReturnType<typeof setInterval> | null) { gHeartbeat = v },
+  }
+}
 
 export default function Admin() {
   const { isAdmin } = useAuth()
   const [status, setStatus] = useState<DbStatus | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
-  const [crawling, setCrawling] = useState<string | null>(null)
-  const [progress, setProgress] = useState<ProgressData | null>(null)
-  const [logs, setLogs] = useState<string[]>([])
-  const [doneMsg, setDoneMsg] = useState<string | null>(null)
+  const cs = useCrawlStore()
   const [dateStart, setDateStart] = useState(daysAgoStr(10))
   const [dateEnd, setDateEnd] = useState(todayStr())
   const [users, setUsers] = useState<UserRow[]>([])
   const [crawlHistory, setCrawlHistory] = useState<CrawlHistoryRow[]>([])
   const [verbose, setVerbose] = useState(false)
-  const [paused, setPaused] = useState(false)
-  const pausedRef = useRef(false)
-  const esRef = useRef<EventSource | null>(null)
   const logEndRef = useRef<HTMLDivElement>(null)
 
   const fetchStatus = useCallback(() => {
@@ -61,94 +108,184 @@ export default function Admin() {
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [logs])
+  }, [cs.logs])
+
+  // On mount: check for an ongoing crawl and reconnect
+  useEffect(() => {
+    fetch('/investory/api/admin/crawl/status', { credentials: 'include' })
+      .then(r => r.json())
+      .then((data: { active?: boolean; market?: string; label?: string; startDate?: string; endDate?: string; progress?: ProgressData; recentLogs?: string[] }) => {
+        if (!data.active || !data.market) return
+        // Restore crawl state from server
+        cs.setCrawling(data.market)
+        if (data.progress) cs.setProgress(data.progress)
+        if (data.recentLogs) cs.setLogs(data.recentLogs)
+
+        // Reconnect to the live SSE stream
+        if (gEsRef) { gEsRef.close(); gEsRef = null }
+        if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
+
+        gLastBump = Date.now()
+        const heartbeat = setInterval(() => {
+          if (gPaused) return
+          if (Date.now() - gLastBump > 15000) {
+            cs.setLogs(prev => [...prev, '✗ 连接超时'])
+            const es = gEsRef
+            if (es) { es.close(); gEsRef = null }
+            if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
+            resetCrawlState()
+          }
+        }, 3000)
+        cs.setHeartbeat(heartbeat)
+
+        const eventSource = new EventSource(`/investory/api/admin/crawl/${data.market}?reconnect=true`)
+        cs.setEsRef(eventSource)
+
+        eventSource.addEventListener('status', (e) => {
+          gLastBump = Date.now()
+          const d: SseEvent = JSON.parse(e.data)
+          cs.setLogs(prev => [...prev, `[状态] ${d.msg}`])
+        })
+        eventSource.addEventListener('progress', (e) => {
+          gLastBump = Date.now()
+          const d: SseEvent = JSON.parse(e.data)
+          cs.setProgress({ current: d.current!, total: d.total!, pct: d.pct!, name: d.name! })
+        })
+        eventSource.addEventListener('info', (e) => {
+          gLastBump = Date.now()
+          const d: SseEvent = JSON.parse(e.data)
+          cs.setLogs(prev => [...prev, `[信息] ${d.msg}`])
+        })
+        eventSource.addEventListener('log', (e) => {
+          gLastBump = Date.now()
+          const d: SseEvent = JSON.parse(e.data)
+          cs.setLogs(prev => [...prev, d.msg!])
+        })
+        eventSource.addEventListener('done', (e) => {
+          if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
+          const d: SseEvent = JSON.parse(e.data)
+          cs.setLogs(prev => [...prev, `✓ ${d.msg}`])
+          cs.setDoneMsg(d.msg!)
+          eventSource.close()
+          gEsRef = null
+          cs.setEsRef(null)
+          resetCrawlState()
+        })
+        eventSource.addEventListener('stopped', (e) => {
+          if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
+          const d: SseEvent = JSON.parse(e.data)
+          cs.setLogs(prev => [...prev, `⏹ ${d.msg}`])
+          cs.setDoneMsg(`⏹ ${d.msg}`)
+          eventSource.close()
+          gEsRef = null
+          cs.setEsRef(null)
+          resetCrawlState()
+        })
+        eventSource.addEventListener('error', (e) => {
+          gLastBump = Date.now()
+          const raw = (e as MessageEvent).data
+          if (raw) {
+            try {
+              const d: SseEvent = JSON.parse(raw)
+              cs.setLogs(prev => [...prev, `✗ ${d.msg}`])
+            } catch {}
+            eventSource.close()
+            gEsRef = null
+            if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
+            resetCrawlState()
+          }
+        })
+        eventSource.onerror = () => {}
+      })
+      .catch(() => {})
+  }, [])
 
   function marketToScript(market: string): string {
-    return market.toLowerCase()  // sh/sz/hk/us/idx pass through directly
+    if (market === 'A') return 'a'
+    return market.toLowerCase()
   }
 
   function startCrawl(market: string) {
-    setCrawling(market)
-    setProgress(null)
-    setLogs([])
-    setDoneMsg(null)
-    setPaused(false)
-    pausedRef.current = false
+    // Close any stale connection first
+    if (gEsRef) { gEsRef.close(); gEsRef = null }
+    if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
 
-    let lastEventTime = Date.now()
-    const bump = () => { lastEventTime = Date.now() }
+    cs.setCrawling(market)
+    cs.setProgress(null)
+    cs.setLogs([])
+    cs.setDoneMsg(null)
+    cs.setPaused(false)
+
+    gLastBump = Date.now()
     const heartbeat = setInterval(() => {
-      if (pausedRef.current) return
-      if (Date.now() - lastEventTime > 15000) {
-        setLogs(prev => [...prev, '✗ 连接超时'])
-        setCrawling(null)
-        setPaused(false)
-        eventSource.close()
-        clearInterval(heartbeat)
+      if (gPaused) return
+      if (Date.now() - gLastBump > 15000) {
+        cs.setLogs(prev => [...prev, '✗ 连接超时'])
+        const es = gEsRef
+        if (es) { es.close(); gEsRef = null }
+        if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
+        resetCrawlState()
       }
     }, 3000)
+    cs.setHeartbeat(heartbeat)
 
     const eventSource = new EventSource(`/investory/api/admin/crawl/${market}?start=${dateStart}&end=${dateEnd}`)
-    esRef.current = eventSource
+    cs.setEsRef(eventSource)
 
     eventSource.addEventListener('status', (e) => {
-      bump()
+      gLastBump = Date.now()
       const d: SseEvent = JSON.parse(e.data)
-      setLogs(prev => [...prev, `[状态] ${d.msg}`])
+      cs.setLogs(prev => [...prev, `[状态] ${d.msg}`])
     })
     eventSource.addEventListener('progress', (e) => {
-      bump()
+      gLastBump = Date.now()
       const d: SseEvent = JSON.parse(e.data)
-      setProgress({ current: d.current!, total: d.total!, pct: d.pct!, name: d.name! })
+      cs.setProgress({ current: d.current!, total: d.total!, pct: d.pct!, name: d.name! })
     })
     eventSource.addEventListener('info', (e) => {
-      bump()
+      gLastBump = Date.now()
       const d: SseEvent = JSON.parse(e.data)
-      setLogs(prev => [...prev, `[信息] ${d.msg}`])
+      cs.setLogs(prev => [...prev, `[信息] ${d.msg}`])
     })
     eventSource.addEventListener('log', (e) => {
-      bump()
+      gLastBump = Date.now()
       const d: SseEvent = JSON.parse(e.data)
-      setLogs(prev => [...prev, d.msg!])
+      cs.setLogs(prev => [...prev, d.msg!])
     })
     eventSource.addEventListener('done', (e) => {
-      clearInterval(heartbeat)
+      if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
       const d: SseEvent = JSON.parse(e.data)
-      setDoneMsg(d.msg!)
-      setLogs(prev => [...prev, `✓ ${d.msg}`])
-      setCrawling(null)
-      setPaused(false)
-      setProgress(null)
-      fetchStatus()
+      cs.setLogs(prev => [...prev, `✓ ${d.msg}`])
+      cs.setDoneMsg(d.msg!)
       eventSource.close()
-      esRef.current = null
+      gEsRef = null
+      cs.setEsRef(null)
+      resetCrawlState()
+      fetchStatus()
     })
     eventSource.addEventListener('stopped', (e) => {
-      clearInterval(heartbeat)
+      if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
       const d: SseEvent = JSON.parse(e.data)
-      setLogs(prev => [...prev, `⏹ ${d.msg}`])
-      setDoneMsg(`⏹ ${d.msg}`)
-      setCrawling(null)
-      setPaused(false)
-      setProgress(null)
+      cs.setLogs(prev => [...prev, `⏹ ${d.msg}`])
+      cs.setDoneMsg(`⏹ ${d.msg}`)
       eventSource.close()
-      esRef.current = null
+      gEsRef = null
+      cs.setEsRef(null)
+      resetCrawlState()
     })
     eventSource.addEventListener('error', (e) => {
-      bump()
+      gLastBump = Date.now()
       const raw = (e as MessageEvent).data
       if (raw) {
         try {
           const d: SseEvent = JSON.parse(raw)
-          setLogs(prev => [...prev, `✗ ${d.msg}`])
+          cs.setLogs(prev => [...prev, `✗ ${d.msg}`])
         } catch {}
-        setCrawling(null)
-        setPaused(false)
         eventSource.close()
-        esRef.current = null
-        clearInterval(heartbeat)
+        gEsRef = null
+        if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
+        resetCrawlState()
       }
-      // Native errors (no .data) are reconnection attempts — let heartbeat handle timeout
     })
     eventSource.onerror = () => {}
   }
@@ -158,14 +295,13 @@ export default function Admin() {
   }
 
   async function togglePause() {
-    const nowPaused = !paused
+    const nowPaused = !cs.paused
     const endpoint = nowPaused ? '/investory/api/admin/crawl/pause' : '/investory/api/admin/crawl/resume'
     const res = await fetch(endpoint, { method: 'POST', credentials: 'include' })
     const data = await res.json()
     if (!data.error) {
-      setPaused(nowPaused)
-      pausedRef.current = nowPaused
-      setLogs(prev => [...prev, nowPaused ? '⏸ 已暂停' : '▶ 已继续'])
+      cs.setPaused(nowPaused)
+      cs.setLogs(prev => [...prev, nowPaused ? '⏸ 已暂停' : '▶ 已继续'])
     }
   }
 
@@ -203,13 +339,8 @@ export default function Admin() {
               placeholder="YYY-MM-DD" style={{ width: 110 }}
               className="h-8 rounded-lg border border-slate-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10 font-mono" />
           </div>
-          <button onClick={() => startCrawl('idx')}
-            disabled={crawling !== null}
-            className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors disabled:opacity-40">
-            指数抓取
-          </button>
           <button onClick={() => startCrawl('all')}
-            disabled={crawling !== null}
+            disabled={cs.crawling !== null}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
             <Globe className="w-3.5 h-3.5" />全市场抓取
           </button>
@@ -222,7 +353,7 @@ export default function Admin() {
 
       {/* Market status cards */}
       {loadingStatus ? (
-        <div className="flex items-center justify-center h-48"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /></div>
+        <div className="flex flex-col items-center justify-center gap-3 h-48"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-sm text-slate-400">正在加载Investory数据库...</span></div>
       ) : status ? (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -235,7 +366,7 @@ export default function Admin() {
                       {MARKET_LABELS[m.market] ?? m.market}
                     </span>
                     <button onClick={() => startCrawl(marketToScript(m.market))}
-                      disabled={crawling !== null}
+                      disabled={cs.crawling !== null}
                       className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-slate-900 text-white text-[10px] font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
                       <Play className="w-3 h-3" />抓取
                     </button>
@@ -257,15 +388,33 @@ export default function Admin() {
             ))}
           </div>
 
-          <div className="flex items-center gap-6 text-sm text-slate-500">
-            <span className="flex items-center gap-1.5"><Database className="w-3.5 h-3.5" />总股票 {status.totals.stock_count.toLocaleString()} 只</span>
-            <span className="flex items-center gap-1.5"><HardDrive className="w-3.5 h-3.5" />K线 {Number(status.totals.price_rows).toLocaleString()} 行</span>
-            <span className="flex items-center gap-1.5"><HardDrive className="w-3.5 h-3.5" />{status.tables.reduce((s, t) => s + (t.total_mb || 0), 0).toFixed(0)} MB</span>
+          <div className="flex items-center gap-1 text-sm text-slate-500">
+            <Database className="w-3.5 h-3.5 mr-1" />
+            <span>Investory数据库</span>
+            <span className="text-slate-300">|</span>
+            <span>共<strong className="text-slate-700">{status.totals.stock_count.toLocaleString()}</strong>只标的</span>
+            <span className="text-slate-300">|</span>
+            <span><strong className="text-slate-700">{Number(status.totals.price_rows).toLocaleString()}</strong>行K线数据</span>
+            <span className="text-slate-300">|</span>
+            <span><strong className="text-slate-700">{status.tables.reduce((s, t) => s + (t.total_mb || 0), 0).toFixed(0)}</strong>MB占用空间</span>
           </div>
 
           {crawlHistory.length > 0 && (
             <Card>
-              <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Clock className="w-3.5 h-3.5" />最近定时抓取</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-sm flex items-center justify-between">
+                  <span className="flex items-center gap-2"><Clock className="w-3.5 h-3.5" />最近定时抓取</span>
+                  <button
+                    onClick={async () => {
+                      if (!confirm('确认清空所有定时抓取记录？')) return
+                      await fetch('/investory/api/admin/crawl-history', { method: 'DELETE', credentials: 'include' })
+                      fetchCrawlHistory()
+                    }}
+                    className="h-6 px-2 rounded-md bg-red-50 text-red-500 hover:bg-red-100 text-[10px] font-medium transition-colors">
+                    清空记录
+                  </button>
+                </CardTitle>
+              </CardHeader>
               <CardContent className="p-0">
                 <table className="w-full text-xs">
                   <thead>
@@ -308,7 +457,7 @@ export default function Admin() {
 
       {/* Crawl progress & log */}
       <AnimatePresence>
-        {crawling && (
+        {cs.crawling && (
           <motion.div
             key="crawl-progress"
             initial={{ opacity: 0, y: -12 }}
@@ -319,20 +468,20 @@ export default function Admin() {
               <CardHeader>
                 <CardTitle className="text-sm flex items-center gap-2">
                   <Terminal className="w-3.5 h-3.5" />
-                  {paused ? '已暂停' : '正在抓取'} {crawling === 'all' ? '全市场' : crawling!.toUpperCase()}
+                  {cs.paused ? '已暂停' : '正在抓取'} {cs.crawling === 'all' ? '全市场' : cs.crawling!.toUpperCase()}
                   <button onClick={() => setVerbose(!verbose)}
                     className={`h-6 px-2 rounded-md text-[10px] font-medium ml-2 transition-colors ${verbose ? 'bg-slate-200 text-slate-600' : 'bg-slate-100 text-slate-500'}`}>
                     {verbose ? '简略' : '详细'}
                   </button>
                   <div className="ml-auto flex items-center gap-1.5">
-                    {progress && (
+                    {cs.progress && (
                       <span className="text-xs font-normal text-slate-400 mr-1">
-                        {progress.current}/{progress.total} ({progress.pct.toFixed(1)}%)
+                        {cs.progress.current}/{cs.progress.total} ({cs.progress.pct.toFixed(1)}%)
                       </span>
                     )}
                     <button onClick={togglePause}
-                      className={`inline-flex items-center gap-1 h-6 px-2 rounded-md text-[10px] font-medium transition-colors ${paused ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
-                      {paused ? <><PlayCircle className="w-3 h-3" />继续</> : <><Pause className="w-3 h-3" />暂停</>}
+                      className={`inline-flex items-center gap-1 h-6 px-2 rounded-md text-[10px] font-medium transition-colors ${cs.paused ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
+                      {cs.paused ? <><PlayCircle className="w-3 h-3" />继续</> : <><Pause className="w-3 h-3" />暂停</>}
                     </button>
                     <button onClick={stopCrawl}
                       className="inline-flex items-center gap-1 h-6 px-2 rounded-md bg-red-100 text-red-600 hover:bg-red-200 text-[10px] font-medium transition-colors">
@@ -342,14 +491,14 @@ export default function Admin() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {progress ? (
+                {cs.progress ? (
                   <div className="mb-3">
                     <div className="flex justify-between text-xs text-slate-500 mb-1">
-                      <span className="truncate max-w-[300px]">{progress.name}</span>
-                      <span>{progress.pct.toFixed(1)}%</span>
+                      <span className="truncate max-w-[300px]">{cs.progress.name}</span>
+                      <span>{cs.progress.pct.toFixed(1)}%</span>
                     </div>
                     <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-                      <div className="bg-slate-900 h-full rounded-full transition-all duration-300" style={{ width: `${progress.pct}%` }} />
+                      <div className="bg-slate-900 h-full rounded-full transition-all duration-300" style={{ width: `${cs.progress.pct}%` }} />
                     </div>
                   </div>
                 ) : (
@@ -367,12 +516,12 @@ export default function Admin() {
                       exit={{ opacity: 0, height: 0 }}
                       transition={{ duration: 0.2 }}
                       className="bg-slate-900 rounded-xl p-4 max-h-80 overflow-auto font-mono text-xs">
-                      {logs.map((line, i) => (
+                      {cs.logs.map((line, i) => (
                         <div key={i} className={`py-0.5 ${line.startsWith('✓') ? 'text-emerald-400' : line.startsWith('✗') ? 'text-red-400' : line.startsWith('[状态]') ? 'text-sky-400' : line.startsWith('[信息]') ? 'text-slate-400' : 'text-slate-300'}`}>
                           {line}
                         </div>
                       ))}
-                      {logs.length === 0 && <div className="text-slate-500">等待输出...</div>}
+                      {cs.logs.length === 0 && <div className="text-slate-500">等待输出...</div>}
                       <div ref={logEndRef} />
                     </motion.div>
                   )}
@@ -384,14 +533,14 @@ export default function Admin() {
       </AnimatePresence>
 
       <AnimatePresence>
-        {doneMsg && !crawling && (
+        {cs.doneMsg && !cs.crawling && (
           <motion.div
             key="crawl-done"
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
-            className={`rounded-xl px-4 py-3 text-sm ${doneMsg!.startsWith('⏹') ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
-            {doneMsg}
+            className={`rounded-xl px-4 py-3 text-sm ${cs.doneMsg!.startsWith('⏹') ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+            {cs.doneMsg}
           </motion.div>
         )}
       </AnimatePresence>

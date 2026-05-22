@@ -23,8 +23,9 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated, loading } = useAuth()
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen bg-slate-50">
+      <div className="flex flex-col items-center justify-center gap-3 h-screen bg-slate-50">
         <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+        <span className="text-sm text-slate-400">正在加载Investory...</span>
       </div>
     )
   }

@@ -142,8 +142,9 @@ export default function PnlCalendar() {
   }
 
   if (loading) return (
-    <div className="flex items-center justify-center h-96">
+    <div className="flex flex-col items-center justify-center gap-3 h-96">
       <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+      <span className="text-sm text-slate-400">正在加载日历...</span>
     </div>
   )
 
@@ -152,7 +153,7 @@ export default function PnlCalendar() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">盈亏日历</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">日历</h2>
           {periodTotalPnl.amt !== 0 && (
             <span className={`text-sm font-bold ${periodTotalPnl.amt >= 0 ? 'text-red-700' : 'text-emerald-700'}`}>
               {sign(periodTotalPnl.amt)}{fmt(periodTotalPnl.amt)}
@@ -270,8 +271,9 @@ export default function PnlCalendar() {
               {/* Body */}
               <div className="overflow-auto flex-1 px-6 py-4">
                 {detailLoading ? (
-                  <div className="flex items-center justify-center h-24">
+                  <div className="flex flex-col items-center justify-center gap-2 h-24">
                     <div className="w-6 h-6 border-2 border-slate-300 border-t-slate-700 rounded-full animate-spin" />
+                    <span className="text-xs text-slate-400">正在加载交易日详情...</span>
                   </div>
                 ) : detail ? (
                   <div className="space-y-4">

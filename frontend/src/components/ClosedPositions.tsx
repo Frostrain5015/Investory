@@ -33,7 +33,7 @@ export default function ClosedPositions({ open, onClose }: { open: boolean; onCl
         </div>
         <div className="overflow-auto flex-1 p-6">
           {loading ? (
-            <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" /></div>
+            <div className="flex flex-col items-center justify-center gap-2 py-8"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" /><span className="text-xs text-slate-400">正在加载平仓记录...</span></div>
           ) : items.length === 0 ? (
             <p className="text-sm text-slate-400 text-center py-8">暂无已清仓标的</p>
           ) : (
