@@ -173,7 +173,7 @@ export default function Settings() {
             if (preset && p !== 'custom') { setAiBaseUrl(preset.baseUrl); setAiModel(preset.model) }
           }} className="w-full h-10 rounded-xl border border-slate-200 px-3 text-sm">
             {Object.entries(AI_PRESETS).map(([key, p]) => (
-              <option key={key} value={key}>{p.label}{key === 'custom' ? '' : ` (${p.model})`}</option>
+              <option key={key} value={key}>{p.label}</option>
             ))}
           </select>
           <input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)}

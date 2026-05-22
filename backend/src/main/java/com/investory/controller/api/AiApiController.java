@@ -41,18 +41,26 @@ public class AiApiController {
         String aiBaseUrl = req.getHeader("X-AI-Base-URL");
 
         if (aiKey == null || aiKey.isBlank()) return Map.of("error", "API key required");
-        // Map custom providers to "openai_compat" for the Python agent
         final String provider;
         if ("anthropic".equals(aiProvider)) {
             provider = "anthropic";
         } else if (aiProvider != null && !"openai".equals(aiProvider)) {
-            provider = "openai_compat";  // DeepSeek, Moonshot, custom, etc.
+            provider = "openai_compat";
         } else {
             provider = "openai";
         }
         final String model = (aiModel != null && !aiModel.isBlank()) ? aiModel : "gpt-4o-mini";
         final String key = aiKey;
         final String baseUrl = (aiBaseUrl != null) ? aiBaseUrl : "";
+
+        // Get portfolio ID from session
+        jakarta.servlet.http.HttpSession s = req.getSession(false);
+        long portfolioId = 0;
+        if (s != null) {
+            Object pid = s.getAttribute("portfolioId");
+            if (pid instanceof Number) portfolioId = ((Number) pid).longValue();
+        }
+        final long pid = portfolioId;
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> messages = (List<Map<String, Object>>) body.get("messages");
@@ -84,6 +92,7 @@ public class AiApiController {
                 cmd.add("--provider"); cmd.add(provider);
                 cmd.add("--model"); cmd.add(model);
                 cmd.add("--api-key"); cmd.add(key);
+                cmd.add("--portfolio-id"); cmd.add(String.valueOf(pid));
                 cmd.add("--input"); cmd.add(tmpInput.toString());
                 if (!baseUrl.isBlank()) { cmd.add("--api-base"); cmd.add(baseUrl); }
                 ProcessBuilder pb = new ProcessBuilder(cmd);
@@ -98,6 +107,8 @@ public class AiApiController {
                     while ((line = reader.readLine()) != null) {
                         if ("[DONE]".equals(line.trim())) {
                             session.emitDone();
+                        } else if (line.startsWith("[TOOL]")) {
+                            session.emitTool(line.substring(6).trim());
                         } else if (line.startsWith("[ERROR]")) {
                             session.emitError(line.substring(7).trim());
                         } else {
@@ -133,5 +144,11 @@ public class AiApiController {
     @GetMapping("/status")
     public Map<String, Object> status() {
         return session.getStatus();
+    }
+
+    @PostMapping("/clear")
+    public Map<String, Object> clear() {
+        session.clearSession();
+        return Map.of("status", "cleared");
     }
 }

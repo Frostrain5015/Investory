@@ -32,6 +32,10 @@ public class AiSessionManager {
         emitToAll("token", Map.of("msg", token));
     }
 
+    public void emitTool(String name) {
+        emitToAll("tool", Map.of("name", name));
+    }
+
     public void emitDone() {
         emitToAll("done", Map.of("msg", ""));
     }
