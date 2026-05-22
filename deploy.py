@@ -1,0 +1,117 @@
+"""
+deploy.py — Safe deploy to Alibaba Cloud server.
+
+Usage:
+    python deploy.py          # build JAR locally then deploy
+    python deploy.py --no-build   # skip Maven build, use existing JAR
+
+Refuses to restart the service if a market-data crawl is running.
+"""
+
+import paramiko, os, sys, subprocess, time
+
+HOST      = "116.62.179.231"
+USER      = "root"
+LOCAL_JAR = r"d:\Java Projects\investory\backend\target\investory.jar"
+REMOTE_JAR= "/opt/investory/investory.jar"
+SERVICE   = "investory"
+
+CRAWL_PROC_PATTERN = "fetch_stocks.py"   # any active crawl shows this
+
+
+def ssh_connect():
+    from pathlib import Path
+    import json
+    pw = os.environ.get("DEPLOY_SSH_PASSWORD")
+    if not pw:
+        # Fall back to memory file
+        mem = Path(r"C:\Users\phy55\.claude\projects\d--Java-Projects-investory\memory\server_credentials.md")
+        for line in mem.read_text().splitlines():
+            if "Password:" in line:
+                pw = line.split(":", 1)[1].strip()
+                break
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(HOST, username=USER, password=pw, timeout=15)
+    return client
+
+
+def run(client, cmd):
+    _, out, err = client.exec_command(cmd)
+    return out.read().decode(errors="replace").strip()
+
+
+def check_crawl_running(client):
+    """Return list of running crawl process lines, empty if none."""
+    result = run(client, f"ps aux | grep '{CRAWL_PROC_PATTERN}' | grep -v grep")
+    return [l for l in result.splitlines() if l.strip()]
+
+
+def build_jar():
+    print("Building JAR ...")
+    env = os.environ.copy()
+    env["JAVA_HOME"] = r"E:\Java\jdk-17"
+    r = subprocess.run(
+        [r"C:\tmp\maven\apache-maven-3.9.16\bin\mvn.cmd",
+         "-f", r"d:\Java Projects\investory\backend\pom.xml",
+         "package", "-DskipTests"],
+        env=env, capture_output=True, text=True
+    )
+    if r.returncode != 0:
+        print("BUILD FAILED:\n", r.stdout[-2000:])
+        sys.exit(1)
+    print("Build OK.")
+
+
+def upload(client):
+    size = os.path.getsize(LOCAL_JAR)
+    print(f"Uploading {size/1024/1024:.1f} MB ...")
+    sftp = client.open_sftp()
+    sftp.put(LOCAL_JAR, REMOTE_JAR)
+    sftp.close()
+    print("Upload done.")
+
+
+def restart_service(client):
+    print("Restarting service ...")
+    run(client, f"systemctl restart {SERVICE}")
+    time.sleep(4)
+    status = run(client, f"systemctl is-active {SERVICE}")
+    if status == "active":
+        print(f"Service is active.")
+    else:
+        print(f"WARNING: service status = {status}")
+        print(run(client, f"journalctl -u {SERVICE} -n 20 --no-pager"))
+
+
+def main():
+    no_build = "--no-build" in sys.argv
+
+    client = ssh_connect()
+
+    # ── Safety check: abort if a crawl is running ──────────────────────
+    crawls = check_crawl_running(client)
+    if crawls:
+        print("DEPLOY ABORTED — crawl is currently running:")
+        for line in crawls:
+            print(" ", line)
+        print("\nWait for the crawl to finish, then re-run deploy.py.")
+        client.close()
+        sys.exit(1)
+
+    client.close()
+
+    # ── Build ───────────────────────────────────────────────────────────
+    if not no_build:
+        build_jar()
+
+    # ── Upload & restart ────────────────────────────────────────────────
+    client = ssh_connect()
+    upload(client)
+    restart_service(client)
+    client.close()
+    print("Deploy complete.")
+
+
+if __name__ == "__main__":
+    main()
