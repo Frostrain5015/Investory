@@ -28,8 +28,17 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, String>> handleAll(Exception e) {
-        log.severe("Unhandled exception: " + e.getClass().getName() + " — " + e.getMessage());
+    public ResponseEntity<Map<String, String>> handleAll(Exception e, jakarta.servlet.http.HttpServletResponse resp) {
+        // Don't interfere with SSE streams already committed
+        if (resp.isCommitted()) return null;
+
+        // SPA routing — let the SPA controller handle it
+        String name = e.getClass().getName();
+        if (name.contains("NoResourceFound") || name.contains("AsyncRequest")) {
+            return null;
+        }
+
+        log.severe("Unhandled exception: " + name + " — " + e.getMessage());
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", "服务器内部错误"));
     }
