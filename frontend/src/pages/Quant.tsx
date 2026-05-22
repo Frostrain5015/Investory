@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { getQuantData, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks } from '@/services/api'
 import { useToast } from '@/components/Toast'
+import { useSettings } from '@/hooks/use-settings'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, TrendingUp, Target, AlertTriangle, BarChart3, Activity, ChevronDown, ChevronRight } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -174,6 +175,7 @@ function RiskSection() {
 
 function BacktestSection() {
   const toast = useToast()
+  const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
   const [results, setResults] = useState<BacktestResult[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -424,15 +426,15 @@ function BacktestSection() {
       <div className="space-y-4">
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           {metrics && (<>
-          <MetricCard label="总收益" value={metrics.totalReturnPct != null ? `${metrics.totalReturnPct >= 0 ? '+' : ''}${metrics.totalReturnPct}%` : '—'} color={metrics.totalReturnPct != null ? (metrics.totalReturnPct >= 0 ? 'text-red-600' : 'text-emerald-600') : 'text-slate-400'} icon={<TrendingUp className="w-3.5 h-3.5" />} />
-          <MetricCard label="年化收益" value={metrics.annualReturnPct != null ? `${metrics.annualReturnPct >= 0 ? '+' : ''}${metrics.annualReturnPct}%` : '—'} color={metrics.annualReturnPct != null ? (metrics.annualReturnPct >= 0 ? 'text-red-600' : 'text-emerald-600') : 'text-slate-400'} icon={<Target className="w-3.5 h-3.5" />} />
+          <MetricCard label="总收益" value={metrics.totalReturnPct != null ? `${metrics.totalReturnPct >= 0 ? '+' : ''}${metrics.totalReturnPct}%` : '—'} color={metrics.totalReturnPct != null ? (metrics.totalReturnPct >= 0 ? positiveClass : negativeClass) : 'text-slate-400'} icon={<TrendingUp className="w-3.5 h-3.5" />} />
+          <MetricCard label="年化收益" value={metrics.annualReturnPct != null ? `${metrics.annualReturnPct >= 0 ? '+' : ''}${metrics.annualReturnPct}%` : '—'} color={metrics.annualReturnPct != null ? (metrics.annualReturnPct >= 0 ? positiveClass : negativeClass) : 'text-slate-400'} icon={<Target className="w-3.5 h-3.5" />} />
           <MetricCard label="Sharpe" value={metrics.sharpeRatio != null ? `${metrics.sharpeRatio}` : '—'} color="text-slate-900" icon={<BarChart3 className="w-3.5 h-3.5" />} />
-          <MetricCard label="最大回撤" value={metrics.maxDrawdownPct != null ? `${metrics.maxDrawdownPct}%` : '—'} color="text-emerald-600" icon={<AlertTriangle className="w-3.5 h-3.5" />} />
-          <MetricCard label="胜率" value={metrics.winRatePct != null ? `${metrics.winRatePct}%` : '—'} color="text-slate-900" icon={<Activity className="w-3.5 h-3.5" />} />
-          <MetricCard label="盈亏比" value={metrics.profitFactor != null ? `${metrics.profitFactor}` : '—'} color="text-slate-900" />
+          <MetricCard label="最大回撤" value={metrics.maxDrawdownPct != null ? `${metrics.maxDrawdownPct}%` : '—'} color={negativeClass} icon={<AlertTriangle className="w-3.5 h-3.5" />} />
+          <MetricCard label="胜率" value={metrics.winRatePct != null ? `${metrics.winRatePct}%` : '—'} color={metrics.winRatePct != null ? (metrics.winRatePct >= 50 ? positiveClass : negativeClass) : 'text-slate-900'} icon={<Activity className="w-3.5 h-3.5" />} />
+          <MetricCard label="盈亏比" value={metrics.profitFactor != null ? `${metrics.profitFactor}` : '—'} color={metrics.profitFactor != null ? (metrics.profitFactor >= 1 ? positiveClass : negativeClass) : 'text-slate-900'} />
           <MetricCard label="交易次数" value={metrics.totalTrades != null ? `${metrics.totalTrades}` : '—'} color="text-slate-900" />
-          <MetricCard label="平均盈利" value={metrics.avgProfitPct != null ? `${metrics.avgProfitPct}%` : '—'} color="text-red-500" />
-          <MetricCard label="平均亏损" value={metrics.avgLossPct != null ? `${metrics.avgLossPct}%` : '—'} color="text-emerald-600" />
+          <MetricCard label="平均盈利" value={metrics.avgProfitPct != null ? `${metrics.avgProfitPct}%` : '—'} color={positiveClass} />
+          <MetricCard label="平均亏损" value={metrics.avgLossPct != null ? `${metrics.avgLossPct}%` : '—'} color={negativeClass} />
           </>)}
         </div>
 
@@ -441,8 +443,8 @@ function BacktestSection() {
             <CardHeader className="flex-row items-center justify-between"><CardTitle className="text-sm flex items-center gap-2"><button onClick={() => setShowEquity(!showEquity)} className="hover:text-blue-600">{showEquity ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</button>权益曲线</CardTitle></CardHeader>
             {showEquity && <CardContent>
               <div className="flex items-center gap-3 mb-3 text-xs">
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500" />买入(B)</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />卖出(S)</span>
+                <span className="inline-flex items-center gap-1"><span className={`w-2.5 h-2.5 rounded-full ${positiveClass === 'text-red-600' ? 'bg-red-500' : 'bg-emerald-500'}`} />买入(B)</span>
+                <span className="inline-flex items-center gap-1"><span className={`w-2.5 h-2.5 rounded-full ${negativeClass === 'text-emerald-600' ? 'bg-emerald-500' : 'bg-red-500'}`} />卖出(S)</span>
                 <span className="text-slate-400">|</span>
                 <span className="text-slate-400">初始权益 {Number(equityCurve[0]?.equity).toLocaleString()}</span>
               </div>
@@ -450,16 +452,25 @@ function BacktestSection() {
                 {(() => {
                   const buys = (tradeLog || []).filter(t => t.action === 'BUY').map(t => { const pt = equityCurve.find(e => e.date === t.date); return pt ? { date: t.date, equity: pt.equity, quantity: t.quantity } : null }).filter(Boolean)
                   const sells = (tradeLog || []).filter(t => t.action === 'SELL').map(t => { const pt = equityCurve.find(e => e.date === t.date); return pt ? { date: t.date, equity: pt.equity, quantity: t.quantity } : null }).filter(Boolean)
+                  // Compute drawdown for highlighting
+                  const initial = equityCurve[0]?.equity || 0
+                  const isUp = (equityCurve[equityCurve.length - 1]?.equity || 0) >= initial
+                  const lineColor = isUp ? positiveHex : negativeHex
                   return (
                     <ComposedChart data={equityCurve}>
-                      <defs><linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#1e3a5f" stopOpacity={0.15} /><stop offset="95%" stopColor="#1e3a5f" stopOpacity={0} /></linearGradient></defs>
+                      <defs>
+                        <linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={lineColor} stopOpacity={0.15} />
+                          <stop offset="95%" stopColor={lineColor} stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                       <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v: string) => v.slice(5)} />
                       <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} domain={['auto', 'auto']} tickFormatter={(v: number) => `${(v / 10000).toFixed(0)}万`} />
                       <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: any) => [Number(v).toLocaleString(), '权益']} labelFormatter={(l: any) => `日期: ${l}`} />
-                      <Area type="monotone" dataKey="equity" stroke="#1e3a5f" fill="url(#colorEquity)" strokeWidth={2} />
-                      {buys.length > 0 && <Scatter data={buys} name="买入" fill="#ef4444" stroke="#dc2626" shape="triangle" legendType="triangle" />}
-                      {sells.length > 0 && <Scatter data={sells} name="卖出" fill="#10b981" stroke="#059669" shape="triangle" legendType="triangle" />}
+                      <Area type="monotone" dataKey="equity" stroke={lineColor} fill="url(#colorEquity)" strokeWidth={2} />
+                      {buys.length > 0 && <Scatter data={buys} name="买入(B)" fill={positiveHex} stroke={positiveHex} shape="triangle" legendType="triangle" />}
+                      {sells.length > 0 && <Scatter data={sells} name="卖出(S)" fill={negativeHex} stroke={negativeHex} shape="triangle" legendType="triangle" />}
                     </ComposedChart>
                   )
                 })()}
