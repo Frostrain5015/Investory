@@ -368,64 +368,6 @@ function BacktestSection() {
                 <input type="text" value={strategyName} onChange={e => setStrategyName(e.target.value)} placeholder="策略名称（可选）" className="h-8 px-3 rounded-lg border border-slate-200 text-xs flex-1 max-w-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-slate-600">测试股票</label>
-                  <button type="button" onClick={async () => {
-                    try {
-                      const data = await getHoldings()
-                      const snaps = (data as any).snapshots || []
-                      for (const s of snaps) {
-                        const sym = s.stockSymbol?.includes('.') ? s.stockSymbol : `${s.stockSymbol}.${s.market}`
-                        if (!selectedStocks.find(x => x.symbol === sym)) {
-                          setSelectedStocks(prev => [...prev, { symbol: sym, name: s.stockName || sym }])
-                        }
-                      }
-                    } catch {}
-                  }}
-                    className="text-[10px] text-blue-600 hover:text-blue-800">导入持仓</button>
-                </div>
-                {selectedStocks.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mb-2">
-                    {selectedStocks.map(s => (
-                      <span key={s.symbol} className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-xs text-blue-700">
-                        {s.name} ({s.symbol})
-                        <button onClick={() => setSelectedStocks(selectedStocks.filter(x => x.symbol !== s.symbol))} className="text-blue-400 hover:text-red-500">×</button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <div className="relative">
-                  <input type="text" value={stockInput}
-                    onChange={e => { setStockInput(e.target.value); if (e.target.value.length >= 1) searchStocks(e.target.value).then(setStockSearchResults).catch(() => {}) }}
-                    onFocus={() => { if (stockInput.length >= 1) searchStocks(stockInput).then(setStockSearchResults).catch(() => {}) }}
-                    onBlur={() => setTimeout(() => setStockSearchResults([]), 200)}
-                    placeholder="搜索股票代码或名称..."
-                    className="w-full h-8 px-3 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
-                  {stockSearchResults.length > 0 && (
-                    <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 max-h-48 overflow-auto">
-                      {stockSearchResults.map(r => (
-                        <button key={r.id} type="button"
-                          onMouseDown={e => e.preventDefault()}
-                          onClick={() => {
-                            const stockSym = displaySymbol(r.symbol, r.market)
-                          if (!selectedStocks.find(s => s.symbol === stockSym)) {
-                              setSelectedStocks([...selectedStocks, { symbol: stockSym, name: r.name }])
-                            }
-                            setStockInput('')
-                            setStockSearchResults([])
-                          }}
-                          className="w-full flex items-center justify-between px-3 py-2 hover:bg-slate-50 text-left text-xs">
-                          <span className="font-medium text-slate-700">{r.name}</span>
-                          <span className="text-slate-400">{displaySymbol(r.symbol, r.market)}</span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <p className="text-[10px] text-slate-400 mt-1">搜索并点击添加，或直接输入代码逗号分隔</p>
-                </div>
-              </div>
-
               {strategyType === 'simple' ? (<>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
@@ -455,15 +397,9 @@ function BacktestSection() {
                 </div>
               )}
 
-              <div className="grid grid-cols-5 gap-3">
-                <div><label className="text-[10px] text-slate-500">起始日期</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
-                <div><label className="text-[10px] text-slate-500">结束日期</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
-                <div><label className="text-[10px] text-slate-500">初始资金</label><input type="number" value={initialCapital} onChange={e => setInitialCapital(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
-                <div><label className="text-[10px] text-slate-500">基准货币</label><select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} className="w-full h-8 px-1 rounded-lg border border-slate-200 text-xs"><option value="CNY">CNY 人民币</option><option value="HKD">HKD 港币</option><option value="USD">USD 美元</option></select></div>
-                <div className="flex items-end gap-2">
-                  <button onClick={() => { setView('list'); setEditId(null) }} className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">取消</button>
-                  <button onClick={saveStrategy} className="flex-1 h-8 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 inline-flex items-center justify-center gap-1">保存策略</button>
-                </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => { setView('list'); setEditId(null) }} className="h-8 px-4 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">关闭</button>
+                <button onClick={saveStrategy} className="h-8 px-4 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 inline-flex items-center justify-center gap-1">保存策略</button>
               </div>
             </CardContent>
           </Card>
@@ -543,10 +479,11 @@ function BacktestSection() {
                   )}
                 </div>
               </div>
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-5 gap-3">
                 <div><label className="text-[10px] text-slate-500">起始日期</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
                 <div><label className="text-[10px] text-slate-500">结束日期</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
                 <div><label className="text-[10px] text-slate-500">初始资金</label><input type="number" value={initialCapital} onChange={e => setInitialCapital(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
+                <div><label className="text-[10px] text-slate-500">基准货币</label><select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} className="w-full h-8 px-1 rounded-lg border border-slate-200 text-xs"><option value="CNY">CNY</option><option value="HKD">HKD</option><option value="USD">USD</option></select></div>
                 <div className="flex items-end gap-2">
                   <button onClick={() => setView('list')} className="h-8 px-2 rounded-lg border border-slate-200 text-xs text-slate-500">取消</button>
                   <button onClick={handleStart} disabled={running || !runStrategyId}
