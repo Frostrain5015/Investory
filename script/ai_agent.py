@@ -220,10 +220,25 @@ def execute_tool(name: str, args: dict, portfolio_id: int) -> str:
 
 # ── OpenAI-compatible streaming with function calling ────────────────────
 
+def get_proxy():
+    """Load proxy URL from config.ini"""
+    import configparser
+    cfg = configparser.ConfigParser()
+    cfg_file = SCRIPT_DIR / "config.ini"
+    if cfg_file.exists(): cfg.read(cfg_file, encoding="utf-8")
+    try: return cfg.get("proxy", "url", fallback="").strip()
+    except: return ""
+
+
 def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False):
     from openai import OpenAI
+    import httpx
     kwargs = {"api_key": api_key}
     if api_base: kwargs["base_url"] = api_base
+    # Proxy support for overseas API access
+    proxy_url = os.getenv("PROXY_URL", get_proxy())
+    if proxy_url:
+        kwargs["http_client"] = httpx.Client(proxy=proxy_url)
     client = OpenAI(**kwargs)
     max_tokens = 4096 if deep_think else 1024
 
@@ -236,39 +251,21 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         if "tool_call_id" in m: entry["tool_call_id"] = m["tool_call_id"]
         formatted.append(entry)
 
-    # First call — stream to detect tool calls
-    stream = client.chat.completions.create(model=model, messages=formatted, tools=TOOLS, stream=True, temperature=0.7, max_tokens=max_tokens)
+    # First call — non-streaming to check for tool calls
+    resp = client.chat.completions.create(model=model, messages=formatted, tools=TOOLS, stream=False, temperature=0.7, max_tokens=max_tokens)
+    msg = resp.choices[0].message
 
-    # Collect streamed chunks to detect tool calls
-    tool_calls_map = {}
-    content_buffer = ""
-    for chunk in stream:
-        delta = chunk.choices[0].delta
-        if delta.tool_calls:
-            for tc in delta.tool_calls:
-                idx = tc.index
-                if idx not in tool_calls_map:
-                    tool_calls_map[idx] = {"id": tc.id or "", "name": "", "args": ""}
-                if tc.id: tool_calls_map[idx]["id"] = tc.id
-                if tc.function:
-                    if tc.function.name: tool_calls_map[idx]["name"] += tc.function.name
-                    if tc.function.arguments: tool_calls_map[idx]["args"] += tc.function.arguments
-        elif delta.content:
-            content_buffer += delta.content
-            sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
-
-    # Handle function calls if detected
-    if tool_calls_map:
-        sorted_tools = sorted(tool_calls_map.values(), key=lambda x: int(x.get("id","0") or "0"))
-        formatted.append({"role": "assistant", "content": content_buffer or None, "tool_calls": [
-            {"id": tc["id"], "type": "function", "function": {"name": tc["name"], "arguments": tc["args"]}}
-            for tc in sorted_tools
+    if msg.tool_calls:
+        # Execute tools
+        formatted.append({"role": "assistant", "content": msg.content, "tool_calls": [
+            {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
+            for tc in msg.tool_calls
         ]})
-        for tc in sorted_tools:
-            try: args = json.loads(tc["args"])
+        for tc in msg.tool_calls:
+            try: args = json.loads(tc.function.arguments)
             except: args = {}
-            result = execute_tool(tc["name"], args, portfolio_id)
-            formatted.append({"role": "tool", "tool_call_id": tc["id"], "content": result})
+            result = execute_tool(tc.function.name, args, portfolio_id)
+            formatted.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
         # Second call with tool results — stream
         stream2 = client.chat.completions.create(model=model, messages=formatted, stream=True, temperature=0.7, max_tokens=max_tokens)
@@ -276,15 +273,20 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             delta = chunk.choices[0].delta
             if delta.content:
                 sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
-    elif content_buffer:
-        pass  # Already streamed above
+    elif msg.content:
+        # No tools needed — write the full response at once
+        sys.stdout.write(msg.content + "\n"); sys.stdout.flush()
 
     print("\n[DONE]", flush=True)
 
 
 def call_anthropic_stream(api_key: str, model: str, messages: list):
-    import anthropic
-    client = anthropic.Anthropic(api_key=api_key)
+    import anthropic, httpx
+    kwargs = {"api_key": api_key}
+    proxy_url = os.getenv("PROXY_URL", get_proxy())
+    if proxy_url:
+        kwargs["http_client"] = httpx.Client(proxy=proxy_url)
+    client = anthropic.Anthropic(**kwargs)
     system_prompt = None
     formatted = []
     for m in messages:
