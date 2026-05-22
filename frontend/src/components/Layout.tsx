@@ -3,7 +3,7 @@ import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
-  LogOut, TrendingUp, User, Search, Menu, Shield
+  LogOut, TrendingUp, User, Search, Menu, Shield, BarChart2
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { searchStocks, getPortfolios } from '@/services/api'
@@ -16,6 +16,7 @@ const navItems = [
   { to: '/holdings', icon: Wallet, label: '自选' },
   { to: '/transactions', icon: ArrowRightLeft, label: '交易' },
   { to: '/pnl-calendar', icon: CalendarDays, label: '盈亏日历' },
+  { to: '/quant', icon: BarChart2, label: '量化' },
 ]
 
 export default function Layout() {

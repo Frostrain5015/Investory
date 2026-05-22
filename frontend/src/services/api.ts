@@ -3,6 +3,7 @@ import type {
   TransactionsResponse, DividendsResponse, StockDetailResponse,
   AllocationItem, PnlCalendarItem, CumulativeReturnItem,
   StockSearchItem, PriceData, Portfolio,
+  HoldingsMetricsResponse, QuantData,
 } from '@/types'
 
 const BASE = '/investory'
@@ -172,4 +173,14 @@ export function getCashBalances(): Promise<{ balances: CashBalance[] }> {
 export function searchStocks(q: string): Promise<StockSearchItem[]> {
   if (!q.trim()) return Promise.resolve([])
   return request<StockSearchItem[]>(`/api/stock/search?q=${encodeURIComponent(q)}`)
+}
+
+// ── Quant analytics ────────────────────────────────────────────────────
+
+export function getHoldingsMetrics(): Promise<HoldingsMetricsResponse> {
+  return request<HoldingsMetricsResponse>('/api/quant/holdings-metrics')
+}
+
+export function getQuantData(): Promise<QuantData> {
+  return request<QuantData>('/api/quant/portfolio-scenario')
 }

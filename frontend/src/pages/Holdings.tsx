@@ -3,18 +3,18 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
-import { searchStocks, chartAPI } from '@/services/api'
+import { searchStocks, chartAPI, getHoldingsMetrics } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { displaySymbol, fmtPriceTs } from '@/lib/format'
 import Sparkline from '@/components/Sparkline'
-import type { StockSearchItem, PriceData } from '@/types'
+import type { StockSearchItem, PriceData, StockMetrics } from '@/types'
 import { Search, X, Plus, GripVertical } from 'lucide-react'
 
 interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number; changeToday?: number; changePctToday?: number; priceTimestamp?: string }
 
 export default function Holdings() {
   const { portfolioId } = useAuth()
-  const { positiveClass, negativeClass } = useSettings()
+  const { positiveClass, negativeClass, showRiskMetrics } = useSettings()
   const [items, setItems] = useState<WatchItem[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
@@ -24,6 +24,7 @@ export default function Holdings() {
   const [sparkData, setSparkData] = useState<Record<string, number[]>>({})
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropIdx, setDropIdx] = useState<number | null>(null)
+  const [metrics, setMetrics] = useState<Record<string, StockMetrics>>({})
 
   useEffect(() => {
     if (items.length === 0) return
@@ -34,6 +35,11 @@ export default function Holdings() {
       }).catch(() => {})
     })
   }, [items])
+
+  useEffect(() => {
+    if (!showRiskMetrics || items.length === 0) return
+    getHoldingsMetrics().then(r => setMetrics(r.metrics)).catch(() => {})
+  }, [showRiskMetrics, items.length])
 
   function handleDragStart(idx: number) {
     setDragIdx(idx)
@@ -179,6 +185,11 @@ export default function Holdings() {
                     <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">现价</th>
                     <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">今日涨跌</th>
                     <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">涨跌幅</th>
+                    {showRiskMetrics && <>
+                      <th className="text-center text-xs font-medium text-slate-500 px-3 py-3">分位数</th>
+                      <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">Beta</th>
+                      <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">波动率</th>
+                    </>}
                     <th className="text-right text-xs font-medium text-slate-500 px-3 py-3 w-10"></th>
                   </tr>
                 </thead>
@@ -219,6 +230,28 @@ export default function Holdings() {
                         <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
                           {valid ? `${up ? '+' : ''}${chgPct.toFixed(2)}%` : '—'}
                         </td>
+                        {showRiskMetrics && (() => {
+                          const m = metrics[String(item.stock_id)]
+                          const pct = m?.percentile_5y ?? null
+                          const badgeColor = pct == null
+                            ? 'bg-slate-100 text-slate-400'
+                            : pct < 30 ? 'bg-blue-100 text-blue-700'
+                            : pct > 70 ? 'bg-red-100 text-red-600'
+                            : 'bg-slate-100 text-slate-600'
+                          return <>
+                            <td className="px-3 py-3 text-center">
+                              {pct != null
+                                ? <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${badgeColor}`}>{pct.toFixed(0)}%</span>
+                                : <span className="text-slate-300 text-xs">—</span>}
+                            </td>
+                            <td className="px-3 py-3 text-right tabular-nums text-xs text-slate-700">
+                              {m?.beta_1y != null ? m.beta_1y.toFixed(2) : <span className="text-slate-300">—</span>}
+                            </td>
+                            <td className="px-3 py-3 text-right tabular-nums text-xs text-slate-700">
+                              {m?.volatility_1y != null ? `${m.volatility_1y.toFixed(1)}%` : <span className="text-slate-300">—</span>}
+                            </td>
+                          </>
+                        })()}
                         <td className="px-3 py-3 text-right">
                           {managing && (
                             <button onClick={() => removeWatch(item.stock_id)}

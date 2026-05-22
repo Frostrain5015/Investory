@@ -22,6 +22,8 @@ interface Settings {
   setBaseCurrency: (c: BaseCurrency) => void
   formatCurrency: (value: number) => string
   convertCurrency: (cnyValue: number) => number
+  showRiskMetrics: boolean
+  toggleRiskMetrics: () => void
 }
 
 const SettingsContext = createContext<Settings | null>(null)
@@ -61,6 +63,9 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [baseCurrency, setBaseCurrency] = useState<BaseCurrency>(() => {
     return (localStorage.getItem('baseCurrency') as BaseCurrency) || 'CNY'
   })
+  const [showRiskMetrics, setShowRiskMetrics] = useState<boolean>(() => {
+    return localStorage.getItem('showRiskMetrics') === 'true'
+  })
   const [rates, setRates] = useState<Record<BaseCurrency, number>>(FALLBACK_RATES)
 
   const fetchRates = useCallback(() => {
@@ -73,10 +78,15 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => { localStorage.setItem('colorScheme', colorScheme) }, [colorScheme])
   useEffect(() => { localStorage.setItem('baseCurrency', baseCurrency) }, [baseCurrency])
+  useEffect(() => { localStorage.setItem('showRiskMetrics', String(showRiskMetrics)) }, [showRiskMetrics])
   useEffect(() => { fetchRates() }, [fetchRates])
 
   function toggleColorScheme() {
     setColorScheme(prev => prev === 'cn' ? 'western' : 'cn')
+  }
+
+  function toggleRiskMetrics() {
+    setShowRiskMetrics(prev => !prev)
   }
 
   function convertCurrency(cnyValue: number): number {
@@ -91,7 +101,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const classes = colorScheme === 'cn' ? getCnClasses() : getWesternClasses()
 
   return (
-    <SettingsContext.Provider value={{ colorScheme, toggleColorScheme, ...classes, baseCurrency, setBaseCurrency, formatCurrency, convertCurrency }}>
+    <SettingsContext.Provider value={{ colorScheme, toggleColorScheme, ...classes, baseCurrency, setBaseCurrency, formatCurrency, convertCurrency, showRiskMetrics, toggleRiskMetrics }}>
       {children}
     </SettingsContext.Provider>
   )

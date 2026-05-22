@@ -9,7 +9,7 @@ const CURRENCY_LABELS: Record<BaseCurrency, string> = { CNY: '人民币 (¥)', H
 
 export default function Settings() {
   const { username, logout } = useAuth()
-  const { colorScheme, toggleColorScheme, positiveClass, negativeClass, baseCurrency, setBaseCurrency } = useSettings()
+  const { colorScheme, toggleColorScheme, positiveClass, negativeClass, baseCurrency, setBaseCurrency, showRiskMetrics, toggleRiskMetrics } = useSettings()
   const { pref, setPref } = useTheme()
   const fileRef = useRef<HTMLInputElement>(null)
   const [avatar, setAvatar] = useState(() => localStorage.getItem('investory_avatar') || '')
@@ -123,6 +123,26 @@ export default function Settings() {
               <button key={c} onClick={() => setBaseCurrency(c)}
                 className={`flex-1 h-10 rounded-xl text-sm font-medium transition-colors ${baseCurrency === c ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'}`}>{CURRENCY_LABELS[c]}</button>
             ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Quant metrics toggle */}
+      <Card>
+        <CardHeader><CardTitle className="text-base">量化分析列</CardTitle></CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between">
+            <div className="space-y-1">
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                {showRiskMetrics ? '显示历史分位数和风险指标' : '隐藏量化指标列'}
+              </p>
+              <p className="text-xs text-slate-400">在自选页面显示 Beta、波动率、历史分位数等列</p>
+            </div>
+            <button onClick={toggleRiskMetrics}
+              className="relative w-12 h-7 rounded-full bg-slate-200 hover:bg-slate-300 transition-colors">
+              <span className="absolute top-0.5 w-6 h-6 rounded-full bg-white shadow-sm transition-all duration-200"
+                style={{ left: showRiskMetrics ? '22px' : '2px' }} />
+            </button>
           </div>
         </CardContent>
       </Card>

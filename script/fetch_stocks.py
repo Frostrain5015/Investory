@@ -89,7 +89,7 @@ def clear_checkpoint(market: str):
 def setup_logging(verbose: bool) -> logging.Logger:
     fmt   = "[%(asctime)s] %(levelname)s %(message)s"
     level = logging.DEBUG if verbose else logging.INFO
-    sys.stdout.reconfigure(line_buffering=True)  # flush per line when piped to Java ProcessBuilder
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8")  # flush per line when piped to Java ProcessBuilder
     logging.basicConfig(format=fmt, datefmt="%H:%M:%S", level=level, stream=sys.stdout)
     return logging.getLogger("fetch")
 
@@ -134,12 +134,11 @@ def upsert_prices(conn, rows: list) -> int:
 
 def build_skip_set(conn, stock_ids: list, start: str, end: str) -> set:
     """
-    一次 SQL 查出 [start, end] 范围内已有完整数据的 stock_id 集合。
-    判定标准：MAX(trade_date) >= end 往前推 3 天（兼容周末/节假日）。
+    一次 SQL 查出已有 end 日期数据的 stock_id 集合（精确匹配，避免跳过缺口）。
     """
     if not stock_ids:
         return set()
-    threshold = (datetime.strptime(end, "%Y-%m-%d") - timedelta(days=3)).strftime("%Y-%m-%d")
+    threshold = end
     fmt = ",".join(["%s"] * len(stock_ids))
     cur = conn.cursor()
     cur.execute(
@@ -821,31 +820,31 @@ def fetch_indices(cfg: dict, start: str, end: str, dry_run: bool, log: logging.L
         _saved = {k: os.environ.pop(k, None) for k in _proxy_keys}
         try:
             df = ak.stock_hk_index_daily_em(symbol=symbol)
+        except Exception as e:
+            log.warning(f"akshare 抓取 {symbol} 失败: {e}")
+            return []
         finally:
             for k, v in _saved.items():
                 if v is not None:
                     os.environ[k] = v
-            if df.empty:
-                return []
-            rows = []
-            for _, row in df.iterrows():
-                try:
-                    d = row["date"].strftime("%Y-%m-%d")
-                    if not (start <= d <= end):
-                        continue
-                    o = round(float(row["open"]), 4)
-                    c = round(float(row["latest"]), 4)
-                    h = round(float(row["high"]), 4)
-                    l = round(float(row["low"]), 4)
-                    if any(math.isnan(x) for x in [o, c, h, l]):
-                        continue
-                    rows.append((d, o, c, h, l, 0))  # akshare HK指数不含成交量
-                except (ValueError, KeyError):
-                    continue
-            return rows
-        except Exception as e:
-            log.warning(f"akshare 抓取 {symbol} 失败: {e}")
+        if df.empty:
             return []
+        rows = []
+        for _, row in df.iterrows():
+            try:
+                d = row["date"].strftime("%Y-%m-%d")
+                if not (start <= d <= end):
+                    continue
+                o = round(float(row["open"]), 4)
+                c = round(float(row["latest"]), 4)
+                h = round(float(row["high"]), 4)
+                l = round(float(row["low"]), 4)
+                if any(math.isnan(x) for x in [o, c, h, l]):
+                    continue
+                rows.append((d, o, c, h, l, 0))  # akshare HK指数不含成交量
+            except (ValueError, KeyError):
+                continue
+        return rows
 
     def _fetch_index(src, ticker, start, end):
         if src == "yf":

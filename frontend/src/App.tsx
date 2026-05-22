@@ -17,6 +17,7 @@ import StockDetail from '@/pages/StockDetail'
 import PnlCalendar from '@/pages/PnlCalendar'
 import Portfolio from '@/pages/Portfolio'
 import Settings from '@/pages/Settings'
+import Quant from '@/pages/Quant'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated, loading } = useAuth()
@@ -57,6 +58,7 @@ export default function App() {
           <Route path="/pnl-calendar" element={<PnlCalendar />} />
           <Route path="/portfolio" element={<Portfolio />} />
           <Route path="/settings" element={<Settings />} />
+          <Route path="/quant" element={<Quant />} />
           <Route path="/admin" element={<Admin />} />
         </Route>
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

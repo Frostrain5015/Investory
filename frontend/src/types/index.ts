@@ -173,3 +173,48 @@ export interface CreateResponse {
   id?: number
   status?: string
 }
+
+// ── Quant analysis ─────────────────────────────────────────────────────────
+
+export interface StockMetrics {
+  stock_id: number
+  percentile_5y: number | null
+  beta_1y: number | null
+  volatility_1y: number | null
+  max_drawdown_1y: number | null
+  benchmark_symbol: string | null
+  computed_at: string | null
+}
+
+export interface ScenarioHoldingDetail {
+  stockId: number
+  stockName: string
+  holdingPct: number
+  returnPct: number | null
+}
+
+export interface ScenarioResult {
+  scenario_key: string
+  scenario_name: string
+  start_date: string
+  end_date: string
+  total_pnl_pct: number | null
+  detail_json: string | null
+  computed_at: string | null
+}
+
+export interface PortfolioRiskSummary {
+  weighted_beta: number | null
+  var_95_pct: number | null
+  portfolio_maxdd: number | null
+  computed_at: string | null
+}
+
+export interface QuantData {
+  scenarios: ScenarioResult[]
+  risk: PortfolioRiskSummary
+}
+
+export interface HoldingsMetricsResponse {
+  metrics: Record<string, StockMetrics>
+}

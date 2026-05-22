@@ -26,6 +26,11 @@ public class AdminController {
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final JdbcTemplate jdbc;
 
+    private volatile Process  currentProcess  = null;
+    private volatile boolean  stopRequested   = false;
+    private volatile boolean  pauseRequested  = false;
+    private final Object      pauseLock       = new Object();
+
     // Parse progress lines like: "  [313/324 96.6%] WMB.US → 3行"
     private static final Pattern PROGRESS_RE = Pattern.compile(
         "\\[(\\d+)/(\\d+)\\s+(\\d+(?:\\.\\d+)?)%\\]\\s+(.+)");
@@ -231,10 +236,18 @@ public class AdminController {
                 pb.environment().put("PYTHONUNBUFFERED", "1");
 
                 Process p = pb.start();
+                currentProcess = p;
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(p.getInputStream(), "UTF-8"))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
+                        // Cross-platform pause: wait here until resumed
+                        synchronized (pauseLock) {
+                            while (pauseRequested && !stopRequested) {
+                                try { pauseLock.wait(1000); } catch (InterruptedException e) { break; }
+                            }
+                        }
+                        if (stopRequested) break;
                         Matcher m = PROGRESS_RE.matcher(line);
                         if (m.find()) {
                             Map<String, Object> prog = new LinkedHashMap<>();
@@ -251,7 +264,12 @@ public class AdminController {
                     }
                 }
                 int exitCode = p.waitFor();
-                if (exitCode == 0) {
+                boolean wasStopped = stopRequested;
+                stopRequested = false;
+                currentProcess = null;
+                if (wasStopped) {
+                    emit(emitter, "stopped", Map.of("market", market, "msg", label + " 抓取已停止（断点已保存）"));
+                } else if (exitCode == 0) {
                     emit(emitter, "done", Map.of("market", market, "msg", label + " 抓取完成"));
                 } else {
                     emit(emitter, "error", Map.of("msg", "脚本退出码: " + exitCode));
@@ -259,11 +277,45 @@ public class AdminController {
             } catch (Exception e) {
                 emit(emitter, "error", Map.of("msg", e.getMessage()));
             } finally {
+                stopRequested = false;
+                pauseRequested = false;
+                currentProcess = null;
                 emitter.complete();
             }
         });
 
         return emitter;
+    }
+
+    @PostMapping("/crawl/stop")
+    public Map<String, Object> stopCrawl(HttpServletRequest req) {
+        if (!checkAdmin(req)) return Map.of("error", "unauthorized");
+        Process p = currentProcess;
+        if (p == null) return Map.of("status", "no_process");
+        stopRequested = true;
+        // Kill the entire process tree (Python spawns child processes)
+        p.descendants().forEach(ProcessHandle::destroyForcibly);
+        p.destroyForcibly();
+        return Map.of("status", "stopping");
+    }
+
+    @PostMapping("/crawl/pause")
+    public Map<String, Object> pauseCrawl(HttpServletRequest req) {
+        if (!checkAdmin(req)) return Map.of("error", "unauthorized");
+        if (currentProcess == null) return Map.of("status", "no_process");
+        pauseRequested = true;
+        return Map.of("status", "paused");
+    }
+
+    @PostMapping("/crawl/resume")
+    public Map<String, Object> resumeCrawl(HttpServletRequest req) {
+        if (!checkAdmin(req)) return Map.of("error", "unauthorized");
+        if (currentProcess == null) return Map.of("status", "no_process");
+        synchronized (pauseLock) {
+            pauseRequested = false;
+            pauseLock.notifyAll();
+        }
+        return Map.of("status", "resumed");
     }
 
     private void emit(SseEmitter emitter, String event, Object data) {

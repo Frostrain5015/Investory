@@ -74,6 +74,48 @@ public class CrawlerScheduler {
         runScript("fetch_stocks.py", "idx", "指数");
     }
 
+    // ── Quant Analysis ───────────────────────────────────────────────────
+
+    // 每日 02:00（上海时间）刷新持仓股票的分位数/Beta/波动率缓存
+    @Scheduled(cron = "0 0 2 * * *", zone = "Asia/Shanghai")
+    public void refreshQuantMetrics() {
+        runQuantScript("metrics");
+    }
+
+    // 每周日 03:00 额外全量刷新一次，确保长假后数据不过期
+    @Scheduled(cron = "0 0 3 * * SUN", zone = "Asia/Shanghai")
+    public void refreshQuantMetricsWeekly() {
+        runQuantScript("metrics");
+    }
+
+    private void runQuantScript(String mode) {
+        File script = new File(SCRIPT_DIR, "analyze_quant.py");
+        if (!script.exists()) {
+            log.warning("analyze_quant.py not found at: " + script.getAbsolutePath());
+            return;
+        }
+        log.info("Starting quant analysis: mode=" + mode);
+        try {
+            ProcessBuilder pb = new ProcessBuilder(pythonExecutable, "-u",
+                script.getAbsolutePath(), "--mode", mode);
+            pb.directory(script.getParentFile());
+            pb.redirectErrorStream(true);
+            pb.environment().put("PYTHONUNBUFFERED", "1");
+            Process p = pb.start();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), "UTF-8"))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    log.info("[quant] " + line);
+                }
+            }
+            int exit = p.waitFor();
+            log.info("Quant analysis " + mode + " finished, exit=" + exit);
+        } catch (Exception e) {
+            log.warning("Quant analysis error: " + e.getMessage());
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────
 
     // ── Exchange Rate Refresh ─────────────────────────────────────────
@@ -188,9 +230,9 @@ public class CrawlerScheduler {
         long historyId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
 
         StringBuilder logTail = new StringBuilder();
-        int rowsWritten = 0;
-        int stocksFailed = 0;
-        String status = "error";
+        int[] rowsWritten = {0};
+        int[] stocksFailed = {0};
+        String[] status = {"error"};
 
         try {
             java.util.List<String> cmd = new java.util.ArrayList<>();
@@ -211,29 +253,31 @@ public class CrawlerScheduler {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     logTail.append(line).append("\n");
-                    // Parse summary line
                     Matcher m = SUMMARY_RE.matcher(line);
                     if (m.find()) {
-                        rowsWritten = Integer.parseInt(m.group(1));
-                        stocksFailed = Integer.parseInt(m.group(2));
+                        rowsWritten[0] = Integer.parseInt(m.group(1));
+                        stocksFailed[0] = Integer.parseInt(m.group(2));
                     }
                 }
             }
             int exitCode = p.waitFor();
-            status = exitCode == 0 ? "ok" : "error";
+            status[0] = exitCode == 0 ? "ok" : "error";
             log.info(String.format("%s sync completed, exit=%d, rows=%d, failed=%d",
-                label, exitCode, rowsWritten, stocksFailed));
+                label, exitCode, rowsWritten[0], stocksFailed[0]));
         } catch (Exception e) {
             logTail.append("Error: ").append(e.getMessage());
             log.warning(label + " sync error: " + e.getMessage());
+        } finally {
+            // Always record the result — even if the JVM is shutting down mid-run
+            String tail = logTail.toString();
+            if (tail.length() > 6000) tail = tail.substring(tail.length() - 6000);
+            try {
+                jdbc.update(
+                    "UPDATE crawl_history SET ended_at=?, rows_written=?, stocks_failed=?, status=?, log_tail=? WHERE id=?",
+                    LocalDateTime.now(), rowsWritten[0], stocksFailed[0], status[0], tail, historyId);
+            } catch (Exception ex) {
+                log.warning(label + " failed to update crawl_history: " + ex.getMessage());
+            }
         }
-
-        // Trim log tail to last 2000 chars
-        String tail = logTail.toString();
-        if (tail.length() > 2000) tail = tail.substring(tail.length() - 2000);
-
-        jdbc.update(
-            "UPDATE crawl_history SET ended_at=?, rows_written=?, stocks_failed=?, status=?, log_tail=? WHERE id=?",
-            LocalDateTime.now(), rowsWritten, stocksFailed, status, tail, historyId);
     }
 }

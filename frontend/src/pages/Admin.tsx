@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Database, HardDrive, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock } from 'lucide-react'
+import { Database, HardDrive, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock, Square, Pause, PlayCircle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 
 interface MarketStat { market: string; stock_count: number; price_rows: number; latest_date: string; earliest_date: string }
@@ -30,6 +30,9 @@ export default function Admin() {
   const [users, setUsers] = useState<UserRow[]>([])
   const [crawlHistory, setCrawlHistory] = useState<CrawlHistoryRow[]>([])
   const [verbose, setVerbose] = useState(false)
+  const [paused, setPaused] = useState(false)
+  const pausedRef = useRef(false)
+  const esRef = useRef<EventSource | null>(null)
   const logEndRef = useRef<HTMLDivElement>(null)
 
   const fetchStatus = useCallback(() => {
@@ -69,19 +72,24 @@ export default function Admin() {
     setProgress(null)
     setLogs([])
     setDoneMsg(null)
+    setPaused(false)
+    pausedRef.current = false
 
     let lastEventTime = Date.now()
     const bump = () => { lastEventTime = Date.now() }
     const heartbeat = setInterval(() => {
+      if (pausedRef.current) return
       if (Date.now() - lastEventTime > 15000) {
         setLogs(prev => [...prev, '✗ 连接超时'])
         setCrawling(null)
+        setPaused(false)
         eventSource.close()
         clearInterval(heartbeat)
       }
     }, 3000)
 
     const eventSource = new EventSource(`/investory/api/admin/crawl/${market}?start=${dateStart}&end=${dateEnd}`)
+    esRef.current = eventSource
 
     eventSource.addEventListener('status', (e) => {
       bump()
@@ -109,20 +117,56 @@ export default function Admin() {
       setDoneMsg(d.msg!)
       setLogs(prev => [...prev, `✓ ${d.msg}`])
       setCrawling(null)
+      setPaused(false)
       setProgress(null)
       fetchStatus()
       eventSource.close()
+      esRef.current = null
     })
-
+    eventSource.addEventListener('stopped', (e) => {
+      clearInterval(heartbeat)
+      const d: SseEvent = JSON.parse(e.data)
+      setLogs(prev => [...prev, `⏹ ${d.msg}`])
+      setDoneMsg(`⏹ ${d.msg}`)
+      setCrawling(null)
+      setPaused(false)
+      setProgress(null)
+      eventSource.close()
+      esRef.current = null
+    })
     eventSource.addEventListener('error', (e) => {
       bump()
-      const d: SseEvent = JSON.parse((e as MessageEvent).data)
-      setLogs(prev => [...prev, `✗ ${d.msg}`])
-      setCrawling(null)
-      eventSource.close()
-      clearInterval(heartbeat)
+      const raw = (e as MessageEvent).data
+      if (raw) {
+        try {
+          const d: SseEvent = JSON.parse(raw)
+          setLogs(prev => [...prev, `✗ ${d.msg}`])
+        } catch {}
+        setCrawling(null)
+        setPaused(false)
+        eventSource.close()
+        esRef.current = null
+        clearInterval(heartbeat)
+      }
+      // Native errors (no .data) are reconnection attempts — let heartbeat handle timeout
     })
-    eventSource.onerror = () => { /* ignore — EventSource auto-reconnects */ }
+    eventSource.onerror = () => {}
+  }
+
+  async function stopCrawl() {
+    await fetch('/investory/api/admin/crawl/stop', { method: 'POST', credentials: 'include' })
+  }
+
+  async function togglePause() {
+    const nowPaused = !paused
+    const endpoint = nowPaused ? '/investory/api/admin/crawl/pause' : '/investory/api/admin/crawl/resume'
+    const res = await fetch(endpoint, { method: 'POST', credentials: 'include' })
+    const data = await res.json()
+    if (!data.error) {
+      setPaused(nowPaused)
+      pausedRef.current = nowPaused
+      setLogs(prev => [...prev, nowPaused ? '⏸ 已暂停' : '▶ 已继续'])
+    }
   }
 
   async function impersonate(userId: number) {
@@ -266,6 +310,7 @@ export default function Admin() {
       <AnimatePresence>
         {crawling && (
           <motion.div
+            key="crawl-progress"
             initial={{ opacity: 0, y: -12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
@@ -274,20 +319,30 @@ export default function Admin() {
               <CardHeader>
                 <CardTitle className="text-sm flex items-center gap-2">
                   <Terminal className="w-3.5 h-3.5" />
-                  正在抓取 {crawling === 'all' ? '全市场' : crawling.toUpperCase()}
+                  {paused ? '已暂停' : '正在抓取'} {crawling === 'all' ? '全市场' : crawling!.toUpperCase()}
                   <button onClick={() => setVerbose(!verbose)}
                     className={`h-6 px-2 rounded-md text-[10px] font-medium ml-2 transition-colors ${verbose ? 'bg-slate-200 text-slate-600' : 'bg-slate-100 text-slate-500'}`}>
                     {verbose ? '简略' : '详细'}
                   </button>
-                  {progress && (
-                    <span className="ml-auto text-xs font-normal text-slate-400">
-                      {progress.current}/{progress.total} ({progress.pct.toFixed(1)}%)
-                    </span>
-                  )}
+                  <div className="ml-auto flex items-center gap-1.5">
+                    {progress && (
+                      <span className="text-xs font-normal text-slate-400 mr-1">
+                        {progress.current}/{progress.total} ({progress.pct.toFixed(1)}%)
+                      </span>
+                    )}
+                    <button onClick={togglePause}
+                      className={`inline-flex items-center gap-1 h-6 px-2 rounded-md text-[10px] font-medium transition-colors ${paused ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
+                      {paused ? <><PlayCircle className="w-3 h-3" />继续</> : <><Pause className="w-3 h-3" />暂停</>}
+                    </button>
+                    <button onClick={stopCrawl}
+                      className="inline-flex items-center gap-1 h-6 px-2 rounded-md bg-red-100 text-red-600 hover:bg-red-200 text-[10px] font-medium transition-colors">
+                      <Square className="w-3 h-3" />停止
+                    </button>
+                  </div>
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                {progress && (
+                {progress ? (
                   <div className="mb-3">
                     <div className="flex justify-between text-xs text-slate-500 mb-1">
                       <span className="truncate max-w-[300px]">{progress.name}</span>
@@ -297,10 +352,16 @@ export default function Admin() {
                       <div className="bg-slate-900 h-full rounded-full transition-all duration-300" style={{ width: `${progress.pct}%` }} />
                     </div>
                   </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-sm text-slate-400 py-2 mb-3">
+                    <div className="w-4 h-4 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+                    正在启动...
+                  </div>
                 )}
                 <AnimatePresence>
                   {verbose && (
                     <motion.div
+                      key="crawl-log"
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
@@ -325,10 +386,11 @@ export default function Admin() {
       <AnimatePresence>
         {doneMsg && !crawling && (
           <motion.div
+            key="crawl-done"
             initial={{ opacity: 0, y: -8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
-            className="bg-emerald-50 text-emerald-700 rounded-xl px-4 py-3 text-sm">
+            className={`rounded-xl px-4 py-3 text-sm ${doneMsg!.startsWith('⏹') ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
             {doneMsg}
           </motion.div>
         )}
