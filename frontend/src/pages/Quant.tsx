@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, TrendingUp, Target, AlertTriangle, BarChart3, Activity, ChevronDown, ChevronRight } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { displaySymbol } from '@/lib/format'
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceDot } from 'recharts'
+import { ResponsiveContainer, ComposedChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, Scatter } from 'recharts'
 import type { ScenarioResult, PortfolioRiskSummary, ScenarioHoldingDetail, BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent } from '@/types'
 
 const SCENARIO_META: Record<string, { borderColor: string; bgColor: string; benchmark: string }> = {
@@ -337,8 +337,9 @@ function BacktestSection() {
                         <button key={r.id} type="button"
                           onMouseDown={e => e.preventDefault()}
                           onClick={() => {
-                            if (!selectedStocks.find(s => s.symbol === r.symbol)) {
-                              setSelectedStocks([...selectedStocks, { symbol: r.symbol, name: r.name }])
+                            const stockSym = displaySymbol(r.symbol, r.market)
+                          if (!selectedStocks.find(s => s.symbol === stockSym)) {
+                              setSelectedStocks([...selectedStocks, { symbol: stockSym, name: r.name }])
                             }
                             setStockInput('')
                             setStockSearchResults([])
@@ -426,7 +427,7 @@ function BacktestSection() {
           <MetricCard label="总收益" value={metrics.totalReturnPct != null ? `${metrics.totalReturnPct >= 0 ? '+' : ''}${metrics.totalReturnPct}%` : '—'} color={metrics.totalReturnPct != null ? (metrics.totalReturnPct >= 0 ? 'text-red-600' : 'text-emerald-600') : 'text-slate-400'} icon={<TrendingUp className="w-3.5 h-3.5" />} />
           <MetricCard label="年化收益" value={metrics.annualReturnPct != null ? `${metrics.annualReturnPct >= 0 ? '+' : ''}${metrics.annualReturnPct}%` : '—'} color={metrics.annualReturnPct != null ? (metrics.annualReturnPct >= 0 ? 'text-red-600' : 'text-emerald-600') : 'text-slate-400'} icon={<Target className="w-3.5 h-3.5" />} />
           <MetricCard label="Sharpe" value={metrics.sharpeRatio != null ? `${metrics.sharpeRatio}` : '—'} color="text-slate-900" icon={<BarChart3 className="w-3.5 h-3.5" />} />
-          <MetricCard label="最大回撤" value={metrics.maxDrawdownPct != null ? `${metrics.maxDrawdownPct}%` : '—'} color="text-red-500" icon={<AlertTriangle className="w-3.5 h-3.5" />} />
+          <MetricCard label="最大回撤" value={metrics.maxDrawdownPct != null ? `${metrics.maxDrawdownPct}%` : '—'} color="text-emerald-600" icon={<AlertTriangle className="w-3.5 h-3.5" />} />
           <MetricCard label="胜率" value={metrics.winRatePct != null ? `${metrics.winRatePct}%` : '—'} color="text-slate-900" icon={<Activity className="w-3.5 h-3.5" />} />
           <MetricCard label="盈亏比" value={metrics.profitFactor != null ? `${metrics.profitFactor}` : '—'} color="text-slate-900" />
           <MetricCard label="交易次数" value={metrics.totalTrades != null ? `${metrics.totalTrades}` : '—'} color="text-slate-900" />
@@ -446,24 +447,22 @@ function BacktestSection() {
                 <span className="text-slate-400">初始权益 {Number(equityCurve[0]?.equity).toLocaleString()}</span>
               </div>
               <ResponsiveContainer width="100%" height={280}>
-                <AreaChart data={equityCurve}>
-                  <defs><linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#1e3a5f" stopOpacity={0.15} /><stop offset="95%" stopColor="#1e3a5f" stopOpacity={0} /></linearGradient></defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v: string) => v.slice(5)} />
-                  <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} domain={['auto', 'auto']} tickFormatter={(v: number) => `${(v / 10000).toFixed(0)}万`} />
-                  <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: any) => [Number(v).toLocaleString(), '权益']} labelFormatter={(l: any) => `日期: ${l}`} />
-                  <Area type="monotone" dataKey="equity" stroke="#1e3a5f" fill="url(#colorEquity)" strokeWidth={2} />
-                  {tradeLog && tradeLog.map((t, i) => {
-                    const pt = equityCurve.find(e => e.date === t.date)
-                    if (!pt) return null
-                    const isBuy = t.action === 'BUY'
-                    return (
-                      <ReferenceDot key={`trade-${i}`} x={t.date} y={pt.equity}
-                        r={4} fill={isBuy ? '#ef4444' : '#10b981'} stroke={isBuy ? '#dc2626' : '#059669'} strokeWidth={1}
-                        label={<text x={isBuy ? 8 : -8} y={-8} textAnchor={isBuy ? 'start' : 'end'} fontSize={10} fill={isBuy ? '#ef4444' : '#10b981'}>{isBuy ? 'B' : 'S'}{t.quantity > 0 ? ` ${t.quantity}股` : ''}</text>} />
-                    )
-                  })}
-                </AreaChart>
+                {(() => {
+                  const buys = (tradeLog || []).filter(t => t.action === 'BUY').map(t => { const pt = equityCurve.find(e => e.date === t.date); return pt ? { date: t.date, equity: pt.equity, quantity: t.quantity } : null }).filter(Boolean)
+                  const sells = (tradeLog || []).filter(t => t.action === 'SELL').map(t => { const pt = equityCurve.find(e => e.date === t.date); return pt ? { date: t.date, equity: pt.equity, quantity: t.quantity } : null }).filter(Boolean)
+                  return (
+                    <ComposedChart data={equityCurve}>
+                      <defs><linearGradient id="colorEquity" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#1e3a5f" stopOpacity={0.15} /><stop offset="95%" stopColor="#1e3a5f" stopOpacity={0} /></linearGradient></defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                      <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v: string) => v.slice(5)} />
+                      <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} domain={['auto', 'auto']} tickFormatter={(v: number) => `${(v / 10000).toFixed(0)}万`} />
+                      <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: any) => [Number(v).toLocaleString(), '权益']} labelFormatter={(l: any) => `日期: ${l}`} />
+                      <Area type="monotone" dataKey="equity" stroke="#1e3a5f" fill="url(#colorEquity)" strokeWidth={2} />
+                      {buys.length > 0 && <Scatter data={buys} name="买入" fill="#ef4444" stroke="#dc2626" shape="triangle" legendType="triangle" />}
+                      {sells.length > 0 && <Scatter data={sells} name="卖出" fill="#10b981" stroke="#059669" shape="triangle" legendType="triangle" />}
+                    </ComposedChart>
+                  )
+                })()}
               </ResponsiveContainer>
             </CardContent>}
           </Card>
