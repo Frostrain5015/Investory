@@ -225,22 +225,50 @@ def calc_scenario_return(conn, stock_id: int, start_date: str, end_date: str):
 
 # ─── upsert 辅助 ───────────────────────────────────────────────────────────────
 
-def upsert_stock_metric(conn, stock_id, percentile, beta, vol, maxdd, benchmark_symbol, dry_run):
+def ensure_factor_columns(conn):
+    """Add factor columns to stock_metric_cache if they don't exist."""
+    cols = [
+        ("momentum_12m",     "DOUBLE"),
+        ("size_factor",      "DOUBLE"),
+        ("value_factor",     "DOUBLE"),
+        ("quality_score",    "DOUBLE"),
+        ("factor_style",     "VARCHAR(32)"),
+    ]
+    for col, dtype in cols:
+        try:
+            cur = conn.cursor()
+            cur.execute(f"ALTER TABLE stock_metric_cache ADD COLUMN {col} {dtype}")
+            cur.close()
+        except Exception:
+            pass  # column already exists
+
+
+def upsert_stock_metric(conn, stock_id, percentile, beta, vol, maxdd, benchmark_symbol,
+                         momentum=None, size_factor=None, value_factor=None,
+                         quality=None, factor_style=None, dry_run=False):
     if dry_run:
         return
     cur = conn.cursor()
     cur.execute(
         '''INSERT INTO stock_metric_cache
-             (stock_id, percentile_5y, beta_1y, volatility_1y, max_drawdown_1y, benchmark_symbol, computed_at)
-           VALUES (%s, %s, %s, %s, %s, %s, NOW())
+             (stock_id, percentile_5y, beta_1y, volatility_1y, max_drawdown_1y,
+              benchmark_symbol, momentum_12m, size_factor, value_factor,
+              quality_score, factor_style, computed_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
            ON DUPLICATE KEY UPDATE
              percentile_5y=VALUES(percentile_5y),
              beta_1y=VALUES(beta_1y),
              volatility_1y=VALUES(volatility_1y),
              max_drawdown_1y=VALUES(max_drawdown_1y),
              benchmark_symbol=VALUES(benchmark_symbol),
+             momentum_12m=VALUES(momentum_12m),
+             size_factor=VALUES(size_factor),
+             value_factor=VALUES(value_factor),
+             quality_score=VALUES(quality_score),
+             factor_style=VALUES(factor_style),
              computed_at=NOW()''',
-        (stock_id, percentile, beta, vol, maxdd, benchmark_symbol),
+        (stock_id, percentile, beta, vol, maxdd, benchmark_symbol,
+         momentum, size_factor, value_factor, quality, factor_style),
     )
     conn.commit()
     cur.close()
@@ -288,9 +316,62 @@ def upsert_risk(conn, portfolio_id, weighted_beta, var_95, maxdd, dry_run):
 
 # ─── 主计算模块 ────────────────────────────────────────────────────────────────
 
+def calc_momentum(conn, stock_id: int):
+    """12-1个月动量：最近12个月收益率 减 最近1个月收益率（避免反转效应）。"""
+    cur = conn.cursor()
+    cur.execute(
+        'SELECT close, trade_date FROM stock_prices WHERE stock_id=%s AND close > 0 '
+        'AND trade_date >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH) ORDER BY trade_date',
+        (stock_id,),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    if len(rows) < 120:  # need ~1 year of data
+        return None
+    closes = np.array([float(r[0]) for r in rows], dtype=np.float64)
+    # 12-month return (all rows) minus 1-month return (last ~22 rows)
+    ret_12m = (closes[-1] - closes[0]) / closes[0] if closes[0] > 0 else 0
+    m1_idx = max(0, len(closes) - 22)
+    ret_1m = (closes[-1] - closes[m1_idx]) / closes[m1_idx] if closes[m1_idx] > 0 else 0
+    return float((ret_12m - ret_1m) * 100)
+
+
+def calc_factor_exposures(conn, stock_id: int):
+    """从 stock_fundamentals 读取 size/value 因子暴露。"""
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            'SELECT market_cap, pb FROM stock_fundamentals WHERE stock_id=%s', (stock_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        if not row:
+            return None, None
+        # Size factor: ln(market_cap), larger = bigger company
+        market_cap = float(row[0]) if row[0] else None
+        size = np.log(market_cap) if market_cap and market_cap > 0 else None
+        # Value factor: 1/PB (book-to-market proxy), higher = more value
+        pb = float(row[1]) if row[1] else None
+        value = 1.0 / pb if pb and pb > 0 else None
+        return size, value
+    except Exception:
+        return None, None
+
+
+def classify_factor_style(size_factor, value_factor):
+    """Classify into 2×2 style grid based on factor exposures."""
+    if size_factor is None or value_factor is None:
+        return None
+    # Neutral threshold: relative to all holdings' median (computed outside)
+    # Here we just return raw classification — caller normalizes
+    return None  # populated after cross-sectional ranking
+
+
 def compute_metrics(conn, dry_run: bool):
     """计算所有有持仓股票的 stock_metric_cache。进度行格式匹配 Java PROGRESS_RE。"""
     log = logging.getLogger('metrics')
+    ensure_factor_columns(conn)
+
     cur = conn.cursor()
     cur.execute(
         '''SELECT DISTINCT h.stock_id, s.symbol, s.name, s.market
@@ -307,13 +388,15 @@ def compute_metrics(conn, dry_run: bool):
         log.info('没有持仓股票，跳过 metrics 计算')
         return
 
-    log.info(f'=== 开始计算 metrics，共 {total} 只持仓股票 ===')
+    log.info(f'=== 开始计算 metrics + 因子暴露，共 {total} 只持仓股票 ===')
     ok = 0
+
+    # First pass: compute individual stock metrics
+    raw_results = []  # (stock_id, symbol, name, market, beta, vol, size, value, momentum, quality)
     for seq, (stock_id, symbol, name, market) in enumerate(stocks, 1):
         pct_done = seq / total * 100
         log.info(f'  [{seq}/{total} {pct_done:.1f}%] {name}({symbol})')
         try:
-            # 获取当前最新收盘价
             cur2 = conn.cursor()
             cur2.execute(
                 'SELECT close FROM stock_prices WHERE stock_id=%s AND close > 0 ORDER BY trade_date DESC LIMIT 1',
@@ -327,7 +410,6 @@ def compute_metrics(conn, dry_run: bool):
             current_close = float(row[0])
 
             percentile = calc_percentile_5y(conn, stock_id, current_close)
-
             bench_id = get_benchmark_id(conn, market)
             bench_sym = BENCHMARK_SYMBOL.get(market)
             if bench_id:
@@ -335,13 +417,38 @@ def compute_metrics(conn, dry_run: bool):
             else:
                 beta = None
                 vol = calc_vol_only(conn, stock_id)
-
             maxdd = calc_max_drawdown(conn, stock_id)
+            momentum = calc_momentum(conn, stock_id)
+            size_f, value_f = calc_factor_exposures(conn, stock_id)
+            quality = float(1.0 / vol * 10) if vol and vol > 0 else None  # inverse vol proxy
 
-            upsert_stock_metric(conn, stock_id, percentile, beta, vol, maxdd, bench_sym, dry_run)
-            ok += 1
+            raw_results.append((stock_id, symbol, name, market, beta, vol, maxdd, percentile,
+                                bench_sym, momentum, size_f, value_f, quality))
         except Exception as e:
             log.warning(f'    {symbol} 计算失败: {e}')
+
+    # Second pass: cross-sectional ranking for size/value → style classification
+    size_vals = [r[10] for r in raw_results if r[10] is not None]
+    val_vals  = [r[11] for r in raw_results if r[11] is not None]
+    med_size = float(np.median(size_vals)) if size_vals else None
+    med_val  = float(np.median(val_vals))  if val_vals  else None
+
+    for (stock_id, symbol, name, market, beta, vol, maxdd, percentile,
+         bench_sym, momentum, size_f, value_f, quality) in raw_results:
+        # Classify style based on cross-sectional median
+        style = None
+        if size_f is not None and value_f is not None and med_size and med_val:
+            is_large = size_f >= med_size
+            is_value = value_f >= med_val
+            if is_large and is_value:    style = "大盘价值"
+            elif is_large and not is_value: style = "大盘成长"
+            elif not is_large and is_value: style = "小盘价值"
+            else:                        style = "小盘成长"
+
+        upsert_stock_metric(conn, stock_id, percentile, beta, vol, maxdd, bench_sym,
+                            momentum=momentum, size_factor=size_f, value_factor=value_f,
+                            quality=quality, factor_style=style, dry_run=dry_run)
+        ok += 1
 
     log.info(f'=== metrics 完成: 写入 {ok} 行，无数据(停牌/错误) {total - ok} 只 ===')
 

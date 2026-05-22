@@ -52,83 +52,22 @@ def get_conn(cfg: dict):
     )
 
 
-# ── Style classification ─────────────────────────────────────────────────
+# ── Factor-based style classification ─────────────────────────────────────
 
-# Style categories
-STYLE_TECH      = "科技成长"
-STYLE_FINANCE   = "金融价值"
-STYLE_CONSUMER  = "消费防御"
-STYLE_ENERGY    = "能源材料"
-STYLE_HEALTH    = "医疗健康"
-STYLE_REALESTATE = "地产基建"
-STYLE_MIXED     = "综合其他"
-
-# Keyword-based classification from stock name
-STYLE_KEYWORDS = {
-    STYLE_TECH: [
-        "科技", "软件", "网络", "数据", "信息", "通信", "电子", "半导体",
-        "芯片", "光电", "互联网", "电商", "游戏", "传媒", "数字",
-        "TECH", "SOFTWARE", "INTERNET", "SEMICONDUCTOR", "COMPUTER",
-        "腾讯", "阿里", "百度", "京东", "美团", "网易", "小米", "拼多多",
-        "苹果", "微软", "谷歌", "英伟达", "特斯拉", "META", "AMAZON",
-        "台积电", "联发科", "高通", "AMD", "英特尔",
-    ],
-    STYLE_FINANCE: [
-        "银行", "保险", "证券", "金融", "信托", "投资", "基金", "期货",
-        "招商", "工商", "建设", "农业", "中国银行", "交通银行", "兴业",
-        "浦发", "民生", "中信", "平安", "人寿", "太保", "华泰", "国泰",
-        "海通", "广发", "东方", "JPMORGAN", "BANK", "INSURANCE",
-    ],
-    STYLE_CONSUMER: [
-        "食品", "饮料", "白酒", "啤酒", "乳业", "消费", "零售", "家电",
-        "汽车", "服装", "家居", "旅游", "酒店", "餐饮", "电商",
-        "茅台", "五粮液", "伊利", "蒙牛", "海天", "美的", "格力",
-        "海尔", "比亚迪", "长城", "吉利", "NIKE", "COCA", "PEPSI",
-        "沃尔玛", "好事多", "星巴克", "麦当劳",
-    ],
-    STYLE_ENERGY: [
-        "能源", "石油", "石化", "煤炭", "电力", "天然气", "新能源",
-        "光伏", "风电", "锂电", "电池", "矿产", "钢铁", "有色", "化工",
-        "中国石油", "中国石化", "中海油", "神华", "长江电力",
-        "宁德", "隆基", "通威", "赣锋", "天齐", "华友",
-        "EXXON", "CHEVRON", "SHELL", "TESLA",
-    ],
-    STYLE_HEALTH: [
-        "医药", "医疗", "生物", "制药", "健康", "疫苗", "基因",
-        "恒瑞", "迈瑞", "药明", "百济", "爱尔", "智飞", "长春高新",
-        "JOHNSON", "PFIZER", "MERCK", "ABBVIE", "NOVARTIS",
-    ],
-    STYLE_REALESTATE: [
-        "地产", "基建", "建筑", "房地产", "万科", "保利", "碧桂园",
-        "中国建筑", "中国铁建", "中国交建", "绿地",
-    ],
-}
+FACTOR_STYLES = ["大盘价值", "大盘成长", "小盘价值", "小盘成长"]
+FALLBACK_STYLE = "综合其他"
 
 
-def classify_style(name: str, market: str, beta: float, volatility: float) -> str:
-    """Classify a stock's investment style based on name + quantitative metrics."""
-    # 1. Keyword matching
-    for style, keywords in STYLE_KEYWORDS.items():
-        for kw in keywords:
-            if kw.upper() in name.upper():
-                return style
-
-    # 2. Quantitative classification
+def classify_style(name: str, market: str, beta: float, volatility: float, factor_style=None) -> str:
+    """Classify using factor_style from stock_metric_cache, fall back to heuristic."""
+    if factor_style and factor_style in FACTOR_STYLES:
+        return factor_style
     if beta is not None and volatility is not None:
         if beta > 1.2 and volatility > 35:
-            return STYLE_TECH
+            return "大盘成长"
         if beta < 0.8 and volatility < 25:
-            return STYLE_CONSUMER
-
-    # 3. Market-based heuristics
-    if market in ("SH", "SZ"):
-        return STYLE_MIXED  # A-share: hard to classify without sector data
-    if market == "HK":
-        return STYLE_MIXED
-    if market == "US":
-        return STYLE_TECH  # US market bias
-
-    return STYLE_MIXED
+            return "大盘价值"
+    return FALLBACK_STYLE
 
 
 # ── Main analysis ─────────────────────────────────────────────────────────
@@ -167,12 +106,15 @@ def analyze_portfolio(conn, portfolio_id: int) -> dict:
     metric_rows = {}
     if stock_ids:
         cur.execute(f"""
-            SELECT stock_id, percentile_5y, beta_1y, volatility_1y, max_drawdown_1y
+            SELECT stock_id, percentile_5y, beta_1y, volatility_1y, max_drawdown_1y,
+                   factor_style, size_factor, value_factor, momentum_12m, quality_score
             FROM stock_metric_cache WHERE stock_id IN ({id_str})
         """)
         for row in cur.fetchall():
             metric_rows[row[0]] = {
                 "pct": row[1], "beta": row[2], "vol": row[3], "mdd": row[4],
+                "factor_style": row[5], "size_factor": row[6], "value_factor": row[7],
+                "momentum": row[8], "quality": row[9],
             }
 
     # Load exchange rates
@@ -197,7 +139,8 @@ def analyze_portfolio(conn, portfolio_id: int) -> dict:
         m = metric_rows.get(sid, {})
         beta = float(m["beta"]) if m.get("beta") is not None else None
         vol = float(m["vol"]) if m.get("vol") is not None else None
-        style = classify_style(name or sym, market, beta, vol)
+        factor_style = m.get("factor_style")
+        style = classify_style(name or sym, market, beta, vol, factor_style)
 
         total_value += mv
         holdings_data.append({

@@ -9,7 +9,7 @@ import { displaySymbol } from '@/lib/format'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import type { BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent } from '@/types'
 
-const INDICATORS = [
+const TECHNICAL_INDICATORS = [
   { name: 'sma', label: 'SMA', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> SMA' }, { value: 'below', label: '< SMA' }] },
   { name: 'ema', label: 'EMA', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> EMA' }, { value: 'below', label: '< EMA' }] },
   { name: 'rsi', label: 'RSI', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 14 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
@@ -17,10 +17,16 @@ const INDICATORS = [
   { name: 'bollinger_lower', label: '布林下轨', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: '< 下轨' }] },
   { name: 'volume_ma', label: '成交量MA', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '放量' }] },
   { name: 'kdj_k', label: 'KDJ-K', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 9 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
+]
+
+const EXIT_ONLY_INDICATORS = [
   { name: 'stop_loss', label: '止损', params: [{ name: 'pct', label: '跌幅%', type: 'number' as const, default: 8 }], conditions: [{ value: 'triggered', label: '触发止损' }] },
   { name: 'take_profit', label: '止盈', params: [{ name: 'pct', label: '涨幅%', type: 'number' as const, default: 20 }], conditions: [{ value: 'triggered', label: '触发止盈' }] },
   { name: 'trailing_stop', label: '移动止损', params: [{ name: 'pct', label: '回落%', type: 'number' as const, default: 5 }], conditions: [{ value: 'triggered', label: '触发移动止损' }] },
 ]
+
+const ENTRY_INDICATORS = TECHNICAL_INDICATORS
+const EXIT_INDICATORS = [...TECHNICAL_INDICATORS, ...EXIT_ONLY_INDICATORS]
 
 interface SseProgress { current: number; total: number; pct: number; name: string }
 
@@ -80,6 +86,7 @@ function RiskSection() {
   }
 
   const STYLE_COLORS: Record<string, string> = {
+    '大盘价值': 'bg-blue-600', '大盘成长': 'bg-sky-500', '小盘价值': 'bg-amber-600', '小盘成长': 'bg-red-400',
     '科技成长': 'bg-blue-500', '金融价值': 'bg-amber-500', '消费防御': 'bg-emerald-500',
     '能源材料': 'bg-orange-500', '医疗健康': 'bg-purple-500', '地产基建': 'bg-slate-500',
     '综合其他': 'bg-slate-400',
@@ -398,14 +405,14 @@ function BacktestSection() {
                         <button onClick={() => addRule('entry')} className="text-xs text-blue-600 hover:text-blue-800">+ 添加</button>
                       </div>
                     </div>
-                    {entryRules.map((rule, i) => <RuleEditor key={i} rule={rule} onChange={r => { const e = [...entryRules]; e[i] = r; setEntryRules(e) }} onRemove={() => setEntryRules(entryRules.filter((_, j) => j !== i))} />)}
+                    {entryRules.map((rule, i) => <RuleEditor key={i} rule={rule} indicators={ENTRY_INDICATORS} onChange={r => { const e = [...entryRules]; e[i] = r; setEntryRules(e) }} onRemove={() => setEntryRules(entryRules.filter((_, j) => j !== i))} />)}
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs font-medium text-slate-600">离场规则</label>
                       <button onClick={() => addRule('exit')} className="text-xs text-blue-600 hover:text-blue-800">+ 添加</button>
                     </div>
-                    {exitRules.map((rule, i) => <RuleEditor key={i} rule={rule} onChange={r => { const e = [...exitRules]; e[i] = r; setExitRules(e) }} onRemove={() => setExitRules(exitRules.filter((_, j) => j !== i))} />)}
+                    {exitRules.map((rule, i) => <RuleEditor key={i} rule={rule} indicators={EXIT_INDICATORS} onChange={r => { const e = [...exitRules]; e[i] = r; setExitRules(e) }} onRemove={() => setExitRules(exitRules.filter((_, j) => j !== i))} />)}
                   </div>
                 </div>
               </>) : (
@@ -629,21 +636,21 @@ function BacktestSection() {
 
 // ── Shared components ───────────────────────────────────────────────────
 
-function RuleEditor({ rule, onChange, onRemove }: { rule: any; onChange: (r: any) => void; onRemove: () => void }) {
-  const indicator = INDICATORS.find(ind => ind.name === rule.indicator) || INDICATORS[0]
+function RuleEditor({ rule, indicators, onChange, onRemove }: { rule: any; indicators: any[]; onChange: (r: any) => void; onRemove: () => void }) {
+  const indicator = indicators.find(ind => ind.name === rule.indicator) || indicators[0]
   return (
     <div className="flex items-center gap-1.5 mb-1.5 bg-slate-50 rounded-lg p-2">
-      <select value={rule.indicator} onChange={e => onChange({ ...rule, indicator: e.target.value, params: INDICATORS.find(i => i.name === e.target.value)?.params.reduce((acc, p) => ({ ...acc, [p.name]: p.default }), {}) || {} })} className="h-7 px-1.5 rounded text-xs border border-slate-200 bg-white">
-        {INDICATORS.map(ind => <option key={ind.name} value={ind.name}>{ind.label}</option>)}
+      <select value={rule.indicator} onChange={e => onChange({ ...rule, indicator: e.target.value, params: indicators.find(i => i.name === e.target.value)?.params.reduce((acc: any, p: any) => ({ ...acc, [p.name]: p.default }), {}) || {} })} className="h-7 px-1.5 rounded text-xs border border-slate-200 bg-white">
+        {indicators.map(ind => <option key={ind.name} value={ind.name}>{ind.label}</option>)}
       </select>
-      {indicator.params.map(p => (
+      {indicator.params.map((p: any) => (
         <input key={p.name} type="number" value={rule.params?.[p.name] ?? p.default}
           onChange={e => onChange({ ...rule, params: { ...rule.params, [p.name]: Number(e.target.value) } })}
           className="w-14 h-7 px-1.5 rounded text-xs border border-slate-200 bg-white" placeholder={p.label} />
       ))}
       {indicator.conditions && (
         <select value={rule.condition} onChange={e => onChange({ ...rule, condition: e.target.value })} className="h-7 px-1.5 rounded text-xs border border-slate-200 bg-white">
-          {indicator.conditions.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
+          {indicator.conditions.map((c: any) => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>
       )}
       {(rule.condition === 'oversold' || rule.condition === 'overbought') && (

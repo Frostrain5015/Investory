@@ -572,6 +572,197 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
         signal.alarm(0)
 
 
+# ── Walk-Forward 回测 ────────────────────────────────────────────────────
+
+def run_walk_forward(strategy: dict, config: dict, conn, result_id: int):
+    """
+    Walk-forward backtest: rolling IS/OOS windows to assess strategy stability.
+
+    Config options (in config dict):
+        windowMonths: int = 24   — training window size in months
+        stepMonths:   int = 6    — step forward each iteration
+        oosMonths:    int = 6    — out-of-sample test period after each window
+    """
+    from datetime import datetime as dt
+
+    start_date = config.get("startDate")
+    end_date = config.get("endDate")
+    initial_capital = config.get("initialCapital", 100000)
+    window_months = config.get("windowMonths", 24)
+    step_months = config.get("stepMonths", 6)
+    oos_months = config.get("oosMonths", 6)
+
+    if not start_date or not end_date:
+        print("[ERROR] Walk-forward requires startDate and endDate", flush=True)
+        return None
+
+    # Generate rolling windows
+    from dateutil.relativedelta import relativedelta as rd  # type: ignore
+    ws = dt.strptime(start_date, "%Y-%m-%d")
+    we = dt.strptime(end_date, "%Y-%m-%d")
+    windows = []
+    cursor = ws
+    while True:
+        train_start = cursor
+        train_end = min(train_start + rd(months=window_months), we)
+        oos_start = train_end + rd(days=1)
+        oos_end = min(oos_start + rd(months=oos_months) - rd(days=1), we)
+        if oos_start >= we:
+            break
+        windows.append({
+            "trainStart": train_start.strftime("%Y-%m-%d"),
+            "trainEnd": train_end.strftime("%Y-%m-%d"),
+            "oosStart": oos_start.strftime("%Y-%m-%d"),
+            "oosEnd": oos_end.strftime("%Y-%m-%d"),
+        })
+        cursor += rd(months=step_months)
+        if cursor >= we:
+            break
+
+    if len(windows) < 2:
+        print("[ERROR] Walk-forward需要至少2个窗口，请扩大日期范围", flush=True)
+        return None
+
+    print(f"=== Walk-Forward: {len(windows)} 个窗口 "
+          f"({window_months}M训练 + {oos_months}M测试, 步长{step_months}M) ===", flush=True)
+
+    # ── Optimize over parameter grid (if provided) or just run single strategy
+    param_grid = config.get("paramGrid", {})
+    all_trades = []
+    oos_equity_pieces = []
+    window_results = []
+
+    for wi, w in enumerate(windows):
+        print(f"\n--- 窗口 {wi+1}/{len(windows)}: "
+              f"训练 {w['trainStart']}~{w['trainEnd']}, "
+              f"测试 {w['oosStart']}~{w['oosEnd']} ---", flush=True)
+
+        # In-sample: run (optionally parameter-sweep) on training period
+        is_config = {**config, "startDate": w["trainStart"], "endDate": w["trainEnd"]}
+        if param_grid:
+            best = optimize_window(strategy, is_config, param_grid, conn, result_id)
+        else:
+            is_out = run_simple_backtest(strategy, is_config, conn, result_id)
+            best = is_out
+
+        if best is None:
+            print(f"  窗口 {wi+1} IS 失败，跳过", flush=True)
+            window_results.append({"window": wi+1, "status": "error"})
+            continue
+
+        is_metrics = best.get("metrics", {})
+
+        # Out-of-sample: test on OOS period
+        oos_config = {**config, "startDate": w["oosStart"], "endDate": w["oosEnd"],
+                       "initialCapital": initial_capital}
+        oos_out = run_simple_backtest(strategy, oos_config, conn, result_id)
+
+        oos_metrics = oos_out.get("metrics", {}) if oos_out else {}
+        oos_curve = oos_out.get("equityCurve", []) if oos_out else []
+        oos_trades = oos_out.get("tradeLog", []) if oos_out else []
+
+        # Tag with window info
+        for tr in oos_trades:
+            tr["window"] = wi + 1
+        all_trades.extend(oos_trades)
+        oos_equity_pieces.extend(oos_curve)
+
+        # Stability score: OOS Sharpe / IS Sharpe (closer to 1 = stable)
+        is_sharpe = is_metrics.get("sharpeRatio", 0) or 0
+        oos_sharpe = oos_metrics.get("sharpeRatio", 0) or 0
+        stability = round(oos_sharpe / is_sharpe, 3) if is_sharpe > 0 else None
+
+        wr = {
+            "window": wi + 1,
+            "status": "ok",
+            "trainStart": w["trainStart"], "trainEnd": w["trainEnd"],
+            "oosStart": w["oosStart"], "oosEnd": w["oosEnd"],
+            "isMetrics": is_metrics,
+            "oosMetrics": oos_metrics,
+            "stability": stability,
+        }
+        window_results.append(wr)
+        print(f"  窗口 {wi+1}: IS Sharpe={is_sharpe}, OOS Sharpe={oos_sharpe}, "
+              f"Stability={stability}", flush=True)
+
+    # ── Aggregate: build continuous OOS equity curve
+    # Remove duplicate dates (last date of each window overlaps next window's first)
+    seen_dates = set()
+    equity_curve = []
+    running_cash = initial_capital
+    for pt in oos_equity_pieces:
+        if pt["date"] not in seen_dates:
+            equity_curve.append(pt)
+            seen_dates.add(pt["date"])
+            running_cash = pt["cash"]
+
+    equity_curve.sort(key=lambda p: p["date"])
+
+    # Aggregate metrics across all OOS windows
+    metrics = compute_metrics(equity_curve, all_trades)
+
+    # Additional walk-forward specific metrics
+    oos_sharpes = [w["oosMetrics"].get("sharpeRatio", 0) or 0 for w in window_results if w["status"] == "ok"]
+    stabilities = [w.get("stability") for w in window_results if w.get("stability") is not None]
+    metrics["wfWindows"] = len(window_results)
+    metrics["wfStability"] = round(sum(stabilities) / len(stabilities), 3) if stabilities else None
+    metrics["wfOosSharpeAvg"] = round(sum(oos_sharpes) / len(oos_sharpes), 3) if oos_sharpes else None
+    metrics["wfOosReturnAvg"] = round(
+        sum(w["oosMetrics"].get("totalReturnPct", 0) or 0 for w in window_results if w["status"] == "ok")
+        / len(window_results), 2)
+
+    output = {
+        "equityCurve": equity_curve,
+        "metrics": metrics,
+        "tradeLog": all_trades,
+        "walkForward": {
+            "windows": window_results,
+            "paramGrid": param_grid,
+            "wfSummary": {
+                "stability": metrics["wfStability"],
+                "oosSharpeAvg": metrics["wfOosSharpeAvg"],
+                "oosReturnAvg": metrics["wfOosReturnAvg"],
+            },
+        },
+    }
+    return output
+
+
+def optimize_window(strategy: dict, config: dict, param_grid: dict, conn, result_id: int):
+    """Grid search over parameter combinations, return best result by Sharpe."""
+    from itertools import product
+    import copy
+
+    param_names = list(param_grid.keys())
+    param_values = list(param_grid.values())
+    best_result = None
+    best_sharpe = -999
+
+    for combo in product(*param_values):
+        trial_strategy = copy.deepcopy(strategy)
+        params = dict(zip(param_names, combo))
+
+        # Apply params to matching rules
+        for rule_set_key in ["entry", "exit"]:
+            rules = trial_strategy.get(rule_set_key, {}).get("rules", [])
+            for rule in rules:
+                for pname, pval in params.items():
+                    iname = rule.get("indicator", "")
+                    if iname in pname:  # e.g. "sma_period" → SMA rule
+                        rule["params"][pname.split("_", 1)[1]] = pval
+                    elif pname.startswith(iname):
+                        rule["params"][pname[len(iname)+1:]] = pval
+
+        result = run_simple_backtest(trial_strategy, config, conn, result_id)
+        if result:
+            sharpe = result["metrics"].get("sharpeRatio", -999) or -999
+            if sharpe > best_sharpe:
+                best_sharpe = sharpe
+                best_result = result
+
+    return best_result
+
+
 # ── 入口 ─────────────────────────────────────────────────────────────────
 
 def parse_args():
@@ -596,7 +787,9 @@ def main():
 
     conn = get_conn(cfg)
     try:
-        if strategy_type == "advanced":
+        if strategy_type == "walk_forward":
+            output = run_walk_forward(strategy, config, conn, result_id)
+        elif strategy_type == "advanced":
             output = run_advanced_backtest(strategy, config, conn, result_id)
         else:
             output = run_simple_backtest(strategy, config, conn, result_id)
