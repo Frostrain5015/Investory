@@ -36,6 +36,14 @@ public class AiSessionManager {
         emitToAll("tool", Map.of("name", name));
     }
 
+    public void emitStrategy(Map<String, Object> data) {
+        emitToAll("strategy", data);
+    }
+
+    public void emitSuggestions(List<?> data) {
+        emitToAll("suggestions", Map.of("items", data));
+    }
+
     public void emitDone() {
         emitToAll("done", Map.of("msg", ""));
     }

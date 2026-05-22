@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Sparkles, X, Send, RefreshCw, Trash2, Brain } from 'lucide-react'
+import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
 import type { SseEvent } from '@/types'
 
-interface Message { role: 'user' | 'assistant'; content: string }
+interface Message { role: 'user' | 'assistant'; content: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string }
 
 // Module-level state survives page navigation
 let gMessages: Message[] = []
@@ -23,12 +24,16 @@ function useChatMessages(): [Message[], (msgs: Message[]) => void] {
 }
 
 export default function ChatPanel({ onClose }: { onClose: () => void }) {
+  const toast = useToast()
   const [messages, setMessages] = useChatMessages()
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [toolMsg, setToolMsg] = useState('')
   const [deepThink, setDeepThink] = useState(false)
+  const [suggestions, setSuggestions] = useState<string[]>([])
+  const [usedTools, setUsedTools] = useState<string[]>([])
+  const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
   const esRef = useRef<EventSource | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -54,8 +59,8 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     if (!apiKey) { alert('请先在设置页配置 AI API Key'); return }
 
     setInput('')
-    const userContent = deepThink ? `[深度思考模式] ${text}\n请给出详细的分析和推理过程，不要省略步骤。` : text
-    const newMessages: Message[] = [...messages, { role: 'user', content: userContent }]
+    // Send deepThink flag separately, not in visible message
+    const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
     setStreaming(true)
     setStreamText('')
@@ -64,7 +69,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       const resp = await fetch('/investory/api/ai/chat', {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-AI-Key': apiKey, 'X-AI-Provider': provider, 'X-AI-Model': model, 'X-AI-Base-URL': baseUrl, 'X-AI-Deep-Think': deepThink ? '1' : '0' },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({ messages: newMessages, deepThink }),
       })
       if (!resp.ok) { setStreamText(`[错误] HTTP ${resp.status}`); setStreaming(false); return }
 
@@ -72,9 +77,18 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       const es = new EventSource('/investory/api/ai/stream')
       esRef.current = es
 
+      es.addEventListener('strategy', (e) => {
+        const d = JSON.parse(e.data)
+        pendingStrategy.current = { name: d.name, desc: d.description, code: d.code }
+      })
+      es.addEventListener('suggestions', (e) => {
+        const d = JSON.parse(e.data)
+        setSuggestions(d.items || [])
+      })
       es.addEventListener('tool', (e) => {
         const d: SseEvent = JSON.parse(e.data)
         setToolMsg(d.name || '')
+        setUsedTools(prev => { const next = [...prev, d.name || '']; return next.slice(-10) })
       })
       es.addEventListener('token', (e) => {
         const d: SseEvent = JSON.parse(e.data)
@@ -82,7 +96,19 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
         setStreamText(prev => prev + (d.msg || ''))
       })
       es.addEventListener('done', () => {
-        setStreamText(prev => { setMessages([...newMessages, { role: 'assistant', content: prev }]); return '' })
+        setStreamText(prev => {
+          const s = pendingStrategy.current
+          const msg: Message = { role: 'assistant', content: prev }
+          if (s) {
+            msg.hasCode = true
+            msg.strategyName = s.name
+            msg.strategyDesc = s.desc
+            msg.strategyCode = s.code
+            pendingStrategy.current = null
+          }
+          setMessages([...newMessages, msg])
+          return ''
+        })
         setStreaming(false); es.close(); esRef.current = null
       })
       es.addEventListener('error', (e) => {
@@ -127,6 +153,16 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
+      {/* C3: Context panel */}
+      {usedTools.length > 0 && (
+        <div className="px-4 py-1.5 border-b border-slate-100 bg-slate-50/50">
+          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+            <span>已获取:</span>
+            {usedTools.map((t, i) => <span key={i} className="bg-white px-1.5 py-0.5 rounded border border-slate-100">{t}</span>)}
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-auto px-4 py-4 space-y-4">
         {messages.length === 0 && !streaming && (
@@ -148,9 +184,46 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${m.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-800'}`}>
               {m.role === 'assistant'
-                ? <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-200 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto"><ReactMarkdown>{m.content}</ReactMarkdown></div>
+                ? <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-200 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto">
+                  <ReactMarkdown components={{
+                    code: ({ children, className, ...props }) => {
+                      const text = String(children).trim()
+                      // C1: Stock codes like 600519.SH become clickable links
+                      if (/^\d{4,6}\.(SH|SZ|HK|US)$/i.test(text) || /^[A-Z]{1,5}\.US$/i.test(text)) {
+                        return <a href={`/investory/stock?symbol=${text}`} target="_blank" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100">{text}</a>
+                      }
+                      return <code className={className} {...props}>{children}</code>
+                    }
+                  }}>{m.content}</ReactMarkdown>
+                </div>
                 : <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>
               }
+              {/* C2: Follow-up suggestion buttons */}
+              {i === messages.length - 1 && suggestions.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {suggestions.map((s, si) => (
+                    <button key={si} onClick={() => { setInput(s); setTimeout(() => send(), 100) }}
+                      className="text-xs px-2.5 py-1 rounded-full border border-slate-200 text-slate-500 hover:bg-slate-50 hover:text-slate-700">{s}</button>
+                  ))}
+                </div>
+              )}
+              {(m as Message).hasCode && (
+                <button onClick={async () => {
+                  const name = m.strategyName || prompt('策略名称', '观澜生成的策略')
+                  if (!name) return
+                  const code = m.strategyCode || m.content
+                  const res = await fetch('/investory/api/backtest/strategies', {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, strategyType: 'advanced', strategy: { code } })
+                  })
+                  const data = await res.json()
+                  if (data.error) toast(data.error, false)
+                  else toast('策略已保存', true)
+                }} className="mt-2 text-xs text-blue-600 hover:text-blue-800 font-medium">
+                  保存策略
+                </button>
+              )}
             </div>
           </div>
         ))}

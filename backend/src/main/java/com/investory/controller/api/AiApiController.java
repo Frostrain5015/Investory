@@ -52,7 +52,7 @@ public class AiApiController {
         final String model = (aiModel != null && !aiModel.isBlank()) ? aiModel : "gpt-4o-mini";
         final String key = aiKey;
         final String baseUrl = (aiBaseUrl != null) ? aiBaseUrl : "";
-        final boolean deepThink = "1".equals(req.getHeader("X-AI-Deep-Think"));
+        final boolean deepThink = Boolean.TRUE.equals(body.get("deepThink"));
 
         // Get portfolio ID from session
         jakarta.servlet.http.HttpSession s = req.getSession(false);
@@ -109,6 +109,17 @@ public class AiApiController {
                     while ((line = reader.readLine()) != null) {
                         if ("[DONE]".equals(line.trim())) {
                             session.emitDone();
+                        } else if (line.startsWith("[SUGGESTIONS]")) {
+                            try {
+                                String jsonStr = line.substring(14).trim();
+                                session.emitSuggestions(json.readValue(jsonStr, List.class));
+                            } catch (Exception ignored) {}
+                        } else if (line.startsWith("[STRATEGY]")) {
+                            try {
+                                String jsonStr = line.substring(10).trim();
+                                Map<String, Object> sdata = json.readValue(jsonStr, Map.class);
+                                session.emitStrategy(sdata);
+                            } catch (Exception ignored) {}
                         } else if (line.startsWith("[TOOL]")) {
                             session.emitTool(line.substring(6).trim());
                         } else if (line.startsWith("[ERROR]")) {

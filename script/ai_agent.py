@@ -25,20 +25,43 @@ def build_system_prompt(kb: dict) -> str:
         for p in kb.get("core_principles", [])
     )
     metrics_text = "\n".join(f"- **{k}**: {v}" for k, v in kb.get("key_metrics_guide", {}).items())
-    return f"""你是「观澜」（Horizon），Investory 投资组合管理系统的 AI 助理。
+    return f"""你是「观澜」（Horizon），Investory 内置的分析助手。风格：冷静、专业、简洁。不寒暄，不恭维，不废话，不主动给建议。用数据说话。
 
-核心原则：简洁。每次回复不超过 3-4 句话，除非用户明确要求详细分析。不要自我介绍，不要长篇大论。简单问候回一句即可。用数据和原则说话，不堆砌辞藻。
-
-你的投资哲学根植于价值投资传统——格雷厄姆的安全边际、巴菲特的能力圈和护城河、芒格的多元思维模型。
-
-## 核心投资原则
+你遵循价值投资框架。参考原则：
 {principles_text}
 
-## 关键指标解读
+指标解读：
 {metrics_text}
-- 回答简洁务实
-- 不确定时明确说"我不确定"
-- 用中文回复，术语保留英文"""
+
+回复规则：
+- 每次不超过 3 句。但生成代码/策略/表格时不受此限
+- 用户说"你好"只需回"你好"
+- 不确定的事直接说"不确定"
+- 不带表情，不带感叹号
+- 中文。缩写和指标名保留英文"""
+
+
+# ── Symbol resolution ────────────────────────────────────────────────────
+
+def resolve_symbol(conn, symbol: str):
+    """将用户输入的 symbol 转换为 DB 格式"""
+    cur = conn.cursor()
+    cur.execute("SELECT symbol FROM stocks WHERE symbol=%s", (symbol,))
+    row = cur.fetchone()
+    if row: cur.close(); return row[0]
+    if '.' in symbol:
+        parts = symbol.rsplit('.', 1)
+        code, market = parts[0], parts[1].upper()
+        if market in ('SH','SZ'):
+            prefix = '1' if market == 'SH' else '0'
+            db_sym = f"{prefix}.{code}"
+            cur.execute("SELECT symbol FROM stocks WHERE symbol=%s", (db_sym,))
+            row = cur.fetchone()
+            if row: cur.close(); return row[0]
+    cur.execute("SELECT symbol FROM stocks WHERE symbol LIKE %s", (f"%{symbol}%",))
+    row = cur.fetchone()
+    cur.close()
+    return row[0] if row else None
 
 
 # ── Database tools ──────────────────────────────────────────────────────
@@ -106,6 +129,202 @@ def tool_get_stock_metrics(symbol: str) -> dict:
             "volatility": round(float(m[2]),1) if m[2] else None,
             "maxDrawdown": round(float(m[3]),1) if m[3] else None}
 
+
+MAX_ROWS = 5000
+MAX_MULTI_ROWS = 1000
+MAX_PNL_ROWS = 500
+MAX_CORR_STOCKS = 10
+MAX_TOOL_CALLS = 5
+
+def tool_get_stock_price(symbol: str) -> dict:
+    """获取个股最新行情"""
+    conn = get_db_conn()
+    cur = conn.cursor()
+    db_sym = resolve_symbol(conn, symbol)
+    if not db_sym: cur.close(); conn.close(); return {"error": f"未找到 {symbol}"}
+    cur.execute("SELECT id FROM stocks WHERE symbol=%s", (db_sym,))
+    sid = cur.fetchone()[0]
+    cur.execute("SELECT close, trade_date FROM stock_prices WHERE stock_id=%s ORDER BY trade_date DESC LIMIT 2", (sid,))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    if len(rows) < 1: return {"symbol": symbol, "price": None, "note": "无价格数据"}
+    price = float(rows[0][0])
+    prev = float(rows[1][0]) if len(rows) > 1 else price
+    chg = price - prev
+    chg_pct = (chg / prev * 100) if prev else 0
+    return {"symbol": symbol, "price": round(price,2), "change": round(chg,2), "changePct": round(chg_pct,2), "date": str(rows[0][1])}
+
+def tool_get_pnl_history(portfolio_id: int, days: int = 90) -> dict:
+    """获取组合盈亏历史"""
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT snapshot_date, total_value, daily_pnl FROM daily_portfolio_value WHERE portfolio_id=%s AND snapshot_date >= DATE_SUB(CURDATE(), INTERVAL %s DAY) ORDER BY snapshot_date LIMIT %s", (portfolio_id, min(days,365), MAX_PNL_ROWS))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    if not rows: return {"error": "暂无组合净值数据"}
+    points = [{"date": str(r[0]), "value": round(float(r[1] or 0),2), "pnl": round(float(r[2] or 0),2)} for r in rows]
+    return {"count": len(points), "points": points[:MAX_PNL_ROWS]}
+
+def tool_get_transactions(portfolio_id: int, limit: int = 20) -> list:
+    """获取近期交易记录"""
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT t.trade_date, s.symbol, s.name, t.type, t.shares, t.price, t.fee FROM transactions t JOIN stocks s ON t.stock_id=s.id WHERE t.portfolio_id=%s ORDER BY t.trade_date DESC, t.id DESC LIMIT %s", (portfolio_id, min(limit, 50)))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    return [{"date": str(r[0]), "symbol": r[1], "name": r[2], "type": r[3], "shares": int(float(r[4])), "price": round(float(r[5]),2), "fee": round(float(r[6] or 0),2)} for r in rows]
+
+def tool_get_stock_price_history(symbol: str, days: int = 60) -> dict:
+    """获取个股历史K线"""
+    db_sym = resolve_symbol(get_db_conn(), symbol)
+    if not db_sym: return {"error": f"未找到 {symbol}"}
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("SELECT s.id FROM stocks s WHERE s.symbol=%s", (db_sym,))
+    sid = cur.fetchone()[0]
+    limit = min(days * 2, MAX_ROWS)
+    cur.execute("SELECT trade_date, open, close, high, low, volume FROM stock_prices WHERE stock_id=%s ORDER BY trade_date DESC LIMIT %s", (sid, limit))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    points = [{"date": str(r[0]), "open": round(float(r[1] or 0),2), "close": round(float(r[2] or 0),2), "high": round(float(r[3] or 0),2), "low": round(float(r[4] or 0),2), "volume": int(float(r[5] or 0))} for r in rows]
+    truncated = len(points) >= limit
+    return {"symbol": symbol, "count": len(points), "points": list(reversed(points)), "truncated": truncated, "note": "数据已截断" if truncated else ""}
+
+# B: Computational tools
+def tool_compute_correlation(portfolio_id: int, symbols: list = None) -> dict:
+    """计算持仓相关性矩阵"""
+    import numpy as np
+    conn = get_db_conn(); cur = conn.cursor()
+    if not symbols:
+        cur.execute("SELECT s.symbol FROM holdings h JOIN stocks s ON h.stock_id=s.id WHERE h.portfolio_id=%s AND h.total_shares>0", (portfolio_id,))
+        symbols = [r[0] for r in cur.fetchall()]
+    symbols = symbols[:MAX_CORR_STOCKS]
+    if len(symbols) < 2: cur.close(); conn.close(); return {"error": "至少需要2只股票"}
+    closes = {}
+    for sym in symbols:
+        db_sym = resolve_symbol(conn, sym)
+        if not db_sym: continue
+        cur.execute("SELECT s.id FROM stocks WHERE symbol=%s", (db_sym,))
+        sid = cur.fetchone()[0]
+        cur.execute("SELECT trade_date, close FROM stock_prices WHERE stock_id=%s ORDER BY trade_date DESC LIMIT %s", (sid, MAX_MULTI_ROWS))
+        for d, c in cur.fetchall(): closes.setdefault(str(d), {})[sym] = float(c)
+    cur.close(); conn.close()
+    dates = sorted(closes.keys())
+    pairs = []
+    for i in range(len(symbols)):
+        for j in range(i+1, len(symbols)):
+            s1, s2 = symbols[i], symbols[j]
+            vals1, vals2 = [], []
+            for d in dates:
+                dd = closes[d]
+                if s1 in dd and s2 in dd: vals1.append(dd[s1]); vals2.append(dd[s2])
+            if len(vals1) > 30:
+                r = float(np.corrcoef(vals1, vals2)[0,1])
+                pairs.append({"s1": s1, "s2": s2, "correlation": round(r, 3), "overlap": len(vals1)})
+    return {"pairs": sorted(pairs, key=lambda x: -abs(x["correlation"])), "note": "r>0.7高度正相关，分散化效果弱"}
+
+def tool_compute_sector_breakdown(portfolio_id: int) -> dict:
+    """行业/市场分布"""
+    # Reuse style classifier from portfolio_style_analyzer
+    import sys; sys.path.insert(0, str(SCRIPT_DIR))
+    from portfolio_style_analyzer import classify_style
+    conn = get_db_conn(); cur = conn.cursor()
+    cur.execute("SELECT s.symbol, s.name, s.market, h.total_shares, (SELECT close FROM stock_prices WHERE stock_id=s.id ORDER BY trade_date DESC LIMIT 1) AS price FROM holdings h JOIN stocks s ON h.stock_id=s.id WHERE h.portfolio_id=%s AND h.total_shares>0", (portfolio_id,))
+    rows = cur.fetchall()
+    cur.execute("SELECT beta_1y, volatility_1y FROM stock_metric_cache WHERE stock_id IN (SELECT stock_id FROM holdings WHERE portfolio_id=%s)", (portfolio_id,))
+    metrics = list(cur.fetchall())
+    cur.close(); conn.close()
+    if not rows: return {"error": "无持仓"}
+    by_style, by_market, total = {}, {}, 0
+    for i, r in enumerate(rows):
+        sym, name, mkt, shares, price = r
+        mv = float(shares) * float(price or 0)
+        total += mv
+        beta = float(metrics[i][0]) if i < len(metrics) and metrics[i][0] else None
+        vol = float(metrics[i][1]) if i < len(metrics) and metrics[i][1] else None
+        style = classify_style(name or sym, mkt, beta, vol)
+        by_style[style] = by_style.get(style, 0) + mv
+        by_market[mkt] = by_market.get(mkt, 0) + mv
+    for k in by_style: by_style[k] = round(by_style[k]/total*100, 1) if total else 0
+    for k in by_market: by_market[k] = round(by_market[k]/total*100, 1) if total else 0
+    top_style = max(by_style, key=by_style.get) if by_style else ""
+    return {"byStyle": by_style, "byMarket": by_market, "concentrationRisk": f"{top_style}占比{by_style.get(top_style,0)}%，{'集中度偏高' if by_style.get(top_style,0)>50 else '分布合理'}"}
+
+def tool_benchmark_compare(portfolio_id: int, benchmark: str = "000001.SH", days: int = 252) -> dict:
+    """组合 vs 基准对比"""
+    import numpy as np
+    conn = get_db_conn(); cur = conn.cursor()
+    # Portfolio daily values
+    cur.execute("SELECT snapshot_date, total_value FROM daily_portfolio_value WHERE portfolio_id=%s AND snapshot_date>=DATE_SUB(CURDATE(),INTERVAL %s DAY) ORDER BY snapshot_date", (portfolio_id, min(days,500)))
+    pv_rows = cur.fetchall()
+    # Benchmark prices
+    db_bm = resolve_symbol(conn, benchmark) or benchmark
+    cur.execute("SELECT id FROM stocks WHERE symbol=%s", (db_bm,))
+    bm = cur.fetchone()
+    bm_close = {}
+    if bm:
+        cur.execute("SELECT trade_date, close FROM stock_prices WHERE stock_id=%s AND trade_date>=DATE_SUB(CURDATE(),INTERVAL %s DAY) ORDER BY trade_date", (bm[0], min(days,500)))
+        bm_close = {str(d): float(c) for d, c in cur.fetchall()}
+    cur.close(); conn.close()
+    if len(pv_rows) < 30: return {"error": "组合净值数据不足（需至少30天）"}
+    p_vals, b_vals = [], []
+    for d, v in pv_rows:
+        d = str(d)
+        if d in bm_close: p_vals.append(float(v)); b_vals.append(bm_close[d])
+    if len(p_vals) < 30: return {"error": "基准数据对齐不足"}
+    p_vals, b_vals = np.array(p_vals), np.array(b_vals)
+    p_ret = (p_vals[-1]/p_vals[0]-1)*100
+    b_ret = (b_vals[-1]/b_vals[0]-1)*100
+    excess = p_ret - b_ret
+    p_daily = np.diff(p_vals)/p_vals[:-1]
+    b_daily = np.diff(b_vals)/b_vals[:-1]
+    corr = float(np.corrcoef(p_daily, b_daily)[0,1]) if len(p_daily)>30 else None
+    te = float(np.std(p_daily - b_daily, ddof=1)*np.sqrt(252)*100) if len(p_daily)>30 else None
+    return {"portfolioReturn": round(p_ret,2), "benchmarkReturn": round(b_ret,2), "excessReturn": round(excess,2), "correlation": round(corr,3) if corr else None, "trackingError": round(te,2) if te else None, "periodDays": len(p_vals), "note": "超额收益>0表示跑赢基准"}
+
+def tool_analyze_backtest(backtest_id: int = None) -> dict:
+    """获取最新回测结果的完整分析数据"""
+    conn = get_db_conn(); cur = conn.cursor()
+    if backtest_id:
+        cur.execute("SELECT id, name, metrics_json, trade_log_json, equity_curve_json, start_date, end_date FROM backtest_results WHERE id=%s", (backtest_id,))
+    else:
+        cur.execute("SELECT id, name, metrics_json, trade_log_json, equity_curve_json, start_date, end_date FROM backtest_results ORDER BY id DESC LIMIT 1")
+    row = cur.fetchone()
+    if not row: cur.close(); conn.close(); return {"error": "无回测记录"}
+    try: metrics = json.loads(row[2])
+    except: metrics = {}
+    try: trades = json.loads(row[3])
+    except: trades = []
+    try: curve = json.loads(row[4])
+    except: curve = []
+    cur.close(); conn.close()
+    # Compute additional stats
+    wins = [t for t in trades if t.get("pnl") and t["pnl"] > 0]
+    losses = [t for t in trades if t.get("pnl") and t["pnl"] < 0]
+    avg_win = round(sum(t["pnl"] for t in wins)/len(wins),2) if wins else 0
+    avg_loss = round(sum(t["pnl"] for t in losses)/len(losses),2) if losses else 0
+    avg_hold_days = None
+    if len(trades) >= 2:
+        buy_dates = {t["symbol"]: t["date"] for t in trades if t["action"] == "BUY"}
+        hold_periods = []
+        for t in trades:
+            if t["action"] == "SELL" and t["symbol"] in buy_dates:
+                from datetime import datetime
+                try:
+                    bd = datetime.strptime(buy_dates[t["symbol"]], "%Y-%m-%d")
+                    sd = datetime.strptime(t["date"], "%Y-%m-%d")
+                    hold_periods.append((sd-bd).days)
+                except: pass
+        if hold_periods: avg_hold_days = round(sum(hold_periods)/len(hold_periods), 1)
+    return {
+        "id": row[0], "name": row[1], "period": f"{row[5]} ~ {row[6]}",
+        "metrics": metrics,
+        "tradeStats": {"totalTrades": len(wins)+len(losses), "wins": len(wins), "losses": len(losses),
+                        "avgWin": avg_win, "avgLoss": avg_loss, "avgHoldDays": avg_hold_days,
+                        "totalReturn": metrics.get("totalReturnPct"), "sharpe": metrics.get("sharpeRatio"),
+                        "maxDrawdown": metrics.get("maxDrawdownPct"), "winRate": metrics.get("winRatePct")},
+        "equityPoints": len(curve),
+    }
 
 def tool_get_backtests(limit: int = 5) -> list:
     """获取最近的回测结果"""
@@ -188,15 +407,64 @@ TOOLS = [
             "id": {"type": "integer", "description": "策略ID"}
         }, "required": ["id"]}
     }},
+    {"type": "function", "function": {
+        "name": "generate_strategy", "description": "根据用户的自然语言描述生成一个完整的回测策略",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string"}, "description": {"type": "string"}, "code": {"type": "string"}
+        }, "required": ["name", "description", "code"]}
+    }},
+    # A: Data tools
+    {"type": "function", "function": {
+        "name": "get_stock_price", "description": "查询某只股票的当前价格和今日涨跌",
+        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}, "required": ["symbol"]}
+    }},
+    {"type": "function", "function": {
+        "name": "get_pnl_history", "description": "获取组合每日净值走势和盈亏",
+        "parameters": {"type": "object", "properties": {"days": {"type": "integer", "description": "天数，默认90"}}, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "get_transactions", "description": "获取近期交易记录",
+        "parameters": {"type": "object", "properties": {"limit": {"type": "integer"}}, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "get_stock_price_history", "description": "获取个股历史K线（OHLCV）",
+        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}, "days": {"type": "integer", "description": "天数，默认60"}}, "required": ["symbol"]}
+    }},
+    # B: Compute tools
+    {"type": "function", "function": {
+        "name": "compute_correlation", "description": "计算持仓股票间的价格相关性矩阵",
+        "parameters": {"type": "object", "properties": {"symbols": {"type": "array", "items": {"type": "string"}}}, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "compute_sector_breakdown", "description": "分析持仓的行业/市场分布和集中度",
+        "parameters": {"type": "object", "properties": {}, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "benchmark_compare", "description": "对比组合与基准指数的表现差异",
+        "parameters": {"type": "object", "properties": {"benchmark": {"type": "string", "description": "基准代码，默认000001.SH（上证）"}, "days": {"type": "integer"}}, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "analyze_backtest", "description": "获取最新回测结果并给出全面客观的评价，覆盖收益、风险、稳定性、改进方向",
+        "parameters": {"type": "object", "properties": {"id": {"type": "integer", "description": "回测结果ID，不传则取最新一次"}}, "required": []}
+    }},
 ]
 
 TOOL_LABELS = {
-    "get_portfolio": "正在读取持仓数据...",
+    "get_portfolio": "正在读取持仓...",
     "get_stock_metrics": "正在查询量化指标...",
     "get_backtests": "正在获取回测记录...",
     "get_style_analysis": "正在分析组合风格...",
     "list_strategies": "正在获取策略列表...",
     "get_strategy": "正在读取策略详情...",
+    "generate_strategy": "正在生成策略...",
+    "get_stock_price": "正在查询股价...",
+    "get_pnl_history": "正在获取组合走势...",
+    "get_transactions": "正在获取交易记录...",
+    "get_stock_price_history": "正在加载K线数据...",
+    "compute_correlation": "正在计算相关性...",
+    "compute_sector_breakdown": "正在分析行业分布...",
+    "benchmark_compare": "正在对比基准...",
+    "analyze_backtest": "正在分析回测...",
 }
 
 def execute_tool(name: str, args: dict, portfolio_id: int) -> str:
@@ -215,6 +483,26 @@ def execute_tool(name: str, args: dict, portfolio_id: int) -> str:
         return json.dumps(tool_list_strategies(), ensure_ascii=False)
     elif name == "get_strategy":
         return json.dumps(tool_get_strategy(args.get("id",0)), ensure_ascii=False)
+    elif name == "generate_strategy":
+        result = {"name": args.get("name",""), "description": args.get("description",""), "code": args.get("code","")}
+        print(f"[STRATEGY] {json.dumps(result, ensure_ascii=False)}", flush=True)
+        return json.dumps(result, ensure_ascii=False)
+    elif name == "get_stock_price":
+        return json.dumps(tool_get_stock_price(args.get("symbol","")), ensure_ascii=False)
+    elif name == "get_pnl_history":
+        return json.dumps(tool_get_pnl_history(portfolio_id, args.get("days",90)), ensure_ascii=False)
+    elif name == "get_transactions":
+        return json.dumps(tool_get_transactions(portfolio_id, args.get("limit",20)), ensure_ascii=False)
+    elif name == "get_stock_price_history":
+        return json.dumps(tool_get_stock_price_history(args.get("symbol",""), args.get("days",60)), ensure_ascii=False)
+    elif name == "compute_correlation":
+        return json.dumps(tool_compute_correlation(portfolio_id, args.get("symbols")), ensure_ascii=False)
+    elif name == "compute_sector_breakdown":
+        return json.dumps(tool_compute_sector_breakdown(portfolio_id), ensure_ascii=False)
+    elif name == "benchmark_compare":
+        return json.dumps(tool_benchmark_compare(portfolio_id, args.get("benchmark","000001.SH"), args.get("days",252)), ensure_ascii=False)
+    elif name == "analyze_backtest":
+        return json.dumps(tool_analyze_backtest(args.get("id")), ensure_ascii=False)
     return json.dumps({"error": f"unknown tool: {name}"})
 
 
@@ -251,32 +539,54 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         if "tool_call_id" in m: entry["tool_call_id"] = m["tool_call_id"]
         formatted.append(entry)
 
-    # First call — non-streaming to check for tool calls
-    resp = client.chat.completions.create(model=model, messages=formatted, tools=TOOLS, stream=False, temperature=0.7, max_tokens=max_tokens)
-    msg = resp.choices[0].message
+    # Always stream first. If tool calls appear mid-stream, collect and handle.
+    stream = client.chat.completions.create(model=model, messages=formatted, tools=TOOLS, stream=True, temperature=0.7, max_tokens=max_tokens)
 
-    if msg.tool_calls:
-        # Execute tools
-        formatted.append({"role": "assistant", "content": msg.content, "tool_calls": [
-            {"id": tc.id, "type": "function", "function": {"name": tc.function.name, "arguments": tc.function.arguments}}
-            for tc in msg.tool_calls
+    tool_calls = {}  # idx -> {id, name, args}
+    has_tools = False
+    for chunk in stream:
+        delta = chunk.choices[0].delta
+        if delta.tool_calls:
+            has_tools = True
+            for tc in delta.tool_calls:
+                idx = tc.index
+                if idx not in tool_calls:
+                    tool_calls[idx] = {"id": "", "name": "", "args": ""}
+                if tc.id: tool_calls[idx]["id"] = tc.id
+                if tc.function:
+                    if tc.function.name: tool_calls[idx]["name"] += tc.function.name
+                    if tc.function.arguments: tool_calls[idx]["args"] += tc.function.arguments
+        elif delta.content:
+            sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
+
+    if has_tools:
+        sorted_tools = [tool_calls[i] for i in sorted(tool_calls)]
+        formatted.append({"role": "assistant", "content": None, "tool_calls": [
+            {"id": t["id"], "type": "function", "function": {"name": t["name"], "arguments": t["args"]}}
+            for t in sorted_tools
         ]})
-        for tc in msg.tool_calls:
-            try: args = json.loads(tc.function.arguments)
+        for i, t in enumerate(sorted_tools):
+            if i >= MAX_TOOL_CALLS:
+                formatted.append({"role": "tool", "tool_call_id": t["id"], "content": json.dumps({"error": "已达到本轮对话最大工具调用次数"})})
+                break
+            try: args = json.loads(t["args"])
             except: args = {}
-            result = execute_tool(tc.function.name, args, portfolio_id)
-            formatted.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            result = execute_tool(t["name"], args, portfolio_id)
+            formatted.append({"role": "tool", "tool_call_id": t["id"], "content": result})
 
-        # Second call with tool results — stream
         stream2 = client.chat.completions.create(model=model, messages=formatted, stream=True, temperature=0.7, max_tokens=max_tokens)
         for chunk in stream2:
             delta = chunk.choices[0].delta
             if delta.content:
                 sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
-    elif msg.content:
-        # No tools needed — write the full response at once
-        sys.stdout.write(msg.content + "\n"); sys.stdout.flush()
 
+    # Emit follow-up suggestions based on conversation context
+    suggestions = []
+    if any('持仓' in str(m.get('content','')) for m in messages):
+        suggestions.append("对比沪深300")
+    suggestions.append("诊断组合风格")
+    if suggestions:
+        print(f"[SUGGESTIONS] {json.dumps(suggestions, ensure_ascii=False)}", flush=True)
     print("\n[DONE]", flush=True)
 
 
@@ -323,7 +633,7 @@ def main():
     kb = load_knowledge_base()
     system_prompt = build_system_prompt(kb)
     if args.deep_think:
-        system_prompt += "\n\n用户已启用深度思考模式。请给出更详细的分析：展示推理步骤、引用具体数据、考虑多种情景、明确列出假设和局限。"
+        system_prompt += "\n\n深度思考模式。要求：详细展示推理步骤、具体数据、假设和局限。如果用户要求写策略代码，直接输出完整可运行的 Python 代码（def decide(ctx): ...），不用先讲理论。"
     full_messages = [{"role": "system", "content": system_prompt}] + messages
 
     try:
@@ -332,7 +642,19 @@ def main():
         else:
             call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think)
     except Exception as e:
-        print(f"[ERROR] {e}", flush=True)
+        msg = str(e)
+        if "401" in msg or "Unauthorized" in msg or "Authentication" in msg:
+            print(f"[ERROR] API Key 无效或未授权，请检查设置", flush=True)
+        elif "timeout" in msg.lower() or "timed out" in msg.lower():
+            print(f"[ERROR] 请求超时，模型响应过慢或网络问题", flush=True)
+        elif "connection" in msg.lower() or "ConnectError" in msg:
+            print(f"[ERROR] 无法连接 API 服务，请检查网络和代理设置", flush=True)
+        elif "Rate" in msg or "429" in msg:
+            print(f"[ERROR] API 调用频率超限，请稍后重试", flush=True)
+        elif "Insufficient" in msg or "quota" in msg.lower():
+            print(f"[ERROR] API 额度不足，请检查账户余额", flush=True)
+        else:
+            print(f"[ERROR] 请求失败: {msg[:200]}", flush=True)
         traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
