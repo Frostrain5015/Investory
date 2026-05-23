@@ -868,7 +868,7 @@ def main():
             output = run_simple_backtest(strategy, config, conn, result_id)
 
         if output is None:
-            print("[ERROR] 回测失败", flush=True)
+            print("[ERROR] 回测失败：无可用的股票数据或日期范围不足", flush=True)
             sys.exit(1)
 
         out_path = Path(f"backtest_output_{result_id}.json")
@@ -881,6 +881,15 @@ def main():
               f"年化: {metrics['annualReturnPct']}% | Sharpe: {metrics['sharpeRatio']} | "
               f"最大回撤: {metrics['maxDrawdownPct']}% | 交易: {trades} 笔 ===", flush=True)
 
+    except Exception as e:
+        print(f"[ERROR] 回测引擎异常: {e}", flush=True)
+        traceback.print_exc()
+        # Write structured error so Java can surface it to the UI
+        err_path = Path(f"backtest_error_{result_id}.json")
+        with open(err_path, "w", encoding="utf-8") as f:
+            json.dump({"error": str(e), "type": type(e).__name__,
+                "traceback": traceback.format_exc()}, f, ensure_ascii=False)
+        sys.exit(1)
     finally:
         conn.close()
 
@@ -889,8 +898,17 @@ if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n已中断。", flush=True)
-        sys.exit(0)
+        print("\n[ERROR] 用户中断", flush=True)
+        sys.exit(1)
+    except ImportError as e:
+        msg = f"缺少依赖包: {e}"
+        print(f"[ERROR] {msg}", flush=True)
+        traceback.print_exc()
+        sys.exit(1)
+    except MemoryError:
+        print("[ERROR] 内存不足，请减少测试股票数量或日期范围", flush=True)
+        sys.exit(1)
     except Exception:
+        print(f"[ERROR] 未预期的引擎错误", flush=True)
         traceback.print_exc()
         sys.exit(1)

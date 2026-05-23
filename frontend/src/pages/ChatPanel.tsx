@@ -143,6 +143,16 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
         if (s) {
           msg.hasCode = true; msg.strategyName = s.name; msg.strategyDesc = s.desc; msg.strategyCode = s.code
           pendingStrategy.current = null
+        } else {
+          // Fallback: detect code directly in the response (AI sometimes writes code inline)
+          const codeMatch = raw.match(/```(?:python)?\s*\n(def decide\(ctx[^)]*\):[\s\S]*?)```/)
+          if (codeMatch) {
+            const nameMatch = raw.match(/(?:策略名称|策略)[：:]\s*(.+)/)
+            msg.hasCode = true
+            msg.strategyName = nameMatch ? nameMatch[1].trim() : ''
+            msg.strategyCode = codeMatch[1].trim()
+            msg.strategyDesc = ''
+          }
         }
         setMessages([...newMessages, msg])
         setStreaming(false); es.close(); esRef.current = null

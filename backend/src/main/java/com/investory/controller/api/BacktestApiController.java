@@ -151,6 +151,8 @@ public class BacktestApiController {
 
                 // Read output JSON — Python writes to its working dir (script/)
                 Path tmpOutput = scriptDir.toPath().resolve("backtest_output_" + resultId + ".json");
+                Path tmpError  = scriptDir.toPath().resolve("backtest_error_" + resultId + ".json");
+
                 if (exitCode == 0 && Files.exists(tmpOutput)) {
                     String outputJson = Files.readString(tmpOutput);
                     @SuppressWarnings("unchecked")
@@ -161,8 +163,31 @@ public class BacktestApiController {
                     backtestDao.updateResult(resultId, equityCurve, metrics, tradeLog);
                     session.emitDone("回测完成", resultId);
                     Files.deleteIfExists(tmpOutput);
-                } else if (exitCode != 0) {
-                    session.emitError("回测引擎退出码: " + exitCode);
+                } else {
+                    // Read detailed error if Python wrote one
+                    String errDetail = "";
+                    if (Files.exists(tmpError)) {
+                        try {
+                            @SuppressWarnings("unchecked")
+                            Map<String, Object> errData = json.readValue(Files.readString(tmpError), Map.class);
+                            errDetail = ": " + errData.getOrDefault("error", "").toString();
+                            String tb = (String) errData.getOrDefault("traceback", "");
+                            if (!tb.isEmpty()) {
+                                // Emit last 5 lines of traceback to SSE log
+                                String[] lines = tb.split("\n");
+                                int start = Math.max(0, lines.length - 5);
+                                for (int i = start; i < lines.length; i++) {
+                                    session.addLog(lines[i].trim());
+                                }
+                            }
+                        } catch (Exception ignored) {}
+                        Files.deleteIfExists(tmpError);
+                    }
+                    if (exitCode != 0) {
+                        session.emitError("回测引擎异常退出 (code=" + exitCode + ")" + errDetail);
+                    } else {
+                        session.emitError("回测引擎未产生输出文件" + errDetail);
+                    }
                 }
             } catch (Exception e) {
                 session.emitError(e.getMessage());

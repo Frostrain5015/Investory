@@ -59,18 +59,18 @@ def build_system_prompt(kb: dict) -> str:
 {metrics_text}
 
 工具调用规则：
+- ⚠ 策略生成铁律：用户要求写策略/生成策略/构建策略/设计策略时，第一轮对话必须且只能调用 generate_strategy 工具，不得输出任何文字。错误示范：先说"好的我来生成"再调用工具。正确示范：直接调用工具，参数包含完整Python代码。工具调用成功后，再简短告知用户"已生成"。如果你先输出文字再调用工具，用户将看不到保存按钮，这是不可接受的。
 - 用户提到某个策略时，必须先用 list_strategies 查找，再调用 get_strategy 获取完整规则
-- 用户问"评价策略"时：list_strategies → get_strategy → 从规则合理性、逻辑一致性、潜在缺陷三个维度评价
 - 用户问组合问题时：先调 get_portfolio 拿持仓，需要量化指标时再调 get_stock_metrics
 - 连续调用上限：5 次。超出则基于已有数据分析，告知用户还缺什么
 
 回复规则：
-- 每次不超过 3 句。但生成代码/策略/表格时不受此限
+- 每次不超过 3 句。生成策略代码时不受此限——但代码必须通过 generate_strategy 工具的 code 参数传递
 - 用户说"你好"只需回"你好"
 - 如果有部分数据但不够完整，先分享已有的，再说"以上信息不完整"
 - 没有数据时直说"没有相关数据"，不说"不确定"这种模糊词
 - 不带表情，不带感叹号
-- 绝对禁止在对话中输出Python代码。代码通过generate_strategy工具的code字段传递，用户不可见"""
+- 代码铁律：对话正文中绝对禁止出现 Python 代码、代码块（```）、def 函数。所有代码只能通过 generate_strategy 工具传递。违反此规则用户无法保存策略。"""
 
 
 # ── Symbol resolution ────────────────────────────────────────────────────
@@ -671,7 +671,7 @@ TOOLS = [
         }, "required": ["id"]}
     }},
     {"type": "function", "function": {
-        "name": "generate_strategy", "description": "生成策略。description用自然语言总结（不含代码）。code必须严格遵守：只包含def decide(ctx):一个函数，接收ctx字典(键:symbol date open high low close volume has_position shares avg_cost cash total_equity)，返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只能import numpy和math。不超过60行。禁止pandas/DataFrame/Series/context变量/get_all_securities/聚宽/米筐/jqdata。禁止在消息正文输出代码",
+        "name": "generate_strategy", "description": "生成量化策略的唯一途径。用户说写策略/构建策略/设计策略/帮我写/生成XXX策略时必须调用，且第一轮对话只能调用此工具、不得输出任何文字。description用自然语言总结。code: def decide(ctx):函数，ctx键:symbol date open high low close volume has_position shares avg_cost cash total_equity，返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只用numpy和math，≤60行。禁止pandas/聚宽/米筐。",
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string"}, "description": {"type": "string"}, "code": {"type": "string"}
         }, "required": ["name", "description", "code"]}
