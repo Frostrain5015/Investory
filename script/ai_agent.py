@@ -847,6 +847,19 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     client = OpenAI(**kwargs)
     max_tokens = 4096 if deep_think else 1024
 
+    # DashScope / Qwen3: disable thinking mode by default to eliminate hidden
+    # chain-of-thought overhead before the first token.  Deep-think mode re-enables
+    # it so the model can use its native reasoning chain.
+    is_dashscope = bool(api_base and ("dashscope" in api_base or "aliyuncs" in api_base))
+    extra_body = {"enable_thinking": deep_think} if is_dashscope else {}
+
+    def _stream(msgs):
+        return client.chat.completions.create(
+            model=model, messages=msgs, tools=TOOLS,
+            stream=True, temperature=0.7, max_tokens=max_tokens,
+            **({"extra_body": extra_body} if extra_body else {}),
+        )
+
     formatted = []
     for m in messages:
         role = m.get("role", "user")
@@ -857,7 +870,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         formatted.append(entry)
 
     # Always stream first. If tool calls appear mid-stream, collect and handle.
-    stream = client.chat.completions.create(model=model, messages=formatted, tools=TOOLS, stream=True, temperature=0.7, max_tokens=max_tokens)
+    stream = _stream(formatted)
 
     tool_calls = {}  # idx -> {id, name, args}
     has_tools = False
@@ -924,7 +937,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             total_tool_calls += len(runnable)
 
         # Call again — may produce more tool calls or final content
-        stream = client.chat.completions.create(model=model, messages=formatted, tools=TOOLS, stream=True, temperature=0.7, max_tokens=max_tokens)
+        stream = _stream(formatted)
         tool_calls = {}
         has_tools = False
         for chunk in stream:

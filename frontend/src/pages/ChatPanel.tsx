@@ -215,9 +215,9 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
             <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed bg-slate-100 text-slate-800">
               {streamText
                 ? (() => {
-                    const thinkMatch = streamText.match(/<thinking>([\s\S]*?)(<\/thinking>|$)/)
+                    const thinkMatch = streamText.match(/<think(?:ing)?>([\s\S]*?)(<\/think(?:ing)?>|$)/)
                     const thinking = thinkMatch ? thinkMatch[1] : ''
-                    const after = streamText.replace(/<thinking>[\s\S]*?(<\/thinking>|$)/, '').trim()
+                    const after = streamText.replace(/<think(?:ing)?>[\s\S]*?(<\/think(?:ing)?>|$)/, '').trim()
                     return (<>
                       {thinking && <ThinkingBlock text={thinking} done={streamText.includes('</thinking>')} />}
                       {after && <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded"><ReactMarkdown remarkPlugins={[remarkGfm]}>{after}</ReactMarkdown></div>}
