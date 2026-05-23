@@ -221,7 +221,8 @@ export default function Holdings() {
                 <span className="text-xs text-slate-400">{group.items.length}{t.holdings.stockCountUnit}</span>
               </div>
               <CardContent className="p-0">
-                <div className="overflow-auto">
+                {/* Desktop table */}
+                <div className="hidden lg:block overflow-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-slate-100">
@@ -308,6 +309,50 @@ export default function Holdings() {
                       })}
                     </tbody>
                   </table>
+                </div>
+                {/* Mobile cards */}
+                <div className="lg:hidden divide-y divide-slate-50">
+                  {group.items.map((item) => {
+                    const valid = item.price != null && Number(item.price) !== 0
+                    const chg = Number(item.changeToday ?? 0)
+                    const chgPct = Number(item.changePctToday ?? 0)
+                    const up = chg >= 0
+                    const m = metrics[String(item.stock_id)]
+                    return (
+                      <div key={`${item.stock_id}-${item.id}`} className="px-4 py-3">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            {managing && <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
+                            <Link to={`/stock?symbol=${encodeURIComponent(item.symbol)}`}
+                              className="font-medium text-slate-900 hover:text-blue-600 truncate max-w-[180px]">{item.name}</Link>
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">{item.market}</span>
+                          </div>
+                          <span className={`text-sm font-semibold tabular-nums shrink-0 ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
+                            {valid ? `${up ? '+' : ''}${chgPct.toFixed(2)}%` : '—'}
+                          </span>
+                        </div>
+                        <details className="mt-1">
+                          <summary className="text-xs text-slate-400 cursor-pointer select-none">{t.common.more}</summary>
+                          <div className="mt-2 space-y-1 text-xs text-slate-500">
+                            <div className="flex justify-between"><span>{t.stockDetail.price}</span><span className="tabular-nums">{valid ? Number(item.price).toFixed(2) : '—'}</span></div>
+                            <div className="flex justify-between"><span>{t.market.change}</span><span className={`tabular-nums ${up ? positiveClass : negativeClass}`}>{valid ? `${up ? '+' : ''}${chg.toFixed(2)}` : '—'}</span></div>
+                            <div className="flex justify-between"><span>{t.market.changePct}</span><span className={`tabular-nums ${up ? positiveClass : negativeClass}`}>{valid ? `${up ? '+' : ''}${chgPct.toFixed(2)}%` : '—'}</span></div>
+                            {showRiskMetrics && (
+                              <>
+                                <div className="flex justify-between"><span>{t.holdings.percentile}</span><span>{m?.percentile_5y != null ? `${m.percentile_5y.toFixed(0)}%` : '—'}</span></div>
+                                <div className="flex justify-between"><span>Beta</span><span>{m?.beta_1y != null ? m.beta_1y.toFixed(2) : '—'}</span></div>
+                                <div className="flex justify-between"><span>{t.holdings.volatility}</span><span>{m?.volatility_1y != null ? `${m.volatility_1y.toFixed(1)}%` : '—'}</span></div>
+                              </>
+                            )}
+                            {managing && (
+                              <div className="pt-1"><button onClick={() => removeWatch(item.stock_id)}
+                                className="text-xs text-red-500">{t.common.delete}</button></div>
+                            )}
+                          </div>
+                        </details>
+                      </div>
+                    )
+                  })}
                 </div>
               </CardContent>
             </Card>

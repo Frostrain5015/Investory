@@ -299,7 +299,7 @@ export default function Market() {
         <span className="text-[10px] text-slate-400">{t.market.dataSource}</span>
       </div>
       {indicators.length > 0 && (
-        <div className="px-6 pb-3 flex gap-4 shrink-0">
+        <div className="px-6 pb-3 flex gap-4 shrink-0 flex-wrap">
           {indicators.map(ind => {
             const valid = ind.price != null && Number(ind.price) !== 0
             const up = Number(ind.change) >= 0

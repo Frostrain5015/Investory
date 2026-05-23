@@ -59,7 +59,7 @@ export default function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-sm px-4">
         <div className="text-center mb-8">
           <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: positiveHex }}>
             <TrendingUp className="w-6 h-6 text-white" />

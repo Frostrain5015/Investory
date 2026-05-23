@@ -167,9 +167,9 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <motion.div
-      initial={{ x: 400 }} animate={{ x: 0 }} exit={{ x: 400 }}
+      initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
       transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-      className="fixed right-0 top-0 bottom-0 w-[380px] bg-white border-l border-slate-200 shadow-2xl z-50 flex flex-col">
+      className="fixed right-0 top-0 bottom-0 w-[min(380px,100vw)] bg-white border-l border-slate-200 shadow-2xl z-50 flex flex-col pb-safe">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
         <div className="flex items-center gap-2">

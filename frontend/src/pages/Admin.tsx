@@ -344,7 +344,7 @@ export default function Admin() {
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.admin.title}</h2>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs">
@@ -433,37 +433,60 @@ export default function Admin() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="p-0">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-slate-100">
-                      <th className="text-left font-medium text-slate-500 px-4 py-2">{t.admin.market_}</th>
-                      <th className="text-left font-medium text-slate-500 px-3 py-2">{t.admin.startTime}</th>
-                      <th className="text-right font-medium text-slate-500 px-3 py-2">{t.admin.rowsWritten}</th>
-                      <th className="text-right font-medium text-slate-500 px-3 py-2">{t.admin.failed}</th>
-                      <th className="text-center font-medium text-slate-500 px-4 py-2">{t.admin.status}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {crawlHistory.map(h => {
-                      const started = h.started_at ? new Date(h.started_at) : null
-                      return (
-                        <tr key={h.market} className="border-b border-slate-50">
-                          <td className="px-4 py-2 font-medium text-slate-700">{marketLabels[h.market] ?? h.market}</td>
-                          <td className="px-3 py-2 text-slate-400">
-                            {started ? started.toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">{Number(h.rows_written).toLocaleString()}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">{h.stocks_failed}</td>
-                          <td className="px-4 py-2 text-center">
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${h.status === 'ok' ? 'bg-emerald-50 text-emerald-600' : h.status === 'running' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
-                              {crawlStatusLabel(h.status)}
-                            </span>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                <div className="hidden md:block overflow-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="text-left font-medium text-slate-500 px-4 py-2">{t.admin.market_}</th>
+                        <th className="text-left font-medium text-slate-500 px-3 py-2">{t.admin.startTime}</th>
+                        <th className="text-right font-medium text-slate-500 px-3 py-2">{t.admin.rowsWritten}</th>
+                        <th className="text-right font-medium text-slate-500 px-3 py-2">{t.admin.failed}</th>
+                        <th className="text-center font-medium text-slate-500 px-4 py-2">{t.admin.status}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {crawlHistory.map(h => {
+                        const started = h.started_at ? new Date(h.started_at) : null
+                        return (
+                          <tr key={h.market} className="border-b border-slate-50">
+                            <td className="px-4 py-2 font-medium text-slate-700">{marketLabels[h.market] ?? h.market}</td>
+                            <td className="px-3 py-2 text-slate-400">
+                              {started ? started.toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">{Number(h.rows_written).toLocaleString()}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">{h.stocks_failed}</td>
+                            <td className="px-4 py-2 text-center">
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${h.status === 'ok' ? 'bg-emerald-50 text-emerald-600' : h.status === 'running' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
+                                {crawlStatusLabel(h.status)}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="md:hidden divide-y divide-slate-50">
+                  {crawlHistory.map(h => {
+                    const started = h.started_at ? new Date(h.started_at) : null
+                    const statusBadge = h.status === 'ok' ? 'bg-emerald-50 text-emerald-600' : h.status === 'running' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'
+                    return (
+                      <div key={h.market} className="px-4 py-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-slate-700 text-xs">{marketLabels[h.market] ?? h.market}</span>
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadge}`}>
+                            {crawlStatusLabel(h.status)}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-x-4 text-xs text-slate-400">
+                          <span>{started ? started.toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}</span>
+                          <span>{t.admin.rowsWritten}: {Number(h.rows_written).toLocaleString()}</span>
+                          <span>{t.admin.failed}: {h.stocks_failed}</span>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
               </CardContent>
             </Card>
           )}

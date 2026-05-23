@@ -70,7 +70,7 @@ export default function Hero() {
   }
 
   return (
-    <div className="relative w-full h-screen overflow-hidden bg-[#080c14]">
+    <div className="relative w-full h-dvh overflow-hidden bg-[#080c14]">
       <div className="absolute inset-0" style={{
         background: 'radial-gradient(ellipse 60% 50% at 50% 45%, rgba(14, 165, 233, 0.06) 0%, transparent 70%), radial-gradient(ellipse 80% 60% at 50% 50%, rgba(8, 12, 20, 1) 0%, rgba(2, 6, 14, 1) 100%)',
       }} />

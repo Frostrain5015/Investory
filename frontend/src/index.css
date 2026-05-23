@@ -186,3 +186,13 @@ input:-webkit-autofill:hover,
 input:-webkit-autofill:focus {
   transition: background-color 99999s ease-in-out 0s, color 99999s ease-in-out 0s;
 }
+
+/* ── Safe-area padding utilities ─────────────────────────────────────────── */
+.pb-safe { padding-bottom: env(safe-area-inset-bottom, 0px); }
+.pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+
+/* ── iOS smooth scroll ───────────────────────────────────────────────────── */
+@supports (-webkit-overflow-scrolling: touch) {
+  html { -webkit-overflow-scrolling: touch; }
+  .overflow-auto, .overflow-y-auto { -webkit-overflow-scrolling: touch; }
+}

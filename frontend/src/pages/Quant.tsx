@@ -409,7 +409,7 @@ function BacktestSection() {
               </div>
 
               {strategyType === 'simple' ? (<>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <label className="text-xs font-medium text-slate-600">{q.entryRules}</label>
@@ -550,7 +550,7 @@ function BacktestSection() {
                   <span className="text-xs text-slate-600">{q.paramGrid}</span>
                 </label>
               </div>
-              <div className="grid grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
                 <div><label className="text-[10px] text-slate-500">{q.startDate}</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
                 <div><label className="text-[10px] text-slate-500">{q.endDate}</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
                 <div><label className="text-[10px] text-slate-500">{q.initialCapital}</label><input type="number" value={initialCapital} onChange={e => setInitialCapital(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
@@ -673,7 +673,16 @@ function BacktestSection() {
         {tradeLog && tradeLog.length > 0 && (
           <Card>
             <CardHeader className="flex-row items-center justify-between"><CardTitle className="text-sm flex items-center gap-2"><button onClick={() => setShowTrades(!showTrades)} className="hover:text-blue-600">{showTrades ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</button>{q.tradeLog} ({tradeLog.length} {q.tradesCountUnit})</CardTitle></CardHeader>
-            {showTrades && <CardContent className="p-0"><div className="overflow-auto max-h-96"><table className="w-full text-xs"><thead><tr className="border-b border-slate-100"><th className="text-left font-medium text-slate-500 px-4 py-2">{q.date}</th><th className="text-left font-medium text-slate-500 px-3 py-2">{q.stock}</th><th className="text-center font-medium text-slate-500 px-3 py-2 w-12">{q.action}</th><th className="text-right font-medium text-slate-500 px-3 py-2">{q.qty}</th><th className="text-right font-medium text-slate-500 px-3 py-2">{q.price}</th><th className="text-right font-medium text-slate-500 px-3 py-2">{q.pnl}</th><th className="text-left font-medium text-slate-500 px-4 py-2">{q.reason}</th></tr></thead><tbody>{tradeLog.map((t, i) => (<tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50"><td className="px-4 py-2 text-slate-500">{t.date}</td><td className="px-3 py-2 font-medium text-slate-700">{t.symbol}</td><td className="px-3 py-2 text-center"><span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${t.action === 'BUY' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>{t.action === 'BUY' ? q.buyShort : q.sellShort}</span></td><td className="px-3 py-2 text-right tabular-nums">{t.quantity}</td><td className="px-3 py-2 text-right tabular-nums">{t.price.toFixed(2)}</td><td className={`px-3 py-2 text-right tabular-nums font-medium ${t.pnl == null ? 'text-slate-400' : t.pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>{t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}` : '—'}</td><td className="px-4 py-2 text-slate-400">{t.reason}</td></tr>))}</tbody></table></div></CardContent>}
+            {showTrades && <CardContent className="p-0">
+              {/* Desktop table: all columns */}
+              <div className="hidden md:block overflow-auto max-h-96">
+                <table className="w-full text-xs"><thead><tr className="border-b border-slate-100"><th className="text-left font-medium text-slate-500 px-4 py-2">{q.date}</th><th className="text-left font-medium text-slate-500 px-3 py-2">{q.stock}</th><th className="text-center font-medium text-slate-500 px-3 py-2 w-12">{q.action}</th><th className="text-right font-medium text-slate-500 px-3 py-2">{q.qty}</th><th className="text-right font-medium text-slate-500 px-3 py-2">{q.price}</th><th className="text-right font-medium text-slate-500 px-3 py-2">{q.pnl}</th><th className="text-left font-medium text-slate-500 px-4 py-2">{q.reason}</th></tr></thead><tbody>{tradeLog.map((t, i) => (<tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50"><td className="px-4 py-2 text-slate-500">{t.date}</td><td className="px-3 py-2 font-medium text-slate-700">{t.symbol}</td><td className="px-3 py-2 text-center"><span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${t.action === 'BUY' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>{t.action === 'BUY' ? q.buyShort : q.sellShort}</span></td><td className="px-3 py-2 text-right tabular-nums">{t.quantity}</td><td className="px-3 py-2 text-right tabular-nums">{t.price.toFixed(2)}</td><td className={`px-3 py-2 text-right tabular-nums font-medium ${t.pnl == null ? 'text-slate-400' : t.pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>{t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}` : '—'}</td><td className="px-4 py-2 text-slate-400">{t.reason}</td></tr>))}</tbody></table>
+              </div>
+              {/* Mobile table: date, symbol, action/side, pnl only */}
+              <div className="md:hidden overflow-auto max-h-96">
+                <table className="w-full text-xs"><thead><tr className="border-b border-slate-100"><th className="text-left font-medium text-slate-500 px-3 py-2">{q.date}</th><th className="text-left font-medium text-slate-500 px-3 py-2">{q.stock}</th><th className="text-center font-medium text-slate-500 px-3 py-2 w-12">{q.action}</th><th className="text-right font-medium text-slate-500 px-3 py-2">{q.pnl}</th></tr></thead><tbody>{tradeLog.map((t, i) => (<tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50"><td className="px-3 py-2 text-slate-500">{t.date}</td><td className="px-3 py-2 font-medium text-slate-700">{t.symbol}</td><td className="px-3 py-2 text-center"><span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${t.action === 'BUY' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>{t.action === 'BUY' ? q.buyShort : q.sellShort}</span></td><td className={`px-3 py-2 text-right tabular-nums font-medium ${t.pnl == null ? 'text-slate-400' : t.pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>{t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}` : '—'}</td></tr>))}</tbody></table>
+              </div>
+            </CardContent>}
           </Card>
         )}
       </div>

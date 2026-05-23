@@ -40,7 +40,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { authenticated, loading, isAdmin } = useAuth()
-  if (loading) return null
+  if (loading) return <LoadingScreen />
   return !authenticated ? children : <Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />
 }
 

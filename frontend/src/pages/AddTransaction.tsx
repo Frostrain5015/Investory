@@ -194,7 +194,7 @@ export default function AddTransaction() {
           <form onSubmit={handleSubmit} className="space-y-4">
 
             {/* Segmented type selector */}
-            <div className="relative flex rounded-xl bg-slate-100 p-1">
+            <div className="relative flex rounded-xl bg-slate-100 p-1 overflow-x-auto">
               {TYPES.map(txType => (
                 <button key={txType} type="button" onClick={() => { setType(txType); setSubmitError(null) }}
                   className="relative flex-1 py-1.5 text-xs font-medium z-10 transition-colors"

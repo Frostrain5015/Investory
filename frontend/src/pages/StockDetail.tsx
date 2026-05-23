@@ -97,7 +97,7 @@ export default function StockDetail() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3 flex-wrap">
         <div>
           <div className="flex items-baseline gap-3">
             <h2 className="text-xl font-bold text-slate-900">
@@ -353,32 +353,61 @@ export default function StockDetail() {
             {transactions.length === 0 ? (
               <p className="text-center text-slate-400 text-sm py-6">{t.stockDetail.noTransactions}</p>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100">
-                    <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.date}</th>
-                    <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.type}</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.shares}</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.price}</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.fee}</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <>
+                <div className="hidden lg:block overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.date}</th>
+                        <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.type}</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.shares}</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.price}</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.fee}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...transactions].sort((a, b) => b.tradeDate.localeCompare(a.tradeDate)).map((tran: Transaction) => (
+                        <tr key={tran.id} className="border-b border-slate-50">
+                          <td className="px-4 py-2">{tran.tradeDate}</td>
+                          <td className="px-4 py-2">
+                            <span className={`inline-flex rounded-lg px-2 py-0.5 text-xs font-medium ${tran.type === 'BUY' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                              {tran.type === 'BUY' ? t.transactions.buy : t.transactions.sell}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-right">{tran.shares}</td>
+                          <td className="px-4 py-2 text-right">{tran.price?.toFixed(2)}</td>
+                          <td className="px-4 py-2 text-right">{tran.fee?.toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Mobile transaction cards */}
+                <div className="lg:hidden divide-y divide-slate-50">
                   {[...transactions].sort((a, b) => b.tradeDate.localeCompare(a.tradeDate)).map((tran: Transaction) => (
-                    <tr key={tran.id} className="border-b border-slate-50">
-                      <td className="px-4 py-2">{tran.tradeDate}</td>
-                      <td className="px-4 py-2">
+                    <div key={tran.id} className="px-4 py-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-sm text-slate-500">{tran.tradeDate}</span>
                         <span className={`inline-flex rounded-lg px-2 py-0.5 text-xs font-medium ${tran.type === 'BUY' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
                           {tran.type === 'BUY' ? t.transactions.buy : t.transactions.sell}
                         </span>
-                      </td>
-                      <td className="px-4 py-2 text-right">{tran.shares}</td>
-                      <td className="px-4 py-2 text-right">{tran.price?.toFixed(2)}</td>
-                      <td className="px-4 py-2 text-right">{tran.fee?.toFixed(2)}</td>
-                    </tr>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium text-slate-900">{stock?.name}</span>
+                        <span className="tabular-nums font-semibold text-slate-800">{(tran.shares * tran.price).toFixed(2)}</span>
+                      </div>
+                      <details className="mt-1">
+                        <summary className="text-xs text-slate-400 cursor-pointer select-none">{t.common.more}</summary>
+                        <div className="mt-2 space-y-1 text-xs text-slate-500">
+                          <div className="flex justify-between"><span>{t.transactions.shares}</span><span className="tabular-nums">{tran.shares}</span></div>
+                          <div className="flex justify-between"><span>{t.transactions.price}</span><span className="tabular-nums">{tran.price?.toFixed(2)}</span></div>
+                          <div className="flex justify-between"><span>{t.stockDetail.fee}</span><span className="tabular-nums">{tran.fee?.toFixed(2)}</span></div>
+                        </div>
+                      </details>
+                    </div>
                   ))}
-                </tbody>
-              </table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -389,24 +418,43 @@ export default function StockDetail() {
             {dividends.length === 0 ? (
               <p className="text-center text-slate-400 text-sm py-6">{t.stockDetail.noDividends}</p>
             ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100">
-                    <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.recordDate}</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.perShare}</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.totalAmount}</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <>
+                <div className="hidden lg:block overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-slate-100">
+                        <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.recordDate}</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.perShare}</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.totalAmount}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dividends.map((d: Dividend) => (
+                        <tr key={d.id} className="border-b border-slate-50">
+                          <td className="px-4 py-2">{d.recordDate}</td>
+                          <td className="px-4 py-2 text-right">{d.amountPerShare}</td>
+                          <td className={`px-4 py-2 text-right font-semibold ${positiveClass}`}>{d.totalAmount}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Mobile dividend cards */}
+                <div className="lg:hidden divide-y divide-slate-50">
                   {dividends.map((d: Dividend) => (
-                    <tr key={d.id} className="border-b border-slate-50">
-                      <td className="px-4 py-2">{d.recordDate}</td>
-                      <td className="px-4 py-2 text-right">{d.amountPerShare}</td>
-                      <td className={`px-4 py-2 text-right font-semibold ${positiveClass}`}>{d.totalAmount}</td>
-                    </tr>
+                    <div key={d.id} className="px-4 py-3">
+                      <div className="flex items-center justify-between mb-1.5">
+                        <span className="text-sm text-slate-500">{t.stockDetail.recordDate}</span>
+                        <span className="text-sm tabular-nums">{d.recordDate}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm mb-1">
+                        <span className="text-slate-500">{t.stockDetail.perShare} <span className="tabular-nums">{d.amountPerShare}</span></span>
+                      </div>
+                      <div className={`text-base font-bold tabular-nums ${positiveClass}`}>{d.totalAmount}</div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

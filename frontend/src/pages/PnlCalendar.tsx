@@ -170,8 +170,8 @@ export default function PnlCalendar() {
 
   return (
     <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      {/* Header — stacks on mobile */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.pnl.title}</h2>
           {periodTotalPnl.amt !== 0 && (
@@ -181,19 +181,19 @@ export default function PnlCalendar() {
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className="flex bg-slate-100 rounded-lg p-0.5">
-            <button onClick={() => setPnlDisplay('amount')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${pnlDisplay === 'amount' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.amount}</button>
-            <button onClick={() => setPnlDisplay('pct')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${pnlDisplay === 'pct' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.pctChange}</button>
+            <button onClick={() => setPnlDisplay('amount')} className={`px-2.5 py-1.5 rounded-md text-xs font-medium ${pnlDisplay === 'amount' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.amount}</button>
+            <button onClick={() => setPnlDisplay('pct')} className={`px-2.5 py-1.5 rounded-md text-xs font-medium ${pnlDisplay === 'pct' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.pctChange}</button>
           </div>
           <div className="flex bg-slate-100 rounded-lg p-0.5">
-            <button onClick={() => setViewMode('yearly')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${viewMode === 'yearly' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.yearly}</button>
-            <button onClick={() => setViewMode('monthly')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${viewMode === 'monthly' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.monthly}</button>
+            <button onClick={() => setViewMode('yearly')} className={`px-2.5 py-1.5 rounded-md text-xs font-medium ${viewMode === 'yearly' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.yearly}</button>
+            <button onClick={() => setViewMode('monthly')} className={`px-2.5 py-1.5 rounded-md text-xs font-medium ${viewMode === 'monthly' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.monthly}</button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <button onClick={() => viewMode === 'yearly' ? setYear(y => y - 1) : setMonth(m => { if (m === 0) { setYear(y => y - 1); return 11 } return m - 1 })}
               className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-slate-100"><ChevronLeft className="w-4 h-4" /></button>
-            <span className="text-sm font-medium w-28 text-center">
+            <span className="text-sm font-medium w-20 sm:w-28 text-center">
               {viewMode === 'yearly'
                 ? fmt(t.pnl.yearFormat, { year })
                 : fmt(t.pnl.monthFormat, { year, month: month + 1 })}
@@ -217,7 +217,7 @@ export default function PnlCalendar() {
                 return (
                   <div key={i}
                     onClick={() => !noData ? setSelected({ kind: 'month', year, month: i + 1 }) : undefined}
-                    className={`h-24 flex flex-col items-center justify-center rounded-xl text-sm font-medium ${!noData ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-transform' : ''}`}
+                    className={`h-20 sm:h-24 flex flex-col items-center justify-center rounded-xl text-sm font-medium ${!noData ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-transform' : ''}`}
                     style={{ backgroundColor: s.bg }}>
                     <span className="text-xs text-slate-400">{MONTHS[i]}</span>
                     {!noData && (
@@ -246,7 +246,7 @@ export default function PnlCalendar() {
                 return (
                   <div key={i}
                     onClick={() => hasData ? setSelected({ kind: 'day', date: ds }) : undefined}
-                    className={`h-20 flex flex-col items-center justify-center rounded-xl text-xs font-medium ${hasData ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-transform' : ''}`}
+                    className={`h-14 sm:h-20 flex flex-col items-center justify-center rounded-xl text-xs font-medium ${hasData ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-transform' : ''}`}
                     style={{ backgroundColor: s.bg }}>
                     <span className={`text-base font-bold ${s.text}`}>{dayOfMonth}</span>
                     {val !== 0 && (

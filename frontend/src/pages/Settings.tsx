@@ -106,8 +106,9 @@ export default function Settings() {
         : t.settings.aiModel
 
   return (
-    <div className="p-6 max-w-lg mx-auto space-y-6">
+    <div className="p-6 max-w-2xl mx-auto space-y-6">
       <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">{t.settings.title}</h2>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
 
       {/* Avatar */}
       <Card>
@@ -279,6 +280,7 @@ export default function Settings() {
             className="w-full h-10 rounded-xl border border-red-200 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">{deleting ? t.settings.deleting : t.settings.deleteAccount}</button>
         </CardContent>
       </Card>
+      </div>
     </div>
   )
 }

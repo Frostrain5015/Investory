@@ -30,7 +30,7 @@ export default function Register() {
   if (success) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="w-full max-w-sm text-center">
+        <div className="w-full max-w-sm px-4 text-center">
           <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
             <svg className="w-6 h-6 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -47,7 +47,7 @@ export default function Register() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <div className="w-full max-w-sm">
+      <div className="w-full max-w-sm px-4">
         <div className="text-center mb-8">
           <div className="w-12 h-12 rounded-2xl bg-slate-900 flex items-center justify-center mx-auto mb-4">
             <TrendingUp className="w-6 h-6 text-emerald-400" />

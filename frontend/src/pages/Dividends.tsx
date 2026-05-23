@@ -47,37 +47,62 @@ export default function Dividends() {
           {dividends.length === 0 ? (
             <div className="py-12 text-center text-slate-500 text-sm">{lang === 'zh' ? '暂无分红记录' : 'No dividend records'}</div>
           ) : (
-            <div className="overflow-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-slate-100">
-                    <th className="text-left text-xs font-medium text-slate-500 px-6 py-3">{lang === 'zh' ? '记录日' : 'Record Date'}</th>
-                    <th className="text-left text-xs font-medium text-slate-500 px-3 py-3">{t.transactions.stock}</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{lang === 'zh' ? '每股' : 'Per Share'}</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{lang === 'zh' ? '持股' : 'Shares Held'}</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{t.common.total}</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-6 py-3"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {dividends.map(d => (
-                    <tr key={d.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
-                      <td className="px-6 py-3 text-slate-600">{d.recordDate}</td>
-                      <td className="px-3 py-3">
-                        <span className="font-medium">{d.stockName}</span>
-                        <span className="text-xs text-slate-400 ml-1">{shortSymbol(d.stockSymbol || '')}</span>
-                      </td>
-                      <td className="px-3 py-3 text-right tabular-nums">{d.amountPerShare}</td>
-                      <td className="px-3 py-3 text-right tabular-nums">{d.sharesHeld}</td>
-                      <td className="px-3 py-3 text-right text-emerald-600 font-semibold tabular-nums">{d.totalAmount}</td>
-                      <td className="px-6 py-3 text-right">
-                        <button onClick={() => handleDelete(d.id)} className="text-xs text-slate-400 hover:text-red-500 transition-colors">{t.common.delete}</button>
-                      </td>
+            <>
+              <div className="hidden lg:block overflow-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      <th className="text-left text-xs font-medium text-slate-500 px-6 py-3">{lang === 'zh' ? '记录日' : 'Record Date'}</th>
+                      <th className="text-left text-xs font-medium text-slate-500 px-3 py-3">{t.transactions.stock}</th>
+                      <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{lang === 'zh' ? '每股' : 'Per Share'}</th>
+                      <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{lang === 'zh' ? '持股' : 'Shares Held'}</th>
+                      <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{t.common.total}</th>
+                      <th className="text-right text-xs font-medium text-slate-500 px-6 py-3"></th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {dividends.map(d => (
+                      <tr key={d.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                        <td className="px-6 py-3 text-slate-600">{d.recordDate}</td>
+                        <td className="px-3 py-3">
+                          <span className="font-medium">{d.stockName}</span>
+                          <span className="text-xs text-slate-400 ml-1">{shortSymbol(d.stockSymbol || '')}</span>
+                        </td>
+                        <td className="px-3 py-3 text-right tabular-nums">{d.amountPerShare}</td>
+                        <td className="px-3 py-3 text-right tabular-nums">{d.sharesHeld}</td>
+                        <td className="px-3 py-3 text-right text-emerald-600 font-semibold tabular-nums">{d.totalAmount}</td>
+                        <td className="px-6 py-3 text-right">
+                          <button onClick={() => handleDelete(d.id)} className="text-xs text-slate-400 hover:text-red-500 transition-colors">{t.common.delete}</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* Mobile cards */}
+              <div className="lg:hidden divide-y divide-slate-50">
+                {dividends.map(d => (
+                  <div key={d.id} className="px-4 py-3">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-slate-900">{d.stockName}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{shortSymbol(d.stockSymbol || '')}</span>
+                      </div>
+                      <span className="text-xs text-slate-400">{d.recordDate}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-slate-500">
+                        <span className="tabular-nums">{d.amountPerShare}</span> x <span className="tabular-nums">{d.sharesHeld}</span>
+                      </span>
+                      <span className="tabular-nums font-semibold text-emerald-600">{d.totalAmount}</span>
+                    </div>
+                    <div className="mt-1.5 flex justify-end">
+                      <button onClick={() => handleDelete(d.id)} className="text-xs text-slate-400 hover:text-red-500 transition-colors">{t.common.delete}</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
