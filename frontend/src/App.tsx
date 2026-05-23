@@ -1,8 +1,10 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect } from 'react'
 import { AuthProvider, useAuth } from '@/hooks/use-auth'
 import { SettingsProvider } from '@/hooks/use-settings'
 import { ThemeProvider } from '@/hooks/use-theme'
 import { ToastProvider } from '@/components/Toast'
+import { preloadSuggestions } from '@/services/aiPreload'
 import { ConfirmProvider } from '@/hooks/use-confirm'
 import { I18nProvider, useT } from '@/i18n/I18nContext'
 import Layout from '@/components/Layout'
@@ -34,6 +36,7 @@ function LoadingScreen() {
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated, loading } = useAuth()
+  useEffect(() => { if (authenticated) preloadSuggestions() }, [authenticated])
   if (loading) return <LoadingScreen />
   return authenticated ? children : <Navigate to="/" replace />
 }

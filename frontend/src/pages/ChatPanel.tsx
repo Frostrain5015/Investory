@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { SseEvent } from '@/types'
 import { useT } from '@/i18n/I18nContext'
+import { getCachedSuggestions, getSuggestionsPromise } from '@/services/aiPreload'
 
 interface Message { role: 'user' | 'assistant'; content: string; thinking?: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string }
 
@@ -57,20 +58,25 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    // Use preloaded cache if available; otherwise fall back to fetching now
+    const cached = getCachedSuggestions()
+    if (cached) {
+      setSuggestions(cached)
+      return
+    }
+    const pending = getSuggestionsPromise()
+    if (pending) {
+      pending.then(list => { if (list.length > 0) setSuggestions(list); else setSuggestions([...t.chat.suggestions]) })
+      return
+    }
+    // No preload started — fetch now
     fetch('/investory/api/ai/suggestions', { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
-        if (Array.isArray(d.suggestions) && d.suggestions.length > 0) {
-          setSuggestions(d.suggestions)
-        } else {
-          // Fallback to translated suggestions when API returns empty
-          setSuggestions([...t.chat.suggestions])
-        }
+        if (Array.isArray(d.suggestions) && d.suggestions.length > 0) setSuggestions(d.suggestions)
+        else setSuggestions([...t.chat.suggestions])
       })
-      .catch(() => {
-        // Fallback to translated suggestions on network error
-        setSuggestions([...t.chat.suggestions])
-      })
+      .catch(() => { setSuggestions([...t.chat.suggestions]) })
   }, [])
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
