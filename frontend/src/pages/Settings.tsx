@@ -206,20 +206,31 @@ export default function Settings() {
           <input type="text" value={aiModel} onChange={e => setAiModel(e.target.value)}
             placeholder={aiProvider === 'openai' ? '例如 gpt-4o-mini / gpt-4o' : aiProvider === 'anthropic' ? '例如 claude-haiku-4-5' : aiProvider === 'deepseek' ? '例如 deepseek-chat' : '模型名称，服务商文档中可查'}
             className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
-          <button onClick={async () => {
-            const body: any = { provider: aiProvider, model: aiModel, baseUrl: aiBaseUrl }
-            if (aiKey) body.apiKey = aiKey
-            const res = await fetch('/investory/api/ai/settings', {
-              method: 'POST', credentials: 'include',
-              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-            })
-            const data = await res.json()
-            if (data.error) { toast(data.error, false); return }
-            if (aiKey) setAiHasKey(true)
-            toast('AI 设置已保存', true)
-          }} className="w-full h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
-            保存设置
-          </button>
+          <div className="flex gap-2">
+            <button onClick={async () => {
+              const body: Record<string, string> = { provider: aiProvider, model: aiModel, baseUrl: aiBaseUrl }
+              if (aiKey) body.apiKey = aiKey
+              const res = await fetch('/investory/api/ai/settings', {
+                method: 'POST', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+              })
+              const data = await res.json()
+              if (data.error) { toast(data.error, false); return }
+              if (aiKey) setAiHasKey(true)
+              toast('AI 设置已保存', true)
+            }} className="flex-1 h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
+              保存设置
+            </button>
+            <button onClick={async () => {
+              const res = await fetch('/investory/api/ai/settings', { method: 'DELETE', credentials: 'include' })
+              const data = await res.json()
+              if (data.error) { toast(data.error, false); return }
+              setAiProvider('bailian'); setAiKey(''); setAiBaseUrl(''); setAiModel('qwen-plus'); setAiHasKey(false)
+              toast('已恢复系统默认 API', true)
+            }} className="h-10 px-3 rounded-xl border border-slate-200 text-slate-500 text-sm hover:bg-slate-50 transition-colors whitespace-nowrap">
+              恢复默认
+            </button>
+          </div>
         </CardContent>
       </Card>
 

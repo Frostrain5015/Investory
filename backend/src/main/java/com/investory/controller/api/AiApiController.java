@@ -170,6 +170,67 @@ public class AiApiController {
         return Map.of("status", "started");
     }
 
+    @GetMapping("/suggestions")
+    public Map<String, Object> suggestions(HttpServletRequest req) {
+        jakarta.servlet.http.HttpSession s = req.getSession(false);
+        long userId = s != null && s.getAttribute("userId") instanceof Number
+            ? ((Number) s.getAttribute("userId")).longValue() : 0;
+
+        String aiKey = defaultKey, aiProvider = DEFAULT_PROVIDER, aiModel = DEFAULT_MODEL, aiBaseUrl = DEFAULT_BASE_URL;
+        if (userId > 0) {
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT provider, model, base_url, api_key FROM ai_settings WHERE user_id = ?", userId);
+            if (!rows.isEmpty()) {
+                Map<String, Object> row = rows.get(0);
+                String savedKey = (String) row.get("api_key");
+                if (savedKey != null && !savedKey.isBlank()) {
+                    aiKey = savedKey;
+                    aiProvider = row.getOrDefault("provider", DEFAULT_PROVIDER).toString();
+                    aiModel = row.getOrDefault("model", DEFAULT_MODEL).toString();
+                    aiBaseUrl = row.getOrDefault("base_url", DEFAULT_BASE_URL).toString();
+                }
+            }
+        }
+
+        // Use fast model on DashScope for suggestions
+        final String provider = "anthropic".equals(aiProvider) ? "anthropic" : "openai_compat";
+        final String model = aiModel;
+        final String key = aiKey;
+        final String baseUrl = aiBaseUrl;
+
+        try {
+            File script = new File("script/ai_agent.py");
+            if (!script.exists()) script = new File("../script/ai_agent.py").getCanonicalFile();
+            if (!script.exists()) return Map.of("suggestions", List.of("我的组合风险怎么样？", "分析一下我的持仓风格", "帮我写一个均线策略"));
+
+            List<String> cmd = new java.util.ArrayList<>(List.of(
+                pythonExecutable, "-u", script.getAbsolutePath(),
+                "--mode", "suggestions",
+                "--provider", provider,
+                "--model", model
+            ));
+            if (!baseUrl.isBlank()) { cmd.add("--api-base"); cmd.add(baseUrl); }
+
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            pb.directory(script.getParentFile());
+            pb.redirectErrorStream(false);
+            pb.environment().put("PYTHONUNBUFFERED", "1");
+            pb.environment().put("AI_API_KEY", key);
+
+            Process p = pb.start();
+            String out = new String(p.getInputStream().readAllBytes(), "UTF-8").trim();
+            p.waitFor();
+
+            if (out.startsWith("[")) {
+                @SuppressWarnings("unchecked")
+                List<String> suggestions = json.readValue(out, List.class);
+                return Map.of("suggestions", suggestions);
+            }
+        } catch (Exception ignored) {}
+
+        return Map.of("suggestions", List.of("我的组合风险怎么样？", "分析一下我的持仓风格", "帮我写一个均线策略"));
+    }
+
     @GetMapping("/stream")
     public SseEmitter stream(HttpServletResponse response) {
         response.setHeader("X-Accel-Buffering", "no");

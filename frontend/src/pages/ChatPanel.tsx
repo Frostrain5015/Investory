@@ -48,8 +48,16 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   const [deepThink, setDeepThink] = useState(false)
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
   const [askData, setAskData] = useState<{ question: string; options: string[] } | null>(null)
+  const [suggestions, setSuggestions] = useState<string[]>([])
   const esRef = useRef<EventSource | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    fetch('/investory/api/ai/suggestions', { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { if (Array.isArray(d.suggestions) && d.suggestions.length > 0) setSuggestions(d.suggestions) })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
 
@@ -149,7 +157,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-slate-900 flex items-center justify-center"><Sparkles className="w-3.5 h-3.5 text-white" /></div>
-          <span className="text-sm font-bold text-slate-900">观澜 AI</span>
+          <span className="text-sm font-bold text-slate-900">观澜</span>
         </div>
         <div className="flex items-center gap-1">
           <button onClick={() => setDeepThink(!deepThink)} className={`p-1.5 rounded-lg transition-colors ${deepThink ? 'bg-purple-100 text-purple-600' : 'hover:bg-slate-100 text-slate-400'}`} title="深度思考"><Brain className="w-3.5 h-3.5" /></button>
@@ -169,10 +177,17 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
             <p className="text-sm font-medium text-slate-700">你好，我是观澜</p>
             <p className="text-xs text-slate-400 mt-1">基于价值投资理念的 AI 分析助手</p>
             <div className="mt-4 space-y-2">
-              {['我的组合风险怎么样？', '分析一下我的持仓风格', '帮我写一个均线策略'].map(q => (
-                <button key={q} onClick={() => send(q)}
-                  className="block w-full text-left text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-50 px-3 py-2 rounded-lg transition-colors">"{q}"</button>
-              ))}
+              {suggestions.length === 0
+                ? [1, 2, 3].map(i => (
+                    <div key={i} className="h-8 rounded-lg bg-slate-100 animate-pulse" style={{ width: `${72 + i * 6}%` }} />
+                  ))
+                : suggestions.map((q, i) => (
+                    <motion.button key={q} onClick={() => send(q)}
+                      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.08 }}
+                      className="block w-full text-left text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-50 px-3 py-2 rounded-lg transition-colors">"{q}"</motion.button>
+                  ))
+              }
             </div>
           </div>
         )}

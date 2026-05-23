@@ -1098,8 +1098,38 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
 
 # ── Main ─────────────────────────────────────────────────────────────────
 
+def generate_suggestions(api_key: str, model: str, api_base: str):
+    """Call LLM once (non-streaming) to return 3 varied investment question suggestions."""
+    import re
+    from openai import OpenAI
+    import httpx
+    kwargs = {"api_key": api_key}
+    if api_base: kwargs["base_url"] = api_base
+    proxy_url = os.getenv("PROXY_URL", get_proxy())
+    if proxy_url:
+        kwargs["http_client"] = httpx.Client(proxy=proxy_url)
+    client = OpenAI(**kwargs)
+    resp = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content":
+            "生成3条风格各异的中文投资问题，用于引导用户使用AI助手。"
+            "分别覆盖：①组合/持仓分析 ②个股深度 ③量化策略。"
+            "每条不超过16个字，要简练有吸引力。"
+            "只返回JSON数组，格式：[\"问题1\",\"问题2\",\"问题3\"]"}],
+        max_tokens=120, temperature=1.1,
+    )
+    text = resp.choices[0].message.content.strip()
+    m = re.search(r'\[.*?\]', text, re.DOTALL)
+    if m:
+        suggestions = json.loads(m.group())
+        print(json.dumps(suggestions[:3], ensure_ascii=False), flush=True)
+    else:
+        print(json.dumps(["我的组合风险怎么样？", "分析一下我的持仓风格", "帮我写一个均线策略"]), flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Investory 观澜 AI Agent")
+    parser.add_argument("--mode", default="chat", choices=["chat", "suggestions"])
     parser.add_argument("--provider", default="openai", choices=["openai", "anthropic", "openai_compat"])
     parser.add_argument("--model", default="gpt-4o-mini")
     parser.add_argument("--api-key", default=os.environ.get("AI_API_KEY", ""))
@@ -1107,9 +1137,15 @@ def main():
     parser.add_argument("--deep-think", action="store_true")
     parser.add_argument("--portfolio-id", type=int, default=0)
     parser.add_argument("--user-id", type=int, default=0)
-    parser.add_argument("--input", required=True)
+    parser.add_argument("--input", default=None)
     args = parser.parse_args()
 
+    if args.mode == "suggestions":
+        generate_suggestions(args.api_key, args.model, args.api_base)
+        return
+
+    if not args.input:
+        print("[ERROR] --input required for chat mode", flush=True); sys.exit(1)
     with open(args.input, "r", encoding="utf-8") as f:
         input_data = json.load(f)
     messages = input_data.get("messages", [])

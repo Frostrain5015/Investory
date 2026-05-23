@@ -44,6 +44,14 @@ public class AiSettingsController {
         );
     }
 
+    @DeleteMapping("/settings")
+    public Map<String, Object> resetSettings(HttpServletRequest req) {
+        long userId = getUserId(req);
+        if (userId == 0) return Map.of("error", "not authenticated");
+        jdbc.update("DELETE FROM ai_settings WHERE user_id = ?", userId);
+        return Map.of("status", "ok");
+    }
+
     @PostMapping("/settings")
     public Map<String, Object> saveSettings(@RequestBody Map<String, Object> body, HttpServletRequest req) {
         long userId = getUserId(req);
