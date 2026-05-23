@@ -47,6 +47,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   const [toolMsg, setToolMsg] = useState('')
   const [deepThink, setDeepThink] = useState(false)
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
+  const streamAccum = useRef('')  // accumulates raw stream text; read synchronously in done handler
   const [askData, setAskData] = useState<{ question: string; options: string[] } | null>(null)
   const [suggestions, setSuggestions] = useState<string[]>([])
   const esRef = useRef<EventSource | null>(null)
@@ -71,6 +72,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     setMessages(newMessages)
     setStreaming(true)
     setStreamText('')
+    streamAccum.current = ''
     setToolMsg('')
     setAskData(null)
 
@@ -101,27 +103,29 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       es.addEventListener('token', (e) => {
         const d: SseEvent = JSON.parse(e.data)
         setToolMsg('')
-        setStreamText(prev => prev + (d.msg || ''))
+        streamAccum.current += (d.msg || '')
+        setStreamText(streamAccum.current)
       })
       es.addEventListener('done', () => {
+        const raw = streamAccum.current
+        streamAccum.current = ''
         setToolMsg('')
-        setStreamText(prev => {
-          const s = pendingStrategy.current
-          if (!prev || !prev.trim()) { setStreaming(false); es.close(); esRef.current = null; return '' }
-          const thinkMatch = prev.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/)
-          const thinking = thinkMatch ? thinkMatch[1].trim() : undefined
-          const content = prev.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').trim()
-          const msg: Message = { role: 'assistant', content: content || prev, thinking }
-          if (s) {
-            msg.hasCode = true
-            msg.strategyName = s.name
-            msg.strategyDesc = s.desc
-            msg.strategyCode = s.code
-            pendingStrategy.current = null
-          }
-          setMessages([...newMessages, msg])
-          return ''
-        })
+        setStreamText('')
+
+        if (!raw.trim()) {
+          setStreaming(false); es.close(); esRef.current = null; return
+        }
+
+        const thinkMatch = raw.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/)
+        const thinking = thinkMatch ? thinkMatch[1].trim() : undefined
+        const content = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').trim()
+        const msg: Message = { role: 'assistant', content: content || raw, thinking }
+        const s = pendingStrategy.current
+        if (s) {
+          msg.hasCode = true; msg.strategyName = s.name; msg.strategyDesc = s.desc; msg.strategyCode = s.code
+          pendingStrategy.current = null
+        }
+        setMessages([...newMessages, msg])
         setStreaming(false); es.close(); esRef.current = null
       })
       es.addEventListener('error', (e) => {
