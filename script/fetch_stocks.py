@@ -889,7 +889,7 @@ def fetch_indices(cfg: dict, start: str, end: str, dry_run: bool, log: logging.L
 
     if conn:
         conn.close()
-    log.info(f"指数完成: 写入 {total_rows} 行，错误 {errors}")
+    log.info(f"指数完成: 写入 {total_rows} 行，错误 {errors} 只")
 
 
 # ─── 入口 ─────────────────────────────────────────────────────────────────────

@@ -8,6 +8,8 @@ import org.springframework.stereotype.Component;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.InputStreamReader;
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -21,6 +23,8 @@ import java.util.regex.Pattern;
 import java.util.logging.Logger;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 
 /**
  * Schedules daily close-price syncs via external Python scripts.
@@ -35,7 +39,7 @@ public class CrawlerScheduler {
 
     // Parse summary lines like "港股完成: 写入 962 行，无数据(停牌/错误) 0 只"
     private static final Pattern SUMMARY_RE = Pattern.compile(
-        "写入\\s+(\\d+)\\s+行.*?无数据.*?(\\d+)\\s+只");
+        "写入\\s+(\\d+)\\s+行.*?(\\d+)\\s+只");
 
     private final JdbcTemplate jdbc;
     private final CrawlSessionManager sessionManager;
@@ -196,16 +200,19 @@ public class CrawlerScheduler {
     private void runScriptNoArgs(String filename, String marketCode, String label) {
         File script = new File(SCRIPT_DIR, filename);
         if (!script.exists()) {
-            log.warning(label + " script not found: " + script.getAbsolutePath());
+            script = new File("../script", filename);
+        }
+        if (!script.exists()) {
+            log.warning(label + " script not found at any path");
             return;
         }
         log.info("Starting " + label + " sync: " + filename);
         LocalDateTime startedAt = LocalDateTime.now();
-        jdbc.update("INSERT INTO crawl_history (market, started_at, status) VALUES (?, ?, 'running')",
-                marketCode, startedAt);
-        long historyId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        long historyId = insertCrawlHistory(marketCode, startedAt);
 
         StringBuilder logTail = new StringBuilder();
+        int rowsWritten = 0;
+        int stocksFailed = 0;
         String status = "error";
         try {
             ProcessBuilder pb = new ProcessBuilder(pythonExecutable, script.getAbsolutePath());
@@ -215,7 +222,14 @@ public class CrawlerScheduler {
             try (java.io.BufferedReader reader = new java.io.BufferedReader(
                     new java.io.InputStreamReader(p.getInputStream(), "UTF-8"))) {
                 String line;
-                while ((line = reader.readLine()) != null) logTail.append(line).append("\n");
+                while ((line = reader.readLine()) != null) {
+                    logTail.append(line).append("\n");
+                    Matcher m = SUMMARY_RE.matcher(line);
+                    if (m.find()) {
+                        rowsWritten = Integer.parseInt(m.group(1));
+                        stocksFailed = Integer.parseInt(m.group(2));
+                    }
+                }
             }
             status = p.waitFor() == 0 ? "ok" : "error";
         } catch (Exception e) {
@@ -225,11 +239,26 @@ public class CrawlerScheduler {
 
         String tail = logTail.toString();
         if (tail.length() > 2000) tail = tail.substring(tail.length() - 2000);
-        jdbc.update("UPDATE crawl_history SET ended_at=?, rows_written=0, stocks_failed=0, status=?, log_tail=? WHERE id=?",
-                LocalDateTime.now(), status, tail, historyId);
+        jdbc.update("UPDATE crawl_history SET ended_at=?, rows_written=?, stocks_failed=?, status=?, log_tail=? WHERE id=?",
+                LocalDateTime.now(), rowsWritten, stocksFailed, status, tail, historyId);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────
+
+    /** Insert a crawl_history row and return its auto-generated id (same connection). */
+    private long insertCrawlHistory(String marketCode, LocalDateTime startedAt) {
+        KeyHolder keyHolder = new GeneratedKeyHolder();
+        jdbc.update(connection -> {
+            PreparedStatement ps = connection.prepareStatement(
+                "INSERT INTO crawl_history (market, started_at, status) VALUES (?, ?, 'running')",
+                Statement.RETURN_GENERATED_KEYS);
+            ps.setString(1, marketCode);
+            ps.setObject(2, startedAt);
+            return ps;
+        }, keyHolder);
+        Number key = keyHolder.getKey();
+        return key != null ? key.longValue() : 0;
+    }
 
     private boolean isWeekend() {
         DayOfWeek day = LocalDate.now(SHANGHAI).getDayOfWeek();
@@ -239,24 +268,18 @@ public class CrawlerScheduler {
     private void runScript(String filename, String marketCode, String label) {
         File script = new File(SCRIPT_DIR, filename);
         if (!script.exists()) {
-            log.warning(label + " script not found: " + script.getAbsolutePath());
-            return;
-        }
-
-        // Try alternate path for local dev
-        if (!script.exists()) {
             script = new File("../script", filename);
         }
         if (!script.exists()) {
-            log.warning(label + " script not found at any path");
+            log.warning(label + " script not found at any path (tried: "
+                + new File(SCRIPT_DIR, filename).getAbsolutePath() + ", "
+                + new File("../script", filename).getAbsolutePath() + ")");
             return;
         }
 
         log.info("Starting " + label + " sync: " + filename);
         LocalDateTime startedAt = LocalDateTime.now();
-        jdbc.update("INSERT INTO crawl_history (market, started_at, status) VALUES (?, ?, 'running')",
-            marketCode, startedAt);
-        long historyId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        long historyId = insertCrawlHistory(marketCode, startedAt);
 
         // Register with the shared session manager so admin UI can reconnect
         String startDate = java.time.LocalDate.now().minusDays(3).toString();
