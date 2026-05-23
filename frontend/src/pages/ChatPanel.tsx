@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { Sparkles, X, Send, RefreshCw, Trash2, Brain } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { SseEvent } from '@/types'
 
 interface Message { role: 'user' | 'assistant'; content: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string }
@@ -174,7 +175,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
             <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${m.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-800'}`}>
               {m.role === 'assistant'
                 ? <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-200 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto">
-                  <ReactMarkdown components={{
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                     code: ({ children, className, ...props }) => {
                       const text = String(children).trim()
                       // C1: Stock codes like 600519.SH become clickable links
@@ -219,7 +220,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                     const after = streamText.replace(/<thinking>[\s\S]*?(<\/thinking>|$)/, '').trim()
                     return (<>
                       {thinking && <ThinkingBlock text={thinking} done={streamText.includes('</thinking>')} />}
-                      {after && <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded"><ReactMarkdown>{after}</ReactMarkdown></div>}
+                      {after && <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded"><ReactMarkdown remarkPlugins={[remarkGfm]}>{after}</ReactMarkdown></div>}
                     </>)
                   })()
                 : (!toolMsg && <span className="inline-flex gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>)

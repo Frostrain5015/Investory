@@ -33,7 +33,7 @@ public class AiApiController {
     private String defaultKey;
 
     private static final String DEFAULT_PROVIDER = "bailian";
-    private static final String DEFAULT_MODEL   = "qwen-plus";
+    private static final String DEFAULT_MODEL   = "qwen3.7-max";
     private static final String DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 
     @Autowired
@@ -151,7 +151,10 @@ public class AiApiController {
                         } else if (line.startsWith("[ERROR]")) {
                             session.emitError(line.substring(7).trim());
                         } else {
-                            session.emitToken(line);
+                            // Empty lines represent newlines in the model's output
+                            // (Python appends \n as protocol delimiter, readLine strips it,
+                            //  leaving "" for every \n the model actually produced)
+                            session.emitToken(line.isEmpty() ? "\n" : line);
                         }
                     }
                 }
