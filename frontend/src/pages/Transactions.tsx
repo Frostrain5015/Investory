@@ -4,6 +4,7 @@ import { useAuth } from '@/hooks/use-auth'
 import { useConfirm } from '@/hooks/use-confirm'
 import { Card, CardContent } from '@/components/ui/card'
 import { displaySymbol } from '@/lib/format'
+import { BASE } from '@/services/api'
 import { Pencil, Trash2, Plus } from 'lucide-react'
 import { useT } from '@/i18n/I18nContext'
 
@@ -23,7 +24,7 @@ export default function Transactions() {
   const [managing, setManaging] = useState(false)
 
   const load = useCallback(() => {
-    fetch('/investory/api/transactions', { credentials: 'include' })
+    fetch(`${BASE}/api/transactions`, { credentials: 'include' })
       .then(r => r.json()).then(setItems)
       .finally(() => setLoading(false))
   }, [])
@@ -37,7 +38,7 @@ export default function Transactions() {
       : (type === 'DIV' ? 'Delete this dividend?' : 'Delete this transaction?')
     if (!(await confirm(msg))) return
     const endpoint = type === 'DIV' ? `/api/dividends/${id}` : `/api/transactions/${id}`
-    await fetch(`/investory${endpoint}`, { method: 'DELETE', credentials: 'include' })
+    await fetch(`${BASE}${endpoint}`, { method: 'DELETE', credentials: 'include' })
     load()
   }
 

@@ -3,6 +3,7 @@ import * as echarts from 'echarts'
 import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
 import { useT } from '@/i18n/I18nContext'
+import { BASE } from '@/services/api'
 
 interface IndexData { name: string; flag: string; lat: number; lng: number; price: number; change: number; changePct: number; symbol: string; fetchedAt?: string }
 
@@ -81,13 +82,13 @@ export default function Market() {
   const timeLocale = lang === 'zh' ? 'zh-CN' : 'en-US'
 
   const loadIndices = useCallback(() => {
-    fetch('/investory/api/market/indices', { credentials: 'include' })
+    fetch(`${BASE}/api/market/indices`, { credentials: 'include' })
       .then(r => r.json()).then(data => {
         setIndices(data.indices || [])
         setIndicators(data.indicators || [])
       })
       .finally(() => setLoading(false))
-    fetch('/investory/api/market/news', { credentials: 'include' })
+    fetch(`${BASE}/api/market/news`, { credentials: 'include' })
       .then(r => r.json()).then(data => setNews(Array.isArray(data) ? data : []))
       .catch(() => {})
   }, [])
@@ -154,7 +155,10 @@ export default function Market() {
     if (!chartRef.current || markers.length === 0) return
     const chart = echarts.init(chartRef.current, null, { renderer: 'svg' })
 
-    fetch('/investory/world.json')
+    const onResize = () => chart.resize()
+    window.addEventListener('resize', onResize)
+
+    fetch(`${import.meta.env.BASE_URL}world.json`)
       .then(r => r.json())
       .then(geoJson => {
         echarts.registerMap('world', geoJson)
@@ -276,12 +280,15 @@ export default function Market() {
           const leader = indices.find(d => d.flag === flag && d.name === entry.lead)
             || indices.find(d => d.flag === flag)
           if (leader?.symbol) {
-            window.location.href = `/investory/stock?symbol=${encodeURIComponent(leader.symbol)}`
+            window.location.href = `/stock?symbol=${encodeURIComponent(leader.symbol)}`
           }
         })
       })
 
-    return () => chart.dispose()
+    return () => {
+      window.removeEventListener('resize', onResize)
+      chart.dispose()
+    }
   }, [markers, countryRegions, positiveHex, negativeHex, newsPoints, lang, t.market.noData, t.market.clickToViewSource, t.market.categoryFinance, t.market.categoryGeopolitics, t.market.countryNames, timeLocale])
 
   if (loading) return <div className="flex flex-col items-center justify-center gap-3 h-screen">
@@ -308,7 +315,7 @@ export default function Market() {
             const chgText = valid ? `${up ? '+' : ''}${fmtNum(Math.abs(Number(ind.change)), 2, lang)}` : '—'
             const pctText = valid ? `${up ? '+' : ''}${Number(ind.changePct).toFixed(2)}%` : '—'
             return (
-              <a key={ind.symbol} href={`/investory/stock?symbol=${encodeURIComponent(ind.symbol)}`}
+              <a key={ind.symbol} href={`${import.meta.env.BASE_URL}stock?symbol=${encodeURIComponent(ind.symbol)}`}
                 className="flex-1 rounded-xl border border-slate-200 px-4 py-3 hover:bg-slate-50 transition-colors no-underline">
                 <div className="text-[11px] text-slate-400 font-medium mb-0.5">{ind.name}</div>
                 <div className="text-base font-bold text-slate-900 tabular-nums">{priceText}</div>

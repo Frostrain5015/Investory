@@ -4,6 +4,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { shortSymbol } from '@/lib/format'
 import { useConfirm } from '@/hooks/use-confirm'
 import { Plus } from 'lucide-react'
+import { BASE } from '@/services/api'
 import { useT } from '@/i18n/I18nContext'
 
 interface Div { id: number; stockName?: string; stockSymbol?: string; amountPerShare: number; sharesHeld: number; totalAmount: number; recordDate: string }
@@ -15,7 +16,7 @@ export default function Dividends() {
   const [loading, setLoading] = useState(true)
 
   function load() {
-    fetch('/investory/api/dividends', { credentials: 'include' })
+    fetch(`${BASE}/api/dividends`, { credentials: 'include' })
       .then(r => r.json()).then(d => setDividends(d.dividends || []))
       .finally(() => setLoading(false))
   }
@@ -25,7 +26,7 @@ export default function Dividends() {
   async function handleDelete(id: number) {
     const msg = lang === 'zh' ? '确认删除？' : 'Confirm delete?'
     if (!(await confirm(msg))) return
-    await fetch(`/investory/api/dividends/${id}`, { method: 'DELETE', credentials: 'include' })
+    await fetch(`${BASE}/api/dividends/${id}`, { method: 'DELETE', credentials: 'include' })
     load()
   }
 

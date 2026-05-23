@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { checkSession, login as apiLogin, register as apiRegister } from '@/services/api'
+import { BASE, checkSession, login as apiLogin, register as apiRegister } from '@/services/api'
 import type { SessionResponse } from '@/types'
 
 interface AuthState {
@@ -76,7 +76,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
-    window.location.href = '/investory/logout'
+    fetch(BASE + '/logout', { credentials: 'include' })
+      .finally(() => { window.location.href = '/' })
   }
 
   return (

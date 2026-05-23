@@ -1,4 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
+import { BASE } from '@/services/api'
+import { useAuth } from './use-auth'
 
 export type ColorScheme = 'cn' | 'western'
 export type BaseCurrency = 'CNY' | 'HKD' | 'USD'
@@ -57,6 +59,7 @@ const CURRENCY_SYMBOLS: Record<BaseCurrency, string> = {
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
+  const { authenticated } = useAuth()
   const [colorScheme, setColorScheme] = useState<ColorScheme>(() => {
     return (localStorage.getItem('colorScheme') as ColorScheme) || 'cn'
   })
@@ -69,7 +72,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [rates, setRates] = useState<Record<BaseCurrency, number>>(FALLBACK_RATES)
 
   const fetchRates = useCallback(() => {
-    fetch('/investory/api/market/exchange-rates', { credentials: 'include' })
+    fetch(`${BASE}/api/market/exchange-rates`, { credentials: 'include' })
       .then(r => r.json())
       .then(data => {
         setRates({ CNY: 1, HKD: Number(data.HKD) || FALLBACK_RATES.HKD, USD: Number(data.USD) || FALLBACK_RATES.USD })
@@ -79,7 +82,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   useEffect(() => { localStorage.setItem('colorScheme', colorScheme) }, [colorScheme])
   useEffect(() => { localStorage.setItem('baseCurrency', baseCurrency) }, [baseCurrency])
   useEffect(() => { localStorage.setItem('showRiskMetrics', String(showRiskMetrics)) }, [showRiskMetrics])
-  useEffect(() => { fetchRates() }, [fetchRates])
+  useEffect(() => { if (authenticated) fetchRates() }, [fetchRates, authenticated])
 
   function toggleColorScheme() {
     setColorScheme(prev => prev === 'cn' ? 'western' : 'cn')

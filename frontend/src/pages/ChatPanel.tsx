@@ -7,6 +7,7 @@ import remarkGfm from 'remark-gfm'
 import type { SseEvent } from '@/types'
 import { useT } from '@/i18n/I18nContext'
 import { getCachedSuggestions, getSuggestionsPromise } from '@/services/aiPreload'
+import { BASE } from '@/services/api'
 
 interface Message { role: 'user' | 'assistant'; content: string; thinking?: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string }
 
@@ -70,7 +71,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       return
     }
     // No preload started — fetch now
-    fetch('/investory/api/ai/suggestions', { credentials: 'include' })
+    fetch(`${BASE}/api/ai/suggestions`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
         if (Array.isArray(d.suggestions) && d.suggestions.length > 0) setSuggestions(d.suggestions)
@@ -96,7 +97,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     setAskData(null)
 
     try {
-      const resp = await fetch('/investory/api/ai/chat', {
+      const resp = await fetch(`${BASE}/api/ai/chat`, {
         method: 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: newMessages, deepThink }),
@@ -104,7 +105,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
 
       if (esRef.current) esRef.current.close()
-      const es = new EventSource('/investory/api/ai/stream')
+      const es = new EventSource(`${BASE}/api/ai/stream`)
       esRef.current = es
 
       es.addEventListener('strategy', (e) => {
@@ -169,7 +170,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function clearChat() { setMessages([]); setStreamText(''); fetch('/investory/api/ai/clear', { method: 'POST', credentials: 'include' }).catch(() => {}) }
+  function clearChat() { setMessages([]); setStreamText(''); fetch(`${BASE}/api/ai/clear`, { method: 'POST', credentials: 'include' }).catch(() => {}) }
 
   function regenerate() {
     if (messages.length < 2) return
@@ -236,7 +237,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                     code: ({ children, className, ...props }) => {
                       const text = String(children).trim()
                       if (/^\d{4,6}\.(SH|SZ|HK|US)$/i.test(text) || /^[A-Z]{1,5}\.US$/i.test(text)) {
-                        return <a href={`/investory/stock?symbol=${text}`} target="_blank" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100">{text}</a>
+                        return <a href={`${BASE}/stock?symbol=${text}`} target="_blank" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100">{text}</a>
                       }
                       return <code className={className} {...props}>{children}</code>
                     }
@@ -250,7 +251,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                     const name = m.strategyName || prompt(t.chat.promptStrategyName, t.chat.strategyPlaceholder)
                     if (!name) return
                     const code = m.strategyCode || m.content
-                    const res = await fetch('/investory/api/backtest/strategies', {
+                    const res = await fetch(`${BASE}/api/backtest/strategies`, {
                       method: 'POST', credentials: 'include',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ name, strategyType: 'advanced', strategy: { code } })

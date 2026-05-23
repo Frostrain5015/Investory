@@ -6,6 +6,7 @@ import type { StockSearchItem } from '@/types'
 import { displaySymbol } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 import { useT } from '@/i18n/I18nContext'
+import { BASE } from '@/services/api'
 
 const CURRENCY_SYMBOL: Record<string, string> = { CNY: '¥', HKD: 'HK$', USD: '$' }
 
@@ -61,8 +62,8 @@ export default function AddTransaction() {
     if (!editId) return
     const isDiv = initType === 'DIV'
     const url = isDiv
-      ? `/investory/api/dividends/${editId}`
-      : `/investory/api/transactions/${editId}`
+      ? `${BASE}/api/dividends/${editId}`
+      : `${BASE}/api/transactions/${editId}`
     fetch(url, { credentials: 'include' })
       .then(r => r.json())
       .then(item => {
@@ -104,7 +105,7 @@ export default function AddTransaction() {
       const form = new URLSearchParams({
         stockId: '0', type, shares, price: '0', tradeDate, currency, note: note || '',
       })
-      const url = editId ? `/investory/api/transactions/${editId}` : '/investory/api/transactions'
+      const url = editId ? `${BASE}/api/transactions/${editId}` : `${BASE}/api/transactions`
       const res = await fetch(url, {
         method: editId ? 'PUT' : 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -129,7 +130,7 @@ export default function AddTransaction() {
       const form = new URLSearchParams({
         stockId: String(editId ? txStockId : selectedStock.id), amountPerShare: dividendPerShare, recordDate: tradeDate,
       })
-      const url = editId ? `/investory/api/dividends/${editId}` : '/investory/api/dividends'
+      const url = editId ? `${BASE}/api/dividends/${editId}` : `${BASE}/api/dividends`
       await fetch(url, {
         method: editId ? 'PUT' : 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -140,7 +141,7 @@ export default function AddTransaction() {
         stockId: String(editId ? txStockId : selectedStock.id), type, shares, price,
         fee: fee || '', tradeDate, note: note || ''
       })
-      const url = editId ? `/investory/api/transactions/${editId}` : '/investory/api/transactions'
+      const url = editId ? `${BASE}/api/transactions/${editId}` : `${BASE}/api/transactions`
       const res = await fetch(url, {
         method: editId ? 'PUT' : 'POST', credentials: 'include',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

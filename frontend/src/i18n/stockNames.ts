@@ -9,7 +9,7 @@ let _loading: Promise<StockNameMap> | null = null
 async function loadMap(): Promise<StockNameMap> {
   if (_map) return _map
   if (_loading) return _loading
-  _loading = fetch('/investory/stock_names.json')
+  _loading = fetch(`${import.meta.env.BASE_URL}stock_names.json`)
     .then(r => r.json())
     .then((data: StockNameMap) => {
       _map = data

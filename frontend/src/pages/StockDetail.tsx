@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
-import { chartAPI, getStockDetail, searchStocks } from '@/services/api'
+import { BASE, chartAPI, getStockDetail, searchStocks } from '@/services/api'
 import { useSettings } from '@/hooks/use-settings'
 import { useT } from '@/i18n/I18nContext'
 import type { StockDetailResponse, Transaction, Dividend, PriceData } from '@/types'
@@ -61,7 +61,7 @@ export default function StockDetail() {
       }
     }).finally(() => setLoading(false))
     // Check watchlist status
-    fetch('/investory/api/watchlist', { credentials: 'include' })
+    fetch(`${BASE}/api/watchlist`, { credentials: 'include' })
       .then(r => r.json()).then((list: any[]) => {
         const found = list.find((w: any) => w.symbol === symbol)
         if (found) { setWatching(true); setWatchId(found.id) }
@@ -145,7 +145,7 @@ export default function StockDetail() {
         </div>
         <button onClick={() => {
           const sym = params.get('symbol')
-          if (sym) fetch(`/investory/api/stocks/${encodeURIComponent(sym)}/refresh`, { method: 'POST', credentials: 'include' }).then(() => window.location.reload())
+          if (sym) fetch(`${BASE}/api/stocks/${encodeURIComponent(sym)}/refresh`, { method: 'POST', credentials: 'include' }).then(() => window.location.reload())
         }}
           className="ml-auto inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors">
           {t.stockDetail.refreshData}
@@ -154,13 +154,13 @@ export default function StockDetail() {
           const sym = params.get('symbol')
           if (!sym) return
           if (watching && watchId) {
-            await fetch(`/investory/api/watchlist/${stock?.id}`, { method: 'DELETE', credentials: 'include' })
+            await fetch(`${BASE}/api/watchlist/${stock?.id}`, { method: 'DELETE', credentials: 'include' })
             setWatching(false); setWatchId(null)
           } else {
             const stocks = await searchStocks(sym)
             if (stocks.length > 0) {
               const form = new URLSearchParams({ stockId: stocks[0].id })
-              await fetch('/investory/api/watchlist', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
+              await fetch(`${BASE}/api/watchlist`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
               setWatching(true)
             }
           }

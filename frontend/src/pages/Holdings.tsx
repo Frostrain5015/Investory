@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
-import { searchStocks, chartAPI, getHoldingsMetrics } from '@/services/api'
+import { BASE, searchStocks, chartAPI, getHoldingsMetrics } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { displaySymbol, fmtPriceTs } from '@/lib/format'
 import Sparkline from '@/components/Sparkline'
@@ -86,7 +86,7 @@ export default function Holdings() {
     setDragIdx(null)
     setDropIdx(null)
     const body = next.map((item, i) => ({ id: item.id, sortOrder: i }))
-    fetch('/investory/api/watchlist/reorder', {
+    fetch(`${BASE}/api/watchlist/reorder`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -98,8 +98,8 @@ export default function Holdings() {
   const load = useCallback(() => {
     if (!portfolioId) return
     Promise.all([
-      fetch('/investory/api/holdings', { credentials: 'include' }).then(r => r.json()),
-      fetch('/investory/api/watchlist', { credentials: 'include' }).then(r => r.json()),
+      fetch(`${BASE}/api/holdings`, { credentials: 'include' }).then(r => r.json()),
+      fetch(`${BASE}/api/watchlist`, { credentials: 'include' }).then(r => r.json()),
     ]).then(([hData, wData]) => {
       const held = (hData.snapshots || []) as any[]
       const heldById = new Map(held.map(s => [s.stockId, s]))
@@ -128,7 +128,7 @@ export default function Holdings() {
 
   useEffect(() => { load() }, [load])
   const [lastRefresh] = useTimedRefresh(() => {
-    fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' })
+    fetch(`${BASE}/api/portfolio/refresh`, { method: 'POST', credentials: 'include' })
     load()
   })
 
@@ -136,7 +136,7 @@ export default function Holdings() {
 
   async function addToWatch(s: StockSearchItem) {
     const form = new URLSearchParams({ stockId: s.id })
-    await fetch('/investory/api/watchlist', { method: 'POST', body: form, credentials: 'include' })
+    await fetch(`${BASE}/api/watchlist`, { method: 'POST', body: form, credentials: 'include' })
     setShowAdd(false)
     setQuery('')
     setResults([])
@@ -144,7 +144,7 @@ export default function Holdings() {
   }
 
   async function removeWatch(stockId: number) {
-    await fetch(`/investory/api/watchlist/${stockId}`, { method: 'DELETE', credentials: 'include' })
+    await fetch(`${BASE}/api/watchlist/${stockId}`, { method: 'DELETE', credentials: 'include' })
     load()
   }
 

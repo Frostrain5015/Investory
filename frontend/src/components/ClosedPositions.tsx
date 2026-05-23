@@ -3,6 +3,7 @@ import { useSettings } from '@/hooks/use-settings'
 import { useT } from '@/i18n/I18nContext'
 import { displaySymbol } from '@/lib/format'
 import { X } from 'lucide-react'
+import { BASE } from '@/services/api'
 
 interface ClosedItem {
   stock_id: number; symbol: string; name: string; market: string
@@ -18,7 +19,7 @@ export default function ClosedPositions({ open, onClose }: { open: boolean; onCl
   useEffect(() => {
     if (!open) return
     setLoading(true)
-    fetch('/investory/api/closed-positions', { credentials: 'include' })
+    fetch(`${BASE}/api/closed-positions`, { credentials: 'include' })
       .then(r => r.json()).then(setItems)
       .finally(() => setLoading(false))
   }, [open])

@@ -6,6 +6,7 @@ import { useT } from '@/i18n/I18nContext'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Database, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock, Square, Pause, PlayCircle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { BASE } from '@/services/api'
 
 interface MarketStat { market: string; stock_count: number; price_rows: number; latest_date: string; earliest_date: string }
 interface DbStatus { markets: MarketStat[]; totals: { stock_count: number; price_rows: number }; tables: { total_mb: number }[] }
@@ -97,21 +98,21 @@ export default function Admin() {
 
   const fetchStatus = useCallback(() => {
     setLoadingStatus(true)
-    fetch('/investory/api/admin/status', { credentials: 'include' })
+    fetch(`${BASE}/api/admin/status`, { credentials: 'include' })
       .then(r => r.json())
       .then(setStatus)
       .finally(() => setLoadingStatus(false))
   }, [])
 
   const fetchUsers = useCallback(() => {
-    fetch('/investory/api/admin/users', { credentials: 'include' })
+    fetch(`${BASE}/api/admin/users`, { credentials: 'include' })
       .then(r => r.json())
       .then(setUsers)
       .catch(() => {})
   }, [])
 
   const fetchCrawlHistory = useCallback(() => {
-    fetch('/investory/api/admin/crawl-history', { credentials: 'include' })
+    fetch(`${BASE}/api/admin/crawl-history`, { credentials: 'include' })
       .then(r => r.json())
       .then(setCrawlHistory)
       .catch(() => {})
@@ -125,7 +126,7 @@ export default function Admin() {
 
   // On mount: check for an ongoing crawl and reconnect
   useEffect(() => {
-    fetch('/investory/api/admin/crawl/status', { credentials: 'include' })
+    fetch(`${BASE}/api/admin/crawl/status`, { credentials: 'include' })
       .then(r => r.json())
       .then((data: { active?: boolean; market?: string; label?: string; startDate?: string; endDate?: string; progress?: ProgressData; recentLogs?: string[] }) => {
         if (!data.active || !data.market) return
@@ -151,7 +152,7 @@ export default function Admin() {
         }, 3000)
         cs.setHeartbeat(heartbeat)
 
-        const eventSource = new EventSource(`/investory/api/admin/crawl/${data.market}?reconnect=true`)
+        const eventSource = new EventSource(`${BASE}/api/admin/crawl/${data.market}?reconnect=true`)
         cs.setEsRef(eventSource)
 
         eventSource.addEventListener('status', (e) => {
@@ -242,7 +243,7 @@ export default function Admin() {
     }, 3000)
     cs.setHeartbeat(heartbeat)
 
-    const eventSource = new EventSource(`/investory/api/admin/crawl/${market}?start=${dateStart}&end=${dateEnd}`)
+    const eventSource = new EventSource(`${BASE}/api/admin/crawl/${market}?start=${dateStart}&end=${dateEnd}`)
     cs.setEsRef(eventSource)
 
     eventSource.addEventListener('status', (e) => {
@@ -304,12 +305,12 @@ export default function Admin() {
   }
 
   async function stopCrawl() {
-    await fetch('/investory/api/admin/crawl/stop', { method: 'POST', credentials: 'include' })
+    await fetch(`${BASE}/api/admin/crawl/stop`, { method: 'POST', credentials: 'include' })
   }
 
   async function togglePause() {
     const nowPaused = !cs.paused
-    const endpoint = nowPaused ? '/investory/api/admin/crawl/pause' : '/investory/api/admin/crawl/resume'
+    const endpoint = nowPaused ? `${BASE}/api/admin/crawl/pause` : `${BASE}/api/admin/crawl/resume`
     const res = await fetch(endpoint, { method: 'POST', credentials: 'include' })
     const data = await res.json()
     if (!data.error) {
@@ -320,13 +321,13 @@ export default function Admin() {
 
   async function impersonate(userId: number) {
     if (!(await confirm(t.admin.confirmImpersonate))) return
-    await fetch(`/investory/api/admin/impersonate/${userId}`, { method: 'POST', credentials: 'include' })
-    window.location.href = '/investory/dashboard'
+    await fetch(`${BASE}/api/admin/impersonate/${userId}`, { method: 'POST', credentials: 'include' })
+    window.location.href = '/dashboard'
   }
 
   async function deleteUser(userId: number, username: string) {
     if (!(await confirm(`${t.admin.confirmDeleteUserPrefix} "${username}"？${t.admin.irreversible}`))) return
-    const res = await fetch(`/investory/api/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
+    const res = await fetch(`${BASE}/api/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
     const data = await res.json()
     if (data.error) { toast(data.error, false); return }
     fetchUsers()
@@ -424,7 +425,7 @@ export default function Admin() {
                   <button
                     onClick={async () => {
                       if (!(await confirm(t.admin.confirmClearHistory))) return
-                      await fetch('/investory/api/admin/crawl-history', { method: 'DELETE', credentials: 'include' })
+                      await fetch(`${BASE}/api/admin/crawl-history`, { method: 'DELETE', credentials: 'include' })
                       fetchCrawlHistory()
                     }}
                     className="h-6 px-2 rounded-md bg-red-50 text-red-500 hover:bg-red-100 text-[10px] font-medium transition-colors">

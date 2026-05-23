@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import { useT } from '@/i18n/I18nContext'
-import { chartAPI } from '@/services/api'
+import { BASE, chartAPI } from '@/services/api'
 import type { PnlCalendarItem } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
@@ -76,8 +76,8 @@ export default function PnlCalendar() {
     if (!selected) { setDetail(null); return }
     setDetailLoading(true)
     const url = selected.kind === 'day'
-      ? `/investory/api/daily-detail?date=${selected.date}`
-      : `/investory/api/monthly-detail?year=${selected.year}&month=${selected.month}`
+      ? `${BASE}/api/daily-detail?date=${selected.date}`
+      : `${BASE}/api/monthly-detail?year=${selected.year}&month=${selected.month}`
     fetch(url, { credentials: 'include' })
       .then(r => r.json())
       .then((d: Record<string, unknown>) => {

@@ -7,6 +7,7 @@ import { useTheme } from '@/hooks/use-theme'
 import { useT } from '@/i18n/I18nContext'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Sun, Moon, Camera, Sparkles } from 'lucide-react'
+import { BASE } from '@/services/api'
 
 export default function Settings() {
   const { username, logout } = useAuth()
@@ -29,7 +30,7 @@ export default function Settings() {
 
   // Load AI settings from server on mount
   useEffect(() => {
-    fetch('/investory/api/ai/settings', { credentials: 'include' })
+    fetch(`${BASE}/api/ai/settings`, { credentials: 'include' })
       .then(r => r.json()).then(d => {
         if (d.provider) setAiProvider(d.provider)
         if (d.model) setAiModel(d.model)
@@ -76,7 +77,7 @@ export default function Settings() {
     if (!oldPw || !newPw) { setPwMsg(t.settings.pwFillBoth); return }
     if (newPw.length < 6) { setPwMsg(t.settings.pwTooShort); return }
     const form = new URLSearchParams({ oldPassword: oldPw, newPassword: newPw })
-    const res = await fetch('/investory/api/password', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() })
+    const res = await fetch(`${BASE}/api/password`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() })
     const data = await res.json()
     if (data.error) {
       setPwMsg(data.error)
@@ -90,7 +91,7 @@ export default function Settings() {
     if (!(await confirm(t.settings.confirmDeleteAccount))) return
     setDeleting(true)
     try {
-      const res = await fetch('/investory/api/account', { method: 'DELETE', credentials: 'include' })
+      const res = await fetch(`${BASE}/api/account`, { method: 'DELETE', credentials: 'include' })
       if (res.ok) { toast(t.settings.accountDeleted, true); setTimeout(logout, 1500) }
       else toast(t.settings.deleteFailed, false)
     } catch { toast(t.settings.networkError, false) }
@@ -235,7 +236,7 @@ export default function Settings() {
             <button onClick={async () => {
               const body: Record<string, string> = { provider: aiProvider, model: aiModel, baseUrl: aiBaseUrl }
               if (aiKey) body.apiKey = aiKey
-              const res = await fetch('/investory/api/ai/settings', {
+              const res = await fetch(`${BASE}/api/ai/settings`, {
                 method: 'POST', credentials: 'include',
                 headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
               })
@@ -247,7 +248,7 @@ export default function Settings() {
               {t.settings.aiSaveBtn}
             </button>
             <button onClick={async () => {
-              const res = await fetch('/investory/api/ai/settings', { method: 'DELETE', credentials: 'include' })
+              const res = await fetch(`${BASE}/api/ai/settings`, { method: 'DELETE', credentials: 'include' })
               const data = await res.json()
               if (data.error) { toast(data.error, false); return }
               setAiProvider('bailian'); setAiKey(''); setAiBaseUrl(''); setAiModel('qwen-plus'); setAiHasKey(false)

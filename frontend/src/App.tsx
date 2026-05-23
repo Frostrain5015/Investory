@@ -8,6 +8,7 @@ import { preloadSuggestions } from '@/services/aiPreload'
 import { ConfirmProvider } from '@/hooks/use-confirm'
 import { I18nProvider, useT } from '@/i18n/I18nContext'
 import Layout from '@/components/Layout'
+import TitleBar from '@/components/TitleBar'
 import Hero from '@/pages/Hero'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
@@ -24,10 +25,12 @@ import Portfolio from '@/pages/Portfolio'
 import Settings from '@/pages/Settings'
 import Quant from '@/pages/Quant'
 
+const isElectron = !!(window as any).electronAPI?.isDesktop
+
 function LoadingScreen() {
   const { t } = useT()
   return (
-    <div className="flex flex-col items-center justify-center gap-3 h-screen bg-slate-50">
+    <div className="flex flex-col items-center justify-center gap-3 h-full bg-slate-50">
       <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
       <span className="text-sm text-slate-400">{t.common.loading}</span>
     </div>
@@ -49,38 +52,43 @@ function PublicRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <SettingsProvider>
-      <ThemeProvider>
-      <I18nProvider>
-      <ToastProvider>
-      <ConfirmProvider>
-      <Routes>
-        <Route path="/" element={<PublicRoute><Hero /></PublicRoute>} />
-        <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-        <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
-        <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-          <Route path="/market" element={<Market />} />
-          <Route path="/watchlist" element={<Navigate to="/holdings" replace />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/holdings" element={<Holdings />} />
-          <Route path="/transactions" element={<Transactions />} />
-          <Route path="/transactions/add" element={<AddTransaction />} />
-          <Route path="/dividends" element={<Dividends />} />
-          <Route path="/stock" element={<StockDetail />} />
-          <Route path="/pnl-calendar" element={<PnlCalendar />} />
-          <Route path="/portfolio" element={<Portfolio />} />
-          <Route path="/settings" element={<Settings />} />
-          <Route path="/quant" element={<Quant />} />
-          <Route path="/admin" element={<Admin />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
-      </ConfirmProvider>
-      </ToastProvider>
-      </I18nProvider>
-      </ThemeProvider>
-      </SettingsProvider>
-    </AuthProvider>
+    <div className="h-screen flex flex-col" style={isElectron ? { borderRadius: '10px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.08)' } : undefined}>
+      {isElectron && <TitleBar />}
+      <div className="flex-1 min-h-0">
+        <AuthProvider>
+          <SettingsProvider>
+          <ThemeProvider>
+          <I18nProvider>
+          <ToastProvider>
+          <ConfirmProvider>
+          <Routes>
+            <Route path="/" element={<PublicRoute><Hero /></PublicRoute>} />
+            <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+            <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
+            <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+              <Route path="/market" element={<Market />} />
+              <Route path="/watchlist" element={<Navigate to="/holdings" replace />} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/holdings" element={<Holdings />} />
+              <Route path="/transactions" element={<Transactions />} />
+              <Route path="/transactions/add" element={<AddTransaction />} />
+              <Route path="/dividends" element={<Dividends />} />
+              <Route path="/stock" element={<StockDetail />} />
+              <Route path="/pnl-calendar" element={<PnlCalendar />} />
+              <Route path="/portfolio" element={<Portfolio />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="/quant" element={<Quant />} />
+              <Route path="/admin" element={<Admin />} />
+            </Route>
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+          </ConfirmProvider>
+          </ToastProvider>
+          </I18nProvider>
+          </ThemeProvider>
+          </SettingsProvider>
+        </AuthProvider>
+      </div>
+    </div>
   )
 }

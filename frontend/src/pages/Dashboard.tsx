@@ -19,6 +19,7 @@ import { displaySymbol, fmtPriceTs } from '@/lib/format'
 import CloudChart from '@/components/CloudChart'
 import ClosedPositions from '@/components/ClosedPositions'
 import { useT } from '@/i18n/I18nContext'
+import { BASE } from '@/services/api'
 
 interface Snapshot {
   stockId: number; stockSymbol: string; stockName: string; market: string; currency: string
@@ -107,7 +108,7 @@ export default function Dashboard() {
   useEffect(() => { loadDashboard() }, [loadDashboard])
 
   const [lastRefresh, markRefreshed] = useTimedRefresh(() => {
-    fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' })
+    fetch(`${BASE}/api/portfolio/refresh`, { method: 'POST', credentials: 'include' })
     loadDashboard()
   })
 
@@ -138,7 +139,7 @@ export default function Dashboard() {
           )}
           {snapshots.length > 0 && (
             <button disabled={refreshing}
-              onClick={async () => { setRefreshing(true); try { await fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }); toast(t.dashboard.toastRefreshSuccess, true); loadDashboard() } catch { toast(t.dashboard.toastRefreshFail, false) } setRefreshing(false); markRefreshed() }}
+              onClick={async () => { setRefreshing(true); try { await fetch(`${BASE}/api/portfolio/refresh`, { method: 'POST', credentials: 'include' }); toast(t.dashboard.toastRefreshSuccess, true); loadDashboard() } catch { toast(t.dashboard.toastRefreshFail, false) } setRefreshing(false); markRefreshed() }}
               className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-50">
               {refreshing ? t.common.loading : t.common.refresh}
             </button>

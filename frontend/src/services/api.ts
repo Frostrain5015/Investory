@@ -6,12 +6,12 @@ import type {
   HoldingsMetricsResponse, QuantData, BacktestResult,
 } from '@/types'
 
-const BASE = '/investory'
+export const BASE = import.meta.env.VITE_API_BASE || '/investory'
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + url, { credentials: 'include', ...options })
   if (res.status === 401) {
-    window.location.href = BASE + '/'
+    window.location.href = '/'
     throw new Error('Unauthorized')
   }
   if (!res.ok) throw new Error(`HTTP ${res.status}`)

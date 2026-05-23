@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh } from '@/hooks/use-timed-refresh'
-import { searchStocks } from '@/services/api'
+import { BASE, searchStocks } from '@/services/api'
 import { displaySymbol } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
 import type { StockSearchItem } from '@/types'
@@ -19,26 +19,26 @@ export default function Watchlist() {
   const [showDropdown, setShowDropdown] = useState(false)
 
   const load = useCallback(() => {
-    fetch('/investory/api/watchlist', { credentials: 'include' })
+    fetch(`${BASE}/api/watchlist`, { credentials: 'include' })
       .then(r => r.json()).then(setItems)
       .finally(() => setLoading(false))
   }, [])
 
   useEffect(() => { load() }, [load])
   useTimedRefresh(() => {
-    fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' })
+    fetch(`${BASE}/api/portfolio/refresh`, { method: 'POST', credentials: 'include' })
     load()
   })
   useEffect(() => { if (query.length >= 1) searchStocks(query).then(setResults) }, [query])
 
   async function addStock(s: StockSearchItem) {
     const form = new URLSearchParams({ stockId: s.id })
-    await fetch('/investory/api/watchlist', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
+    await fetch(`${BASE}/api/watchlist`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
     setQuery(''); setResults([]); setShowDropdown(false); load()
   }
 
   async function removeStock(stockId: number) {
-    await fetch(`/investory/api/watchlist/${stockId}`, { method: 'DELETE', credentials: 'include' })
+    await fetch(`${BASE}/api/watchlist/${stockId}`, { method: 'DELETE', credentials: 'include' })
     load()
   }
 

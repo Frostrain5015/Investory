@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings } from '@/services/api'
+import { BASE, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings } from '@/services/api'
 import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useSettings } from '@/hooks/use-settings'
@@ -77,7 +77,7 @@ function RiskSection() {
 
   const loadStyle = useCallback(() => {
     setLoading(true)
-    fetch('/investory/api/quant/portfolio-style', { credentials: 'include' })
+    fetch(`${BASE}/api/quant/portfolio-style`, { credentials: 'include' })
       .then(r => r.json()).then(d => { if (!d.error) setStyleData(d); else setStyleData({ _error: d.error }) })
       .catch(() => {}).finally(() => setLoading(false))
   }, [])
@@ -87,7 +87,7 @@ function RiskSection() {
   function refreshMetrics() {
     setRefreshingMetrics(true)
     if (esRef.current) { esRef.current.close() }
-    const es = new EventSource('/investory/api/quant/refresh', { withCredentials: true })
+    const es = new EventSource(`${BASE}/api/quant/refresh`, { withCredentials: true })
     esRef.current = es
     es.addEventListener('done', () => { setRefreshingMetrics(false); es.close() })
     es.addEventListener('error', () => { setRefreshingMetrics(false); es.close() })
@@ -247,7 +247,7 @@ function BacktestSection() {
 
   // Reconnect on mount
   useEffect(() => {
-    fetch('/investory/api/backtest/status', { credentials: 'include' })
+    fetch(`${BASE}/api/backtest/status`, { credentials: 'include' })
       .then(r => r.json())
       .then((data: any) => { if (data.active) { setRunning(true); if (data.progress) setProgress(data.progress); if (data.recentLogs) setSseLogs(data.recentLogs); reconnectSSE() } })
       .catch(() => {})
@@ -257,7 +257,7 @@ function BacktestSection() {
     if (esRef.current) { esRef.current.close(); esRef.current = null }
     getBacktestStream().then(resp => {
       if (!resp.ok) return
-      const es = new EventSource(`${window.location.origin}/investory/api/backtest/stream`)
+      const es = new EventSource(`${BASE}/api/backtest/stream`)
       esRef.current = es; wireSSE(es)
     }).catch(() => {})
   }
@@ -305,7 +305,7 @@ function BacktestSection() {
     const resp = await startBacktest({ name: savedStrat.name, strategyType: effectiveStrategyType, strategy, config })
     if (!resp.ok) { setErrorMsg(`HTTP ${resp.status}`); setRunning(false); return }
     if (esRef.current) { esRef.current.close(); esRef.current = null }
-    const es = new EventSource(`${window.location.origin}/investory/api/backtest/stream`)
+    const es = new EventSource(`${BASE}/api/backtest/stream`)
     esRef.current = es; wireSSE(es)
   }
 
@@ -333,7 +333,7 @@ function BacktestSection() {
 
   // ── Load strategies ────────────────────────────────────────────────
   const loadStrategies = useCallback(() => {
-    fetch('/investory/api/backtest/strategies', { credentials: 'include' })
+    fetch(`${BASE}/api/backtest/strategies`, { credentials: 'include' })
       .then(r => r.json()).then(setStrategies).catch(() => {})
   }, [])
   useEffect(() => { loadStrategies() }, [loadStrategies])
@@ -345,7 +345,7 @@ function BacktestSection() {
       : { entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules } }
     const body: any = { name: strategyName || (strategyType === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple), strategyType, strategy }
     if (editId) body.id = editId
-    const resp = await fetch('/investory/api/backtest/strategies', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    const resp = await fetch(`${BASE}/api/backtest/strategies`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const data = await resp.json()
     if (data.error) { toast(data.error, false); return }
     toast(editId ? q.toastStrategyUpdated : q.toastStrategySaved, true)
@@ -355,7 +355,7 @@ function BacktestSection() {
 
   async function deleteStrategy(id: number) {
     if (!(await confirm(q.toastConfirmDeleteStrategy))) return
-    await fetch(`/investory/api/backtest/strategies/${id}`, { method: 'DELETE', credentials: 'include' })
+    await fetch(`${BASE}/api/backtest/strategies/${id}`, { method: 'DELETE', credentials: 'include' })
     loadStrategies()
   }
 

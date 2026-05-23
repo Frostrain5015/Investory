@@ -51,7 +51,7 @@ export default function Layout() {
 
   const sidebar = (
     <aside className="w-60 flex flex-col bg-slate-900 text-slate-300 shrink-0 h-full">
-      <a href="/investory/dashboard" onClick={() => setSidebarOpen(false)} className="flex items-center gap-3 px-5 h-16 border-b border-slate-800">
+      <a href={`${import.meta.env.BASE_URL}dashboard`} onClick={() => setSidebarOpen(false)} className="flex items-center gap-3 px-5 h-16 border-b border-slate-800">
         <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: positiveHex }}>
           <TrendingUp className="w-5 h-5 text-white" />
         </div>
@@ -90,7 +90,7 @@ export default function Layout() {
   )
 
   return (
-    <div className="flex h-screen bg-slate-50">
+    <div className="flex h-full bg-slate-50">
       {/* Desktop sidebar */}
       <div className="hidden lg:flex">{sidebar}</div>
 
@@ -119,7 +119,7 @@ export default function Layout() {
             {showDropdown && results.length > 0 && (
               <div className="absolute top-full mt-1 w-full bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden z-50">
                 {results.map((s) => (
-                  <a key={s.id} href={`/investory/stock?symbol=${encodeURIComponent(s.symbol)}`}
+                  <a key={s.id} href={`${import.meta.env.BASE_URL}stock?symbol=${encodeURIComponent(s.symbol)}`}
                     className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors">
                     <span className="text-sm font-medium text-slate-900 truncate">{s.name}</span>
                     <span className="text-xs text-slate-400 shrink-0 ml-2">{displaySymbol(s.symbol, s.market)}</span>

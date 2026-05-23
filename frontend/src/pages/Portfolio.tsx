@@ -4,8 +4,9 @@ import { useConfirm } from '@/hooks/use-confirm'
 import { useT } from '@/i18n/I18nContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Plus, Trash2, Pencil } from 'lucide-react'
+import { BASE } from '@/services/api'
+import type { Portfolio } from '@/types'
 
-interface Portfolio { id: number; userId: number; name: string }
 
 export default function Portfolio() {
   const confirm = useConfirm()
@@ -18,7 +19,7 @@ export default function Portfolio() {
   const [loading, setLoading] = useState(true)
 
   function load() {
-    fetch('/investory/api/portfolios', { credentials: 'include' })
+    fetch(`${BASE}/api/portfolios`, { credentials: 'include' })
       .then(r => r.json()).then(setPortfolios)
       .finally(() => setLoading(false))
   }
@@ -28,7 +29,7 @@ export default function Portfolio() {
   async function handleCreate() {
     if (!newName.trim()) return
     const form = new URLSearchParams({ name: newName.trim() })
-    const res = await fetch('/investory/api/portfolios', {
+    const res = await fetch(`${BASE}/api/portfolios`, {
       method: 'POST', credentials: 'include',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form.toString(),
@@ -40,7 +41,7 @@ export default function Portfolio() {
   }
 
   async function handleSelect(id: number) {
-    await fetch(`/investory/api/portfolios/${id}`, { method: 'PUT', credentials: 'include' })
+    await fetch(`${BASE}/api/portfolios/${id}`, { method: 'PUT', credentials: 'include' })
     setPortfolioId(id)
     const p = portfolios.find(p => p.id === id)
     if (p) setPortfolioName(p.name)
@@ -48,7 +49,7 @@ export default function Portfolio() {
 
   async function handleRename(id: number) {
     if (!editName.trim()) return
-    await fetch(`/investory/api/portfolios/${id}`, {
+    await fetch(`${BASE}/api/portfolios/${id}`, {
       method: 'PUT', credentials: 'include',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ name: editName.trim() }),
@@ -59,7 +60,7 @@ export default function Portfolio() {
 
   async function handleDelete(id: number) {
     if (!(await confirm(t.portfolio.confirmDelete))) return
-    await fetch(`/investory/api/portfolios/${id}`, { method: 'DELETE', credentials: 'include' })
+    await fetch(`${BASE}/api/portfolios/${id}`, { method: 'DELETE', credentials: 'include' })
     load()
   }
 
