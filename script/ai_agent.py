@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import traceback
+import concurrent.futures
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
@@ -183,9 +184,11 @@ def tool_get_transactions(portfolio_id: int, limit: int = 20) -> list:
 
 def tool_get_stock_price_history(symbol: str, days: int = 60) -> dict:
     """获取个股历史K线"""
-    db_sym = resolve_symbol(get_db_conn(), symbol)
-    if not db_sym: return {"error": f"未找到 {symbol}"}
     conn = get_db_conn()
+    db_sym = resolve_symbol(conn, symbol)
+    if not db_sym:
+        conn.close()
+        return {"error": f"未找到 {symbol}"}
     cur = conn.cursor()
     cur.execute("SELECT s.id FROM stocks s WHERE s.symbol=%s", (db_sym,))
     sid = cur.fetchone()[0]
@@ -232,23 +235,31 @@ def tool_compute_correlation(portfolio_id: int, symbols: list = None) -> dict:
 
 def tool_compute_sector_breakdown(portfolio_id: int) -> dict:
     """行业/市场分布"""
-    # Reuse style classifier from portfolio_style_analyzer
-    import sys; sys.path.insert(0, str(SCRIPT_DIR))
+    sys.path.insert(0, str(SCRIPT_DIR))
     from portfolio_style_analyzer import classify_style
     conn = get_db_conn(); cur = conn.cursor()
-    cur.execute("SELECT s.symbol, s.name, s.market, h.total_shares, (SELECT close FROM stock_prices WHERE stock_id=s.id ORDER BY trade_date DESC LIMIT 1) AS price FROM holdings h JOIN stocks s ON h.stock_id=s.id WHERE h.portfolio_id=%s AND h.total_shares>0", (portfolio_id,))
+    cur.execute("""
+        SELECT h.stock_id, s.symbol, s.name, s.market, h.total_shares,
+               (SELECT close FROM stock_prices WHERE stock_id=s.id ORDER BY trade_date DESC LIMIT 1) AS price
+        FROM holdings h JOIN stocks s ON h.stock_id=s.id
+        WHERE h.portfolio_id=%s AND h.total_shares>0
+    """, (portfolio_id,))
     rows = cur.fetchall()
-    cur.execute("SELECT beta_1y, volatility_1y FROM stock_metric_cache WHERE stock_id IN (SELECT stock_id FROM holdings WHERE portfolio_id=%s)", (portfolio_id,))
-    metrics = list(cur.fetchall())
+    if not rows:
+        cur.close(); conn.close()
+        return {"error": "无持仓"}
+    id_list = ",".join(str(r[0]) for r in rows)
+    cur.execute(f"SELECT stock_id, beta_1y, volatility_1y FROM stock_metric_cache WHERE stock_id IN ({id_list})")
+    metric_map = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
     cur.close(); conn.close()
-    if not rows: return {"error": "无持仓"}
     by_style, by_market, total = {}, {}, 0
-    for i, r in enumerate(rows):
-        sym, name, mkt, shares, price = r
+    for r in rows:
+        sid, sym, name, mkt, shares, price = r
         mv = float(shares) * float(price or 0)
         total += mv
-        beta = float(metrics[i][0]) if i < len(metrics) and metrics[i][0] else None
-        vol = float(metrics[i][1]) if i < len(metrics) and metrics[i][1] else None
+        m = metric_map.get(sid, (None, None))
+        beta = float(m[0]) if m[0] is not None else None
+        vol = float(m[1]) if m[1] is not None else None
         style = classify_style(name or sym, mkt, beta, vol)
         by_style[style] = by_style.get(style, 0) + mv
         by_market[mkt] = by_market.get(mkt, 0) + mv
@@ -348,13 +359,19 @@ def tool_remember(user_id: int, fact: str) -> str:
     return "已记住"
 
 def load_memories(user_id: int) -> str:
-    """加载用户主动保存的记忆"""
+    """加载用户主动保存的记忆，总量上限 3000 字符"""
     conn = get_db_conn(); cur = conn.cursor()
-    cur.execute("SELECT content FROM ai_chat_history WHERE user_id=%s AND role='memory' ORDER BY id DESC", (user_id,))
+    cur.execute("SELECT content FROM ai_chat_history WHERE user_id=%s AND role='memory' ORDER BY id DESC LIMIT 50", (user_id,))
     rows = cur.fetchall()
     cur.close(); conn.close()
     if not rows: return ""
-    return "用户保存的记忆：\n" + "\n".join(f"- {r[0]}" for r in rows)
+    lines, budget = [], 3000
+    for (content,) in rows:
+        line = f"- {content}"
+        if sum(len(l) for l in lines) + len(line) > budget:
+            break
+        lines.append(line)
+    return "用户保存的记忆：\n" + "\n".join(lines)
 
 def tool_forget(user_id: int, keyword: str) -> str:
     """删除包含关键词的记忆"""
@@ -400,14 +417,18 @@ def tool_get_backtests(limit: int = 5) -> list:
 
 
 def tool_get_style_analysis(portfolio_id: int) -> dict:
-    """运行组合风格诊断（调用现有 portfolio_style_analyzer）"""
-    import subprocess
-    script = SCRIPT_DIR / "portfolio_style_analyzer.py"
-    if not script.exists(): return {"error": "风格分析引擎未找到"}
-    r = subprocess.run(["python3", str(script), "--portfolio-id", str(portfolio_id), "--mode", "quick"],
-                       capture_output=True, text=True, timeout=30)
-    try: return json.loads(r.stdout)
-    except: return {"error": "风格分析失败", "raw": r.stdout[:200]}
+    """运行组合风格诊断"""
+    sys.path.insert(0, str(SCRIPT_DIR))
+    try:
+        from portfolio_style_analyzer import analyze_portfolio, load_config, get_conn
+        cfg = load_config()
+        conn = get_conn(cfg)
+        try:
+            return analyze_portfolio(conn, portfolio_id)
+        finally:
+            conn.close()
+    except Exception as e:
+        return {"error": f"风格分析失败: {str(e)[:200]}"}
 
 
 def tool_list_strategies() -> list:
@@ -499,8 +520,12 @@ def _format_rule(rule: dict) -> str:
 def tool_get_fundamentals(symbol: str) -> dict:
     """获取单只股票的基本面数据：PE、PB、ROE、EPS、市值、行业。"""
     conn = get_db_conn()
+    db_sym = resolve_symbol(conn, symbol)
+    if not db_sym:
+        conn.close()
+        return {"error": "股票未找到", "symbol": symbol}
     cur = conn.cursor()
-    cur.execute("SELECT id FROM stocks WHERE symbol=%s", (symbol,))
+    cur.execute("SELECT id FROM stocks WHERE symbol=%s", (db_sym,))
     row = cur.fetchone()
     if not row:
         cur.close(); conn.close()
@@ -538,19 +563,10 @@ def tool_get_fundamentals(symbol: str) -> dict:
 
 def tool_optimize_portfolio(portfolio_id: int, max_weight: float = 0.30, mode: str = "sharpe") -> dict:
     """运行 Markowitz 均值-方差优化，返回建议权重与当前持仓对比。mode: sharpe|minvar|riskparity"""
-    import subprocess, tempfile
+    sys.path.insert(0, str(SCRIPT_DIR))
     try:
-        r = subprocess.run(
-            ["python3", "-u", str(SCRIPT_DIR / "optimizer.py"),
-             "--portfolio-id", str(portfolio_id),
-             "--max-weight", str(max_weight), "--mode", mode],
-            capture_output=True, text=True, timeout=30,
-            cwd=str(SCRIPT_DIR))
-        if r.returncode != 0:
-            return {"error": "优化失败", "detail": r.stderr[:500]}
-        return json.loads(r.stdout)
-    except subprocess.TimeoutExpired:
-        return {"error": "优化超时"}
+        from optimizer import analyze
+        return analyze(portfolio_id, max_weight, mode)
     except Exception as e:
         return {"error": str(e)}
 
@@ -640,6 +656,10 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"fact": {"type": "string", "description": "要记住的内容"}}, "required": ["fact"]}
     }},
     {"type": "function", "function": {
+        "name": "forget", "description": "删除包含关键词的长期记忆。用户说'忘掉'、'删除记忆'、'不要记了'时调用",
+        "parameters": {"type": "object", "properties": {"keyword": {"type": "string", "description": "要删除的记忆关键词"}}, "required": ["keyword"]}
+    }},
+    {"type": "function", "function": {
         "name": "web_search", "description": "联网搜索。凡涉及新闻、时事、最新动态、具体事件日期和细节——你无法从数据库回答的一切——必须先调用此工具再回复，禁止凭记忆编造",
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "搜索关键词"},
@@ -679,69 +699,128 @@ TOOL_LABELS = {
     "benchmark_compare": "对比基准",
     "analyze_backtest": "分析回测",
     "web_search": "联网搜索",
+    "get_fundamentals": "查询基本面",
+    "optimize_portfolio": "组合优化",
     "remember": "保存记忆",
+    "forget": "删除记忆",
     "ask_user": "",
 }
 
-def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> str:
-    label = TOOL_LABELS.get(name, f"调用 {name}")
-    print(f"[TOOL] {label}", flush=True)
+def _trim_result(name: str, result: object) -> object:
+    """Strip data the LLM doesn't need to keep tool results compact."""
+    if not isinstance(result, dict):
+        return result
+    if name == "get_style_analysis":
+        # holdings detail is redundant — get_portfolio already covers it
+        return {k: v for k, v in result.items() if k != "holdings"}
+    if name == "get_pnl_history":
+        points = result.get("points", [])
+        if len(points) > 30:
+            first, last = points[0], points[-1]
+            total_ret = round((last["value"] / first["value"] - 1) * 100, 2) if first.get("value") else 0
+            return {
+                **{k: v for k, v in result.items() if k != "points"},
+                "summary": {
+                    "firstDate": first["date"], "firstValue": first["value"],
+                    "lastDate": last["date"], "lastValue": last["value"],
+                    "totalReturn": total_ret,
+                    "maxValue": max(p["value"] for p in points),
+                    "minValue": min(p["value"] for p in points),
+                },
+                "recentPoints": points[-30:],
+                "trimmed": True,
+            }
+    if name == "get_stock_price_history":
+        points = result.get("points", [])
+        if len(points) > 30:
+            return {
+                **{k: v for k, v in result.items() if k != "points"},
+                "summary": {
+                    "startDate": points[0]["date"], "startClose": points[0]["close"],
+                    "endDate": points[-1]["date"], "endClose": points[-1]["close"],
+                    "periodHigh": max(p["high"] for p in points),
+                    "periodLow": min(p["low"] for p in points),
+                    "totalReturn": round((points[-1]["close"] / points[0]["close"] - 1) * 100, 2) if points[0]["close"] else 0,
+                    "avgVolume": int(sum(p["volume"] for p in points) / len(points)),
+                },
+                "recentPoints": points[-30:],
+                "trimmed": True,
+            }
+    return result
+
+
+def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
+    """Inner dispatcher — returns Python object, raises on failure."""
     if name == "remember":
-        return json.dumps({"status": tool_remember(user_id, args.get("fact",""))})
+        return {"status": tool_remember(user_id, args.get("fact", ""))}
+    elif name == "forget":
+        return {"status": tool_forget(user_id, args.get("keyword", ""))}
     elif name == "ask_user":
-        result = {"question": args.get("question",""), "options": args.get("options",[])}
-        print(f"[ASK] {json.dumps(result, ensure_ascii=False)}", flush=True)
-        return json.dumps({"answered": "已向用户展示选项，等待选择"})
+        q = {"question": args.get("question", ""), "options": args.get("options", [])}
+        print(f"[ASK] {json.dumps(q, ensure_ascii=False)}", flush=True)
+        return {"answered": "已向用户展示选项，等待选择"}
     elif name == "get_portfolio":
-        return json.dumps(tool_get_portfolio(portfolio_id), ensure_ascii=False)
+        return tool_get_portfolio(portfolio_id)
     elif name == "get_stock_metrics":
-        return json.dumps(tool_get_stock_metrics(args.get("symbol","")), ensure_ascii=False)
+        return tool_get_stock_metrics(args.get("symbol", ""))
     elif name == "get_backtests":
-        return json.dumps(tool_get_backtests(args.get("limit",5)), ensure_ascii=False)
+        return tool_get_backtests(args.get("limit", 5))
     elif name == "get_style_analysis":
-        result = tool_get_style_analysis(portfolio_id)
-        return json.dumps(result, ensure_ascii=False)
+        return tool_get_style_analysis(portfolio_id)
     elif name == "list_strategies":
-        return json.dumps(tool_list_strategies(), ensure_ascii=False)
+        return tool_list_strategies()
     elif name == "get_strategy":
-        return json.dumps(tool_get_strategy(args.get("id",0)), ensure_ascii=False)
+        return tool_get_strategy(args.get("id", 0))
     elif name == "generate_strategy":
-        code = args.get("code","")
-        # Validate code format
+        code = args.get("code", "")
         if "def decide(ctx)" not in code:
-            code = f"# 格式错误\ndef decide(ctx):\n    return {{'action': 'HOLD', 'quantity': 0}}"
+            code = "# 格式错误\ndef decide(ctx):\n    return {'action': 'HOLD', 'quantity': 0}"
         if "pandas" in code or "DataFrame" in code or "get_all_securities" in code:
-            code = f"# 检测到禁用API\ndef decide(ctx):\n    return {{'action': 'HOLD', 'quantity': 0}}"
-        result = {"name": args.get("name",""), "description": args.get("description",""), "code": code}
+            code = "# 检测到禁用API\ndef decide(ctx):\n    return {'action': 'HOLD', 'quantity': 0}"
+        result = {"name": args.get("name", ""), "description": args.get("description", ""), "code": code}
         print(f"[STRATEGY] {json.dumps(result, ensure_ascii=False)}", flush=True)
-        return json.dumps(result, ensure_ascii=False)
+        return result
     elif name == "get_stock_price":
-        return json.dumps(tool_get_stock_price(args.get("symbol","")), ensure_ascii=False)
+        return tool_get_stock_price(args.get("symbol", ""))
     elif name == "get_pnl_history":
-        return json.dumps(tool_get_pnl_history(portfolio_id, args.get("days",90)), ensure_ascii=False)
+        return tool_get_pnl_history(portfolio_id, args.get("days", 90))
     elif name == "get_transactions":
-        return json.dumps(tool_get_transactions(portfolio_id, args.get("limit",20)), ensure_ascii=False)
+        return tool_get_transactions(portfolio_id, args.get("limit", 20))
     elif name == "get_stock_price_history":
-        return json.dumps(tool_get_stock_price_history(args.get("symbol",""), args.get("days",60)), ensure_ascii=False)
+        return tool_get_stock_price_history(args.get("symbol", ""), args.get("days", 60))
     elif name == "compute_correlation":
-        return json.dumps(tool_compute_correlation(portfolio_id, args.get("symbols")), ensure_ascii=False)
+        return tool_compute_correlation(portfolio_id, args.get("symbols"))
     elif name == "compute_sector_breakdown":
-        return json.dumps(tool_compute_sector_breakdown(portfolio_id), ensure_ascii=False)
+        return tool_compute_sector_breakdown(portfolio_id)
     elif name == "benchmark_compare":
-        return json.dumps(tool_benchmark_compare(portfolio_id, args.get("benchmark","000001.SH"), args.get("days",252)), ensure_ascii=False)
+        return tool_benchmark_compare(portfolio_id, args.get("benchmark", "000001.SH"), args.get("days", 252))
     elif name == "analyze_backtest":
-        return json.dumps(tool_analyze_backtest(args.get("id")), ensure_ascii=False)
+        return tool_analyze_backtest(args.get("id"))
     elif name == "web_search":
-        return json.dumps(tool_web_search(args.get("query",""), args.get("count",5)), ensure_ascii=False)
+        return tool_web_search(args.get("query", ""), args.get("count", 5))
     elif name == "get_fundamentals":
-        return json.dumps(tool_get_fundamentals(args.get("symbol","")), ensure_ascii=False)
+        return tool_get_fundamentals(args.get("symbol", ""))
     elif name == "optimize_portfolio":
-        return json.dumps(tool_optimize_portfolio(
+        return tool_optimize_portfolio(
             args.get("portfolio_id", portfolio_id),
             float(args.get("max_weight", 0.30)),
-            args.get("mode", "sharpe")
-        ), ensure_ascii=False)
-    return json.dumps({"error": f"unknown tool: {name}"})
+            args.get("mode", "sharpe"),
+        )
+    return {"error": f"unknown tool: {name}"}
+
+
+def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> str:
+    label = TOOL_LABELS.get(name, f"调用 {name}")
+    if label:
+        print(f"[TOOL] {label}", flush=True)
+    try:
+        result = _run_tool(name, args, portfolio_id, user_id)
+        result = _trim_result(name, result)
+        return json.dumps(result, ensure_ascii=False)
+    except Exception as e:
+        err_msg = f"{name} 失败: {str(e)[:300]}"
+        print(f"[TOOL_ERR] {err_msg}", file=sys.stderr, flush=True)
+        return json.dumps({"error": err_msg}, ensure_ascii=False)
 
 
 # ── OpenAI-compatible streaming with function calling ────────────────────
@@ -804,22 +883,45 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             {"id": t["id"], "type": "function", "function": {"name": t["name"], "arguments": t["args"]}}
             for t in sorted_tools
         ]})
-        has_ask = False
-        for i, t in enumerate(sorted_tools):
-            if total_tool_calls >= MAX_TOOL_CALLS:
-                formatted.append({"role": "tool", "tool_call_id": t["id"], "content": json.dumps({"error": "已达到本轮对话最大工具调用次数"})})
-                break
-            try: args = json.loads(t["args"])
-            except: args = {}
-            result = execute_tool(t["name"], args, portfolio_id, user_id)
-            formatted.append({"role": "tool", "tool_call_id": t["id"], "content": result})
-            total_tool_calls += 1
-            if t["name"] == "ask_user":
-                has_ask = True
-                print("\n[DONE]", flush=True); return
 
-        if has_ask:
-            break
+        # Short-circuit: ask_user requires immediate return before any parallel work
+        ask_tool = next((t for t in sorted_tools if t["name"] == "ask_user"), None)
+        if ask_tool:
+            try: ask_args = json.loads(ask_tool["args"])
+            except: ask_args = {}
+            execute_tool(ask_tool["name"], ask_args, portfolio_id, user_id)
+            formatted.append({"role": "tool", "tool_call_id": ask_tool["id"],
+                               "content": json.dumps({"answered": "已向用户展示选项，等待选择"})})
+            print("\n[DONE]", flush=True); return
+
+        # Split tools: those within limit run in parallel, excess get error
+        runnable, capped = [], []
+        for t in sorted_tools:
+            if len(runnable) + total_tool_calls < MAX_TOOL_CALLS:
+                runnable.append(t)
+            else:
+                capped.append(t)
+        for t in capped:
+            formatted.append({"role": "tool", "tool_call_id": t["id"],
+                               "content": json.dumps({"error": "已达到本轮对话最大工具调用次数"})})
+
+        # Execute runnable tools in parallel, collect results in original order
+        if runnable:
+            results_map = {}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(runnable)) as executor:
+                futs = {}
+                for t in runnable:
+                    try: args = json.loads(t["args"])
+                    except: args = {}
+                    futs[executor.submit(execute_tool, t["name"], args, portfolio_id, user_id)] = t["id"]
+                for fut, tid in futs.items():
+                    try:
+                        results_map[tid] = fut.result(timeout=25)
+                    except concurrent.futures.TimeoutError:
+                        results_map[tid] = json.dumps({"error": "工具执行超时"}, ensure_ascii=False)
+            for t in runnable:
+                formatted.append({"role": "tool", "tool_call_id": t["id"], "content": results_map[t["id"]]})
+            total_tool_calls += len(runnable)
 
         # Call again — may produce more tool calls or final content
         stream = client.chat.completions.create(model=model, messages=formatted, tools=TOOLS, stream=True, temperature=0.7, max_tokens=max_tokens)
@@ -843,26 +945,105 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     print("\n[DONE]", flush=True)
 
 
-def call_anthropic_stream(api_key: str, model: str, messages: list):
+def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id: int = 0, user_id: int = 0):
     import anthropic, httpx
-    kwargs = {"api_key": api_key}
+    client_kwargs = {"api_key": api_key}
     proxy_url = os.getenv("PROXY_URL", get_proxy())
     if proxy_url:
-        kwargs["http_client"] = httpx.Client(proxy=proxy_url)
-    client = anthropic.Anthropic(**kwargs)
+        client_kwargs["http_client"] = httpx.Client(proxy=proxy_url)
+    client = anthropic.Anthropic(**client_kwargs)
+
     system_prompt = None
     formatted = []
     for m in messages:
         role = m.get("role", "user")
-        if role == "system": system_prompt = m.get("content", ""); continue
-        if role not in ("user", "assistant"): role = "user"
+        if role == "system":
+            system_prompt = m.get("content", "")
+            continue
+        if role not in ("user", "assistant"):
+            role = "user"
         formatted.append({"role": role, "content": m.get("content", "")})
-    kwargs = {"model": model, "messages": formatted, "max_tokens": 1024, "stream": True}
-    if system_prompt: kwargs["system"] = system_prompt
-    with client.messages.stream(**kwargs) as stream:
-        for text in stream.text_stream:
-            sys.stdout.write(text + "\n"); sys.stdout.flush()
-    print("[DONE]", flush=True)
+
+    # Convert OpenAI tool format → Anthropic format
+    anthropic_tools = [
+        {"name": t["function"]["name"], "description": t["function"]["description"],
+         "input_schema": t["function"]["parameters"]}
+        for t in TOOLS
+    ]
+
+    # Prompt Caching: mark system prompt as ephemeral to cache it across requests
+    system_block = ([{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
+                    if system_prompt else None)
+
+    total_tool_calls = 0
+
+    while True:
+        stream_kwargs = {"model": model, "messages": formatted, "max_tokens": 1024, "tools": anthropic_tools}
+        if system_block:
+            stream_kwargs["system"] = system_block
+
+        with client.messages.stream(**stream_kwargs) as stream:
+            for text in stream.text_stream:
+                sys.stdout.write(text + "\n")
+                sys.stdout.flush()
+            msg = stream.get_final_message()
+
+        if msg.stop_reason != "tool_use":
+            break
+
+        tool_uses = [c for c in msg.content if c.type == "tool_use"]
+
+        # Append full assistant turn (text + tool_use blocks)
+        formatted.append({
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": c.text} if c.type == "text"
+                else {"type": "tool_use", "id": c.id, "name": c.name, "input": c.input}
+                for c in msg.content
+            ],
+        })
+
+        # Short-circuit: ask_user returns immediately
+        ask_tool = next((tu for tu in tool_uses if tu.name == "ask_user"), None)
+        if ask_tool:
+            execute_tool(ask_tool.name, ask_tool.input, portfolio_id, user_id)
+            formatted.append({"role": "user", "content": [{
+                "type": "tool_result", "tool_use_id": ask_tool.id,
+                "content": json.dumps({"answered": "已向用户展示选项，等待选择"}),
+            }]})
+            print("\n[DONE]", flush=True)
+            return
+
+        # Split runnable vs capped by MAX_TOOL_CALLS
+        runnable, capped = [], []
+        for tu in tool_uses:
+            if len(runnable) + total_tool_calls < MAX_TOOL_CALLS:
+                runnable.append(tu)
+            else:
+                capped.append(tu)
+
+        results_map = {}
+        for tu in capped:
+            results_map[tu.id] = json.dumps({"error": "已达到本轮对话最大工具调用次数"})
+
+        if runnable:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(runnable)) as executor:
+                futs = {executor.submit(execute_tool, tu.name, tu.input, portfolio_id, user_id): tu.id
+                        for tu in runnable}
+                for fut, tid in futs.items():
+                    try:
+                        results_map[tid] = fut.result(timeout=25)
+                    except concurrent.futures.TimeoutError:
+                        results_map[tid] = json.dumps({"error": "工具执行超时"}, ensure_ascii=False)
+            total_tool_calls += len(runnable)
+
+        # Append tool results in original order
+        formatted.append({"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": tu.id, "content": results_map[tu.id]}
+            for tu in tool_uses
+        ]})
+
+    print("\n[DONE]", flush=True)
 
 
 # ── Main ─────────────────────────────────────────────────────────────────
@@ -897,7 +1078,7 @@ def main():
 
     try:
         if args.provider == "anthropic":
-            call_anthropic_stream(args.api_key, args.model, full_messages)
+            call_anthropic_stream(args.api_key, args.model, full_messages, args.portfolio_id, args.user_id)
         else:
             call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think, args.user_id)
     except Exception as e:
