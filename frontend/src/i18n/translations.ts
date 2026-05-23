@@ -414,6 +414,7 @@ const zh = {
     reason: "原因",
 
     // Walk-forward
+    wfLabel: "滚动前向分析",
     wfStability: "Walk-Forward 稳健性",
     wfWindows: "窗口数",
     wfStabilityScore: "稳定性分",
@@ -1019,6 +1020,7 @@ const en = {
     reason: "Reason",
 
     // Walk-forward
+    wfLabel: "Walk-Forward",
     wfStability: "Walk-Forward Stability",
     wfWindows: "Windows",
     wfStabilityScore: "Stability Score",
@@ -1639,6 +1641,7 @@ const hk = {
     reason: "原因",
 
     // Walk-forward
+    wfLabel: "滾動前向分析",
     wfStability: "Walk-Forward 穩健性",
     wfWindows: "窗口數",
     wfStabilityScore: "穩定性分",

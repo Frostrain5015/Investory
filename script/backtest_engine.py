@@ -637,53 +637,65 @@ def run_walk_forward(strategy: dict, config: dict, conn, result_id: int):
               f"训练 {w['trainStart']}~{w['trainEnd']}, "
               f"测试 {w['oosStart']}~{w['oosEnd']} ---", flush=True)
 
-        # In-sample: run (optionally parameter-sweep) on training period
-        is_config = {**config, "startDate": w["trainStart"], "endDate": w["trainEnd"]}
-        if param_grid:
-            best = optimize_window(strategy, is_config, param_grid, conn, result_id)
-        else:
-            is_out = run_simple_backtest(strategy, is_config, conn, result_id)
-            best = is_out
+        try:
+            # In-sample: run (optionally parameter-sweep) on training period
+            is_config = {**config, "startDate": w["trainStart"], "endDate": w["trainEnd"]}
+            if param_grid:
+                best = optimize_window(strategy, is_config, param_grid, conn, result_id)
+            else:
+                is_out = run_simple_backtest(strategy, is_config, conn, result_id)
+                best = is_out
 
-        if best is None:
-            print(f"  窗口 {wi+1} IS 失败，跳过", flush=True)
+            if best is None:
+                print(f"  窗口 {wi+1} IS 失败，跳过", flush=True)
+                window_results.append({"window": wi+1, "status": "error"})
+                continue
+
+            is_metrics = best.get("metrics", {})
+
+            # Out-of-sample: test on OOS period
+            oos_config = {**config, "startDate": w["oosStart"], "endDate": w["oosEnd"],
+                           "initialCapital": initial_capital}
+            oos_out = run_simple_backtest(strategy, oos_config, conn, result_id)
+
+            if oos_out is None:
+                print(f"  窗口 {wi+1} OOS 失败，跳过", flush=True)
+                window_results.append({"window": wi+1, "status": "error"})
+                continue
+
+            oos_metrics = oos_out.get("metrics", {})
+            oos_curve = oos_out.get("equityCurve", [])
+            oos_trades = oos_out.get("tradeLog", [])
+
+            # Tag with window info
+            for tr in oos_trades:
+                tr["window"] = wi + 1
+            all_trades.extend(oos_trades)
+            oos_equity_pieces.extend(oos_curve)
+
+            # Stability score: OOS Sharpe / IS Sharpe (closer to 1 = stable)
+            is_sharpe = is_metrics.get("sharpeRatio", 0) or 0
+            oos_sharpe = oos_metrics.get("sharpeRatio", 0) or 0
+            stability = round(oos_sharpe / is_sharpe, 3) if is_sharpe > 0 else None
+
+            wr = {
+                "window": wi + 1,
+                "status": "ok",
+                "trainStart": w["trainStart"], "trainEnd": w["trainEnd"],
+                "oosStart": w["oosStart"], "oosEnd": w["oosEnd"],
+                "isMetrics": is_metrics,
+                "oosMetrics": oos_metrics,
+                "stability": stability,
+            }
+            window_results.append(wr)
+            print(f"  窗口 {wi+1}: IS Sharpe={is_sharpe}, OOS Sharpe={oos_sharpe}, "
+                  f"Stability={stability}", flush=True)
+
+        except Exception as e:
+            print(f"  窗口 {wi+1} 异常: {e}", flush=True)
+            traceback.print_exc()
             window_results.append({"window": wi+1, "status": "error"})
             continue
-
-        is_metrics = best.get("metrics", {})
-
-        # Out-of-sample: test on OOS period
-        oos_config = {**config, "startDate": w["oosStart"], "endDate": w["oosEnd"],
-                       "initialCapital": initial_capital}
-        oos_out = run_simple_backtest(strategy, oos_config, conn, result_id)
-
-        oos_metrics = oos_out.get("metrics", {}) if oos_out else {}
-        oos_curve = oos_out.get("equityCurve", []) if oos_out else []
-        oos_trades = oos_out.get("tradeLog", []) if oos_out else []
-
-        # Tag with window info
-        for tr in oos_trades:
-            tr["window"] = wi + 1
-        all_trades.extend(oos_trades)
-        oos_equity_pieces.extend(oos_curve)
-
-        # Stability score: OOS Sharpe / IS Sharpe (closer to 1 = stable)
-        is_sharpe = is_metrics.get("sharpeRatio", 0) or 0
-        oos_sharpe = oos_metrics.get("sharpeRatio", 0) or 0
-        stability = round(oos_sharpe / is_sharpe, 3) if is_sharpe > 0 else None
-
-        wr = {
-            "window": wi + 1,
-            "status": "ok",
-            "trainStart": w["trainStart"], "trainEnd": w["trainEnd"],
-            "oosStart": w["oosStart"], "oosEnd": w["oosEnd"],
-            "isMetrics": is_metrics,
-            "oosMetrics": oos_metrics,
-            "stability": stability,
-        }
-        window_results.append(wr)
-        print(f"  窗口 {wi+1}: IS Sharpe={is_sharpe}, OOS Sharpe={oos_sharpe}, "
-              f"Stability={stability}", flush=True)
 
     # ── Aggregate: build continuous OOS equity curve
     # Remove duplicate dates (last date of each window overlaps next window's first)
@@ -707,9 +719,10 @@ def run_walk_forward(strategy: dict, config: dict, conn, result_id: int):
     metrics["wfWindows"] = len(window_results)
     metrics["wfStability"] = round(sum(stabilities) / len(stabilities), 3) if stabilities else None
     metrics["wfOosSharpeAvg"] = round(sum(oos_sharpes) / len(oos_sharpes), 3) if oos_sharpes else None
+    ok_windows = [w for w in window_results if w["status"] == "ok"]
     metrics["wfOosReturnAvg"] = round(
-        sum(w["oosMetrics"].get("totalReturnPct", 0) or 0 for w in window_results if w["status"] == "ok")
-        / len(window_results), 2)
+        sum(w["oosMetrics"].get("totalReturnPct", 0) or 0 for w in ok_windows)
+        / len(ok_windows), 2) if ok_windows else None
 
     output = {
         "equityCurve": equity_curve,

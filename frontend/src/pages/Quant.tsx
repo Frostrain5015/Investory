@@ -527,7 +527,7 @@ function BacktestSection() {
                 <label className="flex items-center gap-1.5 cursor-pointer select-none">
                   <input type="checkbox" checked={wfEnabled} onChange={e => setWfEnabled(e.target.checked)}
                     className="w-3.5 h-3.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
-                  <span className="text-xs text-slate-600">Walk-Forward</span>
+                  <span className="text-xs text-slate-600">{q.wfLabel}</span>
                 </label>
                 {wfEnabled && (
                   <div className="flex items-center gap-1.5 text-xs">
