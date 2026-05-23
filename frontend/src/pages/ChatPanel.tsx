@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { SseEvent } from '@/types'
 
-interface Message { role: 'user' | 'assistant'; content: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string }
+interface Message { role: 'user' | 'assistant'; content: string; thinking?: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string }
 
 // Module-level state survives page navigation
 let gMessages: Message[] = []
@@ -53,8 +53,9 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
 
-  async function send() {
-    const text = input.trim()
+  // textOverride lets quick-reply/regenerate/askData bypass stale input closure
+  async function send(textOverride?: string) {
+    const text = (textOverride !== undefined ? textOverride : input).trim()
     if (!text || streaming) return
 
     setInput('')
@@ -62,6 +63,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     setMessages(newMessages)
     setStreaming(true)
     setStreamText('')
+    setToolMsg('')
     setAskData(null)
 
     try {
@@ -90,15 +92,18 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       })
       es.addEventListener('token', (e) => {
         const d: SseEvent = JSON.parse(e.data)
-        if (toolMsg) setToolMsg('')
+        setToolMsg('')
         setStreamText(prev => prev + (d.msg || ''))
       })
       es.addEventListener('done', () => {
+        setToolMsg('')
         setStreamText(prev => {
           const s = pendingStrategy.current
-          // Don't create empty bubble
           if (!prev || !prev.trim()) { setStreaming(false); es.close(); esRef.current = null; return '' }
-          const msg: Message = { role: 'assistant', content: prev }
+          const thinkMatch = prev.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/)
+          const thinking = thinkMatch ? thinkMatch[1].trim() : undefined
+          const content = prev.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').trim()
+          const msg: Message = { role: 'assistant', content: content || prev, thinking }
           if (s) {
             msg.hasCode = true
             msg.strategyName = s.name
@@ -112,12 +117,13 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
         setStreaming(false); es.close(); esRef.current = null
       })
       es.addEventListener('error', (e) => {
+        pendingStrategy.current = null
         try { const d: SseEvent = JSON.parse((e as MessageEvent).data); setStreamText(d.msg || '未知错误') } catch { setStreamText('连接中断') }
-        setStreaming(false); es.close(); esRef.current = null
+        setStreaming(false); setToolMsg(''); es.close(); esRef.current = null
       })
       es.onerror = () => {}
-    } catch (e: any) {
-      setStreamText(`[错误] ${e.message}`)
+    } catch (e: unknown) {
+      setStreamText(`[错误] ${e instanceof Error ? e.message : String(e)}`)
       setStreaming(false)
     }
   }
@@ -129,7 +135,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     const trimmed = messages.slice(0, -1)
     setMessages(trimmed)
     const lastUser = trimmed.filter(m => m.role === 'user').pop()
-    if (lastUser) { setInput(lastUser.content); setTimeout(() => send(), 100) }
+    if (lastUser) send(lastUser.content)
   }
 
   function handleKeyDown(e: React.KeyboardEvent) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }
@@ -164,7 +170,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
             <p className="text-xs text-slate-400 mt-1">基于价值投资理念的 AI 分析助手</p>
             <div className="mt-4 space-y-2">
               {['我的组合风险怎么样？', '分析一下我的持仓风格', '帮我写一个均线策略'].map(q => (
-                <button key={q} onClick={() => { setInput(q); setTimeout(() => send(), 100) }}
+                <button key={q} onClick={() => send(q)}
                   className="block w-full text-left text-xs text-slate-500 hover:text-slate-900 hover:bg-slate-50 px-3 py-2 rounded-lg transition-colors">"{q}"</button>
               ))}
             </div>
@@ -174,21 +180,23 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${m.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-800'}`}>
               {m.role === 'assistant'
-                ? <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-200 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto">
+                ? <><div>
+                  {m.thinking && <ThinkingBlock text={m.thinking} done={true} />}
+                </div>
+                <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-200 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                     code: ({ children, className, ...props }) => {
                       const text = String(children).trim()
-                      // C1: Stock codes like 600519.SH become clickable links
                       if (/^\d{4,6}\.(SH|SZ|HK|US)$/i.test(text) || /^[A-Z]{1,5}\.US$/i.test(text)) {
                         return <a href={`/investory/stock?symbol=${text}`} target="_blank" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100">{text}</a>
                       }
                       return <code className={className} {...props}>{children}</code>
                     }
                   }}>{m.content}</ReactMarkdown>
-                </div>
+                </div></>
                 : <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>
               }
-              {(m as Message).hasCode && (
+              {m.hasCode && (
                 <div className="mt-3 pt-3 border-t border-slate-200">
                   <button onClick={async () => {
                     const name = m.strategyName || prompt('策略名称', '观澜生成的策略')
@@ -219,23 +227,23 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                     const thinking = thinkMatch ? thinkMatch[1] : ''
                     const after = streamText.replace(/<think(?:ing)?>[\s\S]*?(<\/think(?:ing)?>|$)/, '').trim()
                     return (<>
-                      {thinking && <ThinkingBlock text={thinking} done={streamText.includes('</thinking>')} />}
+                      {thinking && <ThinkingBlock text={thinking} done={/<\/think(?:ing)?>/.test(streamText)} />}
                       {after && <div className="prose prose-sm prose-slate max-w-none [&_table]:text-xs [&_th]:border [&_th]:border-slate-300 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-200 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-200 [&_code]:px-1 [&_code]:rounded"><ReactMarkdown remarkPlugins={[remarkGfm]}>{after}</ReactMarkdown></div>}
                     </>)
                   })()
                 : (!toolMsg && <span className="inline-flex gap-0.5"><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>)
               }
               {toolMsg && <div className="flex items-center gap-2 text-sm text-slate-500 mt-2 pt-2 border-t border-slate-200"><span className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />{toolMsg}</div>}
+              {askData && (
+                <div className="mt-3 pt-3 border-t border-slate-200 space-y-1.5">
+                  <p className="text-xs text-slate-500">{askData.question}</p>
+                  {askData.options.map((o: string, i: number) => (
+                    <button key={i} onClick={() => { setAskData(null); send(o) }}
+                      className="block w-full text-left text-xs px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 hover:border-slate-300 transition-colors">{o}</button>
+                  ))}
+                </div>
+              )}
             </div>
-            {askData && (
-              <div className="mt-2 space-y-1.5">
-                <p className="text-xs text-slate-500">{askData.question}</p>
-                {askData.options.map((o: string, i: number) => (
-                  <button key={i} onClick={() => { setInput(o); setAskData(null); setTimeout(() => send(), 100) }}
-                    className="block w-full text-left text-xs px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 hover:border-slate-300 transition-colors">{o}</button>
-                ))}
-              </div>
-            )}
           </div>
         )}
         <div ref={scrollRef} />
@@ -248,7 +256,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
             placeholder="向观澜提问..." rows={1}
             disabled={streaming}
             className="flex-1 resize-none h-10 max-h-24 rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/5 disabled:bg-slate-50" />
-          <button onClick={send} disabled={!input.trim() || streaming}
+          <button onClick={() => send()} disabled={!input.trim() || streaming}
             className="w-10 h-10 rounded-xl bg-slate-900 text-white flex items-center justify-center hover:bg-slate-800 disabled:opacity-30 transition-colors shrink-0">
             <Send className="w-4 h-4" />
           </button>

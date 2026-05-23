@@ -12,6 +12,30 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 KB_FILE = SCRIPT_DIR / "ai_knowledge_base.json"
 
+# DashScope model routing: fast model for simple queries, configured model for deep analysis
+DASHSCOPE_FAST_MODEL = "qwen-turbo-latest"
+
+# Keywords that signal the user needs deep analysis — always use the full model
+_COMPLEX_SIGNALS = [
+    "分析", "研究", "报告", "评估", "评价", "优化", "建议", "推荐",
+    "详细", "全面", "深入", "综合", "系统性",
+    "帮我写", "生成策略", "写一个策略", "回测",
+    "比较", "对比", "风险", "夏普", "回撤", "收益率",
+    "组合", "配置", "调仓", "再平衡", "仓位",
+    "基本面", "估值", "财务", "行业", "赛道",
+]
+
+def _is_complex_query(messages: list) -> bool:
+    """Return True if the latest user message warrants the full model."""
+    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    if not last_user:
+        return True
+    text = str(last_user.get("content", ""))
+    if any(k in text for k in _COMPLEX_SIGNALS):
+        return True
+    # Long messages almost always need thorough reasoning
+    return len(text) > 60
+
 
 def load_knowledge_base() -> dict:
     if KB_FILE.exists():
@@ -853,9 +877,15 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     is_dashscope = bool(api_base and ("dashscope" in api_base or "aliyuncs" in api_base))
     extra_body = {"enable_thinking": deep_think} if is_dashscope else {}
 
+    # Route simple queries to the fast model to minimise TTFT; complex analysis
+    # stays on the configured full model.  Deep-think always uses the full model.
+    effective_model = model
+    if is_dashscope and not deep_think and not _is_complex_query(messages):
+        effective_model = DASHSCOPE_FAST_MODEL
+
     def _stream(msgs):
         return client.chat.completions.create(
-            model=model, messages=msgs, tools=TOOLS,
+            model=effective_model, messages=msgs, tools=TOOLS,
             stream=True, temperature=0.7, max_tokens=max_tokens,
             **({"extra_body": extra_body} if extra_body else {}),
         )
@@ -864,7 +894,14 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     for m in messages:
         role = m.get("role", "user")
         if role not in ("system", "user", "assistant", "tool"): role = "user"
-        entry = {"role": role, "content": m.get("content", "")}
+        content = m.get("content", "")
+        # DashScope supports cache_control on system blocks (same format as Anthropic).
+        # Wrapping the system prompt reduces TTFT on subsequent turns by avoiding
+        # re-encoding the ~500-token persona + KB block on every request.
+        if role == "system" and is_dashscope and isinstance(content, str):
+            entry = {"role": role, "content": [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]}
+        else:
+            entry = {"role": role, "content": content}
         if "tool_calls" in m: entry["tool_calls"] = m["tool_calls"]
         if "tool_call_id" in m: entry["tool_call_id"] = m["tool_call_id"]
         formatted.append(entry)
