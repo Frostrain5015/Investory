@@ -5,6 +5,7 @@ import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { SseEvent } from '@/types'
+import { useT } from '@/i18n/I18nContext'
 
 interface Message { role: 'user' | 'assistant'; content: string; thinking?: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string }
 
@@ -15,12 +16,13 @@ let gListeners: (() => void)[] = []
 function notify() { gListeners.forEach(fn => fn()) }
 
 function ThinkingBlock({ text, done }: { text: string; done: boolean }) {
+  const { t } = useT()
   const [open, setOpen] = useState(false)
   return (
     <div className="mb-2">
       <button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600">
         <span className={`w-2 h-2 rounded-full ${done ? 'bg-slate-400' : 'bg-amber-400 animate-pulse'}`} />
-        {done ? '思考过程' : '正在思考...'}
+        {done ? t.chat.thinking : t.chat.thinkingInProgress}
         <span className="text-[10px]">{open ? '▲' : '▼'}</span>
       </button>
       {open && <div className="mt-1.5 p-3 bg-slate-200/50 rounded-lg text-xs text-slate-500 whitespace-pre-wrap leading-relaxed">{text.trim() || '...'}</div>}
@@ -39,6 +41,7 @@ function useChatMessages(): [Message[], (msgs: Message[]) => void] {
 }
 
 export default function ChatPanel({ onClose }: { onClose: () => void }) {
+  const { t } = useT()
   const toast = useToast()
   const [messages, setMessages] = useChatMessages()
   const [input, setInput] = useState('')
@@ -56,8 +59,18 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     fetch('/investory/api/ai/suggestions', { credentials: 'include' })
       .then(r => r.json())
-      .then(d => { if (Array.isArray(d.suggestions) && d.suggestions.length > 0) setSuggestions(d.suggestions) })
-      .catch(() => {})
+      .then(d => {
+        if (Array.isArray(d.suggestions) && d.suggestions.length > 0) {
+          setSuggestions(d.suggestions)
+        } else {
+          // Fallback to translated suggestions when API returns empty
+          setSuggestions([...t.chat.suggestions])
+        }
+      })
+      .catch(() => {
+        // Fallback to translated suggestions on network error
+        setSuggestions([...t.chat.suggestions])
+      })
   }, [])
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
@@ -82,7 +95,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messages: newMessages, deepThink }),
       })
-      if (!resp.ok) { setStreamText(`[错误] HTTP ${resp.status}`); setStreaming(false); return }
+      if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
 
       if (esRef.current) esRef.current.close()
       const es = new EventSource('/investory/api/ai/stream')
@@ -130,12 +143,12 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       })
       es.addEventListener('error', (e) => {
         pendingStrategy.current = null
-        try { const d: SseEvent = JSON.parse((e as MessageEvent).data); setStreamText(d.msg || '未知错误') } catch { setStreamText('连接中断') }
+        try { const d: SseEvent = JSON.parse((e as MessageEvent).data); setStreamText(d.msg || t.chat.errorUnknown) } catch { setStreamText(t.chat.errorNetwork) }
         setStreaming(false); setToolMsg(''); es.close(); esRef.current = null
       })
       es.onerror = () => {}
     } catch (e: unknown) {
-      setStreamText(`[错误] ${e instanceof Error ? e.message : String(e)}`)
+      setStreamText(`${t.chat.errorPrefix} ${e instanceof Error ? e.message : String(e)}`)
       setStreaming(false)
     }
   }
@@ -161,12 +174,12 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-slate-900 flex items-center justify-center"><Sparkles className="w-3.5 h-3.5 text-white" /></div>
-          <span className="text-sm font-bold text-slate-900">观澜</span>
+          <span className="text-sm font-bold text-slate-900">{t.chat.title}</span>
         </div>
         <div className="flex items-center gap-1">
-          <button onClick={() => setDeepThink(!deepThink)} className={`p-1.5 rounded-lg transition-colors ${deepThink ? 'bg-purple-100 text-purple-600' : 'hover:bg-slate-100 text-slate-400'}`} title="深度思考"><Brain className="w-3.5 h-3.5" /></button>
-          <button onClick={clearChat} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400" title="清空对话"><Trash2 className="w-3.5 h-3.5" /></button>
-          {messages.length >= 2 && !streaming && <button onClick={regenerate} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400" title="重新生成"><RefreshCw className="w-3.5 h-3.5" /></button>}
+          <button onClick={() => setDeepThink(!deepThink)} className={`p-1.5 rounded-lg transition-colors ${deepThink ? 'bg-purple-100 text-purple-600' : 'hover:bg-slate-100 text-slate-400'}`} title={t.chat.deepThink}><Brain className="w-3.5 h-3.5" /></button>
+          <button onClick={clearChat} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400" title={t.chat.clearChat}><Trash2 className="w-3.5 h-3.5" /></button>
+          {messages.length >= 2 && !streaming && <button onClick={regenerate} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400" title={t.chat.regenerate}><RefreshCw className="w-3.5 h-3.5" /></button>}
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400"><X className="w-4 h-4" /></button>
         </div>
       </div>
@@ -178,8 +191,8 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
             <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-3">
               <Sparkles className="w-6 h-6 text-slate-400" />
             </div>
-            <p className="text-sm font-medium text-slate-700">你好，我是观澜</p>
-            <p className="text-xs text-slate-400 mt-1">基于价值投资理念的 AI 分析助手</p>
+            <p className="text-sm font-medium text-slate-700">{t.chat.greeting}</p>
+            <p className="text-xs text-slate-400 mt-1">{t.chat.subtitle}</p>
             <div className="mt-4 space-y-2">
               {suggestions.length === 0
                 ? [1, 2, 3].map(i => (
@@ -218,7 +231,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
               {m.hasCode && (
                 <div className="mt-3 pt-3 border-t border-slate-200">
                   <button onClick={async () => {
-                    const name = m.strategyName || prompt('策略名称', '观澜生成的策略')
+                    const name = m.strategyName || prompt(t.chat.promptStrategyName, t.chat.strategyPlaceholder)
                     if (!name) return
                     const code = m.strategyCode || m.content
                     const res = await fetch('/investory/api/backtest/strategies', {
@@ -228,9 +241,9 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                     })
                     const data = await res.json()
                     if (data.error) toast(data.error, false)
-                    else toast('策略已保存', true)
+                    else toast(t.chat.strategySaved, true)
                   }} className="w-full h-9 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800">
-                    保存策略到我的策略库
+                    {t.chat.saveStrategyBtn}
                   </button>
                 </div>
               )}
@@ -272,7 +285,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       <div className="px-4 py-3 border-t border-slate-100 shrink-0">
         <div className="flex items-center gap-2">
           <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder="向观澜提问..." rows={1}
+            placeholder={t.chat.placeholder} rows={1}
             disabled={streaming}
             className="flex-1 resize-none h-10 max-h-24 rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/5 disabled:bg-slate-50" />
           <button onClick={() => send()} disabled={!input.trim() || streaming}

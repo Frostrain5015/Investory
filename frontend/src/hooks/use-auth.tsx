@@ -57,9 +57,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         return { success: true }
       }
-      return { success: false, error: text !== 'error' ? text : '用户名或密码错误' }
+      // Return server-provided error text, or empty string to let the caller use its own fallback translation
+      return { success: false, error: text !== 'error' ? text : '' }
     } catch {
-      return { success: false, error: '系统错误，请重试' }
+      return { success: false, error: '' }
     }
   }
 
@@ -67,14 +68,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const text = await apiRegister(username, password, email)
       if (text === 'ok') return { success: true }
-      return { success: false, error: text || '注册失败' }
+      // Return server-provided error text, or empty string to let the caller use its own fallback translation
+      return { success: false, error: text || '' }
     } catch {
-      return { success: false, error: '系统错误，请重试' }
+      return { success: false, error: '' }
     }
   }
 
   function logout() {
-    localStorage.removeItem('investory_creds')
     window.location.href = '/investory/logout'
   }
 

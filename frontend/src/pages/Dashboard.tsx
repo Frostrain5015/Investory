@@ -18,6 +18,7 @@ import { getDashboard, getPortfolios } from '@/services/api'
 import { displaySymbol, fmtPriceTs } from '@/lib/format'
 import CloudChart from '@/components/CloudChart'
 import ClosedPositions from '@/components/ClosedPositions'
+import { useT } from '@/i18n/I18nContext'
 
 interface Snapshot {
   stockId: number; stockSymbol: string; stockName: string; market: string; currency: string
@@ -40,6 +41,7 @@ export default function Dashboard() {
   const { positiveClass, negativeClass, positiveHex, negativeHex, formatCurrency, convertCurrency } = useSettings()
   const { isDark } = useTheme()
   const toast = useToast()
+  const { t, lang } = useT()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
@@ -119,7 +121,7 @@ export default function Dashboard() {
     return (
       <div className="flex flex-col items-center justify-center gap-3 h-96">
         <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-        <span className="text-sm text-slate-400">正在加载仪表盘...</span>
+        <span className="text-sm text-slate-400">{t.common.loading}</span>
       </div>
     )
   }
@@ -129,21 +131,21 @@ export default function Dashboard() {
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
-        <Link to="/portfolio" className="text-xl font-bold text-slate-900 hover:text-blue-600 transition-colors tracking-tight inline-flex items-center gap-1.5">{portfolioName || '总览'}<ArrowLeftRight className="w-4 h-4 text-slate-300" /></Link>
+        <Link to="/portfolio" className="text-xl font-bold text-slate-900 hover:text-blue-600 transition-colors tracking-tight inline-flex items-center gap-1.5">{portfolioName || t.dashboard.title}<ArrowLeftRight className="w-4 h-4 text-slate-300" /></Link>
         <div className="flex items-center gap-2">
           {lastRefresh && (
             <span className="text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>
           )}
           {snapshots.length > 0 && (
             <button disabled={refreshing}
-              onClick={async () => { setRefreshing(true); try { await fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }); toast('行情已刷新', true); loadDashboard() } catch { toast('刷新失败', false) } setRefreshing(false); markRefreshed() }}
+              onClick={async () => { setRefreshing(true); try { await fetch('/investory/api/portfolio/refresh', { method: 'POST', credentials: 'include' }); toast(t.dashboard.toastRefreshSuccess, true); loadDashboard() } catch { toast(t.dashboard.toastRefreshFail, false) } setRefreshing(false); markRefreshed() }}
               className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-50">
-              {refreshing ? '刷新中...' : '刷新行情'}
+              {refreshing ? t.common.loading : t.common.refresh}
             </button>
           )}
           <Link to="/transactions/add"
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
-            添加交易
+            {t.common.add}
           </Link>
         </div>
       </div>
@@ -156,11 +158,11 @@ export default function Dashboard() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
               </svg>
             </div>
-            <h3 className="text-lg font-semibold text-slate-900 mb-2">还没有交易记录</h3>
-            <p className="text-sm text-slate-500 mb-6">添加第一笔交易以开始追踪持仓盈亏。</p>
+            <h3 className="text-lg font-semibold text-slate-900 mb-2">{t.dashboard.noTransactions}</h3>
+            <p className="text-sm text-slate-500 mb-6">{t.dashboard.emptyHint}</p>
             <Link to="/transactions/add"
               className="inline-flex items-center gap-2 h-10 px-6 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
-              添加第一笔交易
+              {t.dashboard.addFirstTransaction}
             </Link>
           </CardContent>
         </Card>
@@ -170,7 +172,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">总资产</p>
+            <p className="text-xs text-slate-500 font-medium">{t.dashboard.totalAsset}</p>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
               {formatCurrency(animTotalAsset)}
             </p>
@@ -179,7 +181,7 @@ export default function Dashboard() {
         <Card className="cursor-pointer select-none" onClick={() => setCashCardMode(cashCardMode === 'mv' ? 'cash' : 'mv')}>
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
-              <p className="text-xs text-slate-500 font-medium">{cashCardMode === 'mv' ? '总市值' : '现金余额'}</p>
+              <p className="text-xs text-slate-500 font-medium">{cashCardMode === 'mv' ? t.dashboard.totalValue : t.dashboard.cashBalance}</p>
               <ArrowLeftRight className="w-3 h-3 text-slate-300" />
             </div>
             {cashCardMode === 'mv' ? (<>
@@ -188,7 +190,7 @@ export default function Dashboard() {
             </p>
             {(totals.totalMarketValue + totals.cashBalance) > 0 && (
               <p className="text-xs font-medium text-slate-400 mt-0.5">
-                仓位{(totals.totalMarketValue / (totals.totalMarketValue + totals.cashBalance) * 100).toFixed(0)}%
+                {t.dashboard.positionRatio}{(totals.totalMarketValue / (totals.totalMarketValue + totals.cashBalance) * 100).toFixed(0)}%
               </p>
             )}
             </>) : (
@@ -203,7 +205,7 @@ export default function Dashboard() {
                   </div>
                 )
               })}
-              {cashByCurrency.length === 0 && <span className="text-sm text-slate-400">暂无现金</span>}
+              {cashByCurrency.length === 0 && <span className="text-sm text-slate-400">{t.common.none}</span>}
             </div>
             )}
           </CardContent>
@@ -211,7 +213,7 @@ export default function Dashboard() {
         <Card className="cursor-pointer select-none" onClick={() => setPnlCardMode(pnlCardMode === 'today' ? 'holding' : 'today')}>
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
-              <p className="text-xs text-slate-500 font-medium">{pnlCardMode === 'today' ? '今日盈亏' : '持仓盈亏'}</p>
+              <p className="text-xs text-slate-500 font-medium">{pnlCardMode === 'today' ? t.dashboard.todayPnl : t.dashboard.holdingPnl}</p>
               <ArrowLeftRight className="w-3 h-3 text-slate-300" />
             </div>
             {pnlCardMode === 'today' ? (<>
@@ -233,7 +235,7 @@ export default function Dashboard() {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">累计盈亏</p>
+            <p className="text-xs text-slate-500 font-medium">{t.pnl.cumulativePnl}</p>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.cumulativePnl >= 0 ? positiveClass : negativeClass}`}>
               {animCumulativePnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(animCumulativePnl))}
             </p>
@@ -248,23 +250,26 @@ export default function Dashboard() {
       <Card>
         <CardHeader className="flex-row items-baseline justify-between flex-wrap gap-y-2">
           <div className="flex items-center gap-3 flex-wrap gap-y-2">
-            <CardTitle className="text-base">总资产曲线</CardTitle>
+            <CardTitle className="text-base">{t.dashboard.totalAssetCurve}</CardTitle>
             <div className="flex bg-slate-100 rounded-lg p-0.5">
-              {(['1M', '6M', '1Y', '全部', '自定义'] as const).map(label => {
-                const p: Period = label === '全部' ? 'all' : label === '自定义' ? 'custom' : label as Period
-                return (
-                  <button key={label} onClick={() => {
-                    setCumulativePeriod(p)
-                    if (p !== 'custom') {
-                      const daysMap: Record<string, number> = { '1M': 30, '6M': 180, '1Y': 365, 'all': 0 }
-                      setCumParams({ days: daysMap[p] ?? 365 })
-                    }
-                  }}
-                    className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${cumulativePeriod === p ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-                    {label}
-                  </button>
-                )
-              })}
+              {([
+                { period: '1M' as Period, label: '1M' },
+                { period: '6M' as Period, label: '6M' },
+                { period: '1Y' as Period, label: '1Y' },
+                { period: 'all' as Period, label: t.stockDetail.periodAll },
+                { period: 'custom' as Period, label: t.stockDetail.periodCustom },
+              ]).map(({ period, label }) => (
+                <button key={period} onClick={() => {
+                  setCumulativePeriod(period)
+                  if (period !== 'custom') {
+                    const daysMap: Record<string, number> = { '1M': 30, '6M': 180, '1Y': 365, 'all': 0 }
+                    setCumParams({ days: daysMap[period] ?? 365 })
+                  }
+                }}
+                  className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${cumulativePeriod === period ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                  {label}
+                </button>
+              ))}
             </div>
             {cumulativePeriod === 'custom' && (
               <div className="flex items-center gap-1.5">
@@ -276,7 +281,7 @@ export default function Dashboard() {
                 <button onClick={() => { if (cumCustomStart && cumCustomEnd) setCumParams({ days: 0, start: cumCustomStart, end: cumCustomEnd }) }}
                   disabled={!cumCustomStart || !cumCustomEnd}
                   className="h-7 px-2.5 rounded-md bg-slate-900 text-white text-xs font-medium disabled:opacity-40 hover:bg-slate-700 transition-colors">
-                  查询
+                  {t.stockDetail.query}
                 </button>
               </div>
             )}
@@ -301,7 +306,8 @@ export default function Dashboard() {
                 tickFormatter={(v: string) => cumulativePeriod === '1M' ? v.substring(5) : v.substring(0, 7)} />
               <YAxis tick={{ fontSize: 11, fill: isDark ? '#64748b' : '#94a3b8' }} stroke={isDark ? '#334155' : '#94a3b8'} domain={['auto', 'auto']} tickFormatter={(v: number) => {
                 const cv = convertCurrency(Number(v))
-                if (Math.abs(cv) >= 10000) return (cv / 10000).toFixed(0) + '万'
+                if (lang === 'zh' && Math.abs(cv) >= 10000) return (cv / 10000).toFixed(0) + t.dashboard.chartUnitLarge
+                if (lang === 'en' && Math.abs(cv) >= 1000) return (cv / 1000).toFixed(0) + t.dashboard.chartUnitLarge
                 return String(Math.round(cv))
               }} />
               <Tooltip formatter={(value: unknown) => formatCurrency(Number(value))}
@@ -316,15 +322,15 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
           <CardHeader className="flex-row items-center justify-between">
-            <CardTitle className="text-base">持仓占比</CardTitle>
+            <CardTitle className="text-base">{t.dashboard.allocation}</CardTitle>
             <div className="flex bg-slate-100 rounded-lg p-0.5">
               <button onClick={() => setAllocChart('pie')}
                 className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${allocChart === 'pie' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-                扇形
+                {t.dashboard.pieChart}
               </button>
               <button onClick={() => setAllocChart('cloud')}
                 className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${allocChart === 'cloud' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-                云图
+                {t.dashboard.cloudChart}
               </button>
             </div>
           </CardHeader>
@@ -354,17 +360,17 @@ export default function Dashboard() {
 
         <Card>
           <CardHeader className="flex-row items-center justify-between">
-            <CardTitle className="text-base">盈亏排行榜</CardTitle>
+            <CardTitle className="text-base">{t.dashboard.pnlRankTitle}</CardTitle>
             <div className="flex bg-slate-100 rounded-lg p-0.5">
               <button onClick={() => setRankMode('cumulative')}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium ${rankMode === 'cumulative' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>累计</button>
+                className={`px-2.5 py-1 rounded-md text-xs font-medium ${rankMode === 'cumulative' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.common.cumulative}</button>
               <button onClick={() => setRankMode('today')}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium ${rankMode === 'today' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>今日</button>
+                className={`px-2.5 py-1 rounded-md text-xs font-medium ${rankMode === 'today' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.common.today}</button>
             </div>
           </CardHeader>
           <CardContent>
             {snapshots.length === 0 ? (
-              <div className="h-[280px] flex items-center justify-center text-slate-400 text-sm">暂无数据</div>
+              <div className="h-[280px] flex items-center justify-center text-slate-400 text-sm">{t.pnl.noData}</div>
             ) : (
               <div className="space-y-0.5 h-[280px] overflow-auto">
                 {[...snapshots].sort((a, b) => {
@@ -401,15 +407,15 @@ export default function Dashboard() {
       {snapshots.length > 0 ? (
         <Card>
           <CardHeader className="flex-row items-center justify-between">
-            <CardTitle className="text-base">持仓明细</CardTitle>
+            <CardTitle className="text-base">{t.holdings.title}</CardTitle>
             <div className="flex items-center gap-2">
             <div className="flex bg-slate-100 rounded-lg p-0.5">
               <button onClick={() => setPriceMode('base')}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium ${priceMode === 'base' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>本位币</button>
+                className={`px-2.5 py-1 rounded-md text-xs font-medium ${priceMode === 'base' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.dashboard.baseCurrency}</button>
               <button onClick={() => setPriceMode('native')}
-                className={`px-2.5 py-1 rounded-md text-xs font-medium ${priceMode === 'native' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>原币种</button>
+                className={`px-2.5 py-1 rounded-md text-xs font-medium ${priceMode === 'native' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.dashboard.nativeCurrency}</button>
             </div>
-            <button onClick={() => setShowClosed(true)} className="text-xs text-slate-500 hover:text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg hover:bg-slate-50 transition-colors">查看已清仓</button>
+            <button onClick={() => setShowClosed(true)} className="text-xs text-slate-500 hover:text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg hover:bg-slate-50 transition-colors">{t.dashboard.viewClosed}</button>
             </div>
           </CardHeader>
           <CardContent className="p-0">
@@ -418,15 +424,15 @@ export default function Dashboard() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-100">
-                    <th className="text-left text-xs font-medium text-slate-500 px-6 py-3">股票</th>
-                    <th className="text-left text-xs font-medium text-slate-500 px-3 py-3">市场</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">持仓</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">现价</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">平均成本</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">摊薄成本</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">市值</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">浮盈</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-6 py-3">收益率</th>
+                    <th className="text-left text-xs font-medium text-slate-500 px-6 py-3">{t.holdings.stock}</th>
+                    <th className="text-left text-xs font-medium text-slate-500 px-3 py-3">{t.dashboard.marketColumn}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{t.holdings.title}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{t.market.price}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{t.holdings.avgCost}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{t.dashboard.dilutedCost}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{t.holdings.marketValue}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{t.holdings.pnl}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-6 py-3">{t.holdings.pnlPct}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -494,17 +500,17 @@ export default function Dashboard() {
                       </span>
                     </div>
                     <div className="flex justify-between text-sm text-slate-600 mb-1">
-                      <span className="text-xs text-slate-400">{s.totalShares} 股</span>
+                      <span className="text-xs text-slate-400">{s.totalShares} {t.dashboard.sharesUnit}</span>
                       <span className="tabular-nums font-medium text-slate-800">{fmtVal(mv)}</span>
                     </div>
                     <details className="mt-1">
-                      <summary className="text-xs text-slate-400 cursor-pointer select-none">更多</summary>
+                      <summary className="text-xs text-slate-400 cursor-pointer select-none">{t.common.more}</summary>
                       <div className="mt-2 space-y-1 text-xs text-slate-500">
-                        <div className="flex justify-between"><span>浮盈</span><span className={`tabular-nums ${pnl >= 0 ? positiveClass : negativeClass}`}>{pnl >= 0 ? '+' : ''}{fmtVal(Math.abs(pnl))}</span></div>
-                        <div className="flex justify-between"><span>平均成本</span><span className="tabular-nums">{fmtVal(cost)}</span></div>
-                        <div className="flex justify-between"><span>摊薄成本</span><span className="tabular-nums">{fmtVal(diluted)}</span></div>
-                        <div className="flex justify-between"><span>累计投入</span><span className="tabular-nums">{fmtVal(invested)}</span></div>
-                        <div className="flex justify-between"><span>累计分红</span><span className="tabular-nums text-sky-600">{fmtVal(s.totalDividends)}</span></div>
+                        <div className="flex justify-between"><span>{t.holdings.pnl}</span><span className={`tabular-nums ${pnl >= 0 ? positiveClass : negativeClass}`}>{pnl >= 0 ? '+' : ''}{fmtVal(Math.abs(pnl))}</span></div>
+                        <div className="flex justify-between"><span>{t.holdings.avgCost}</span><span className="tabular-nums">{fmtVal(cost)}</span></div>
+                        <div className="flex justify-between"><span>{t.dashboard.dilutedCost}</span><span className="tabular-nums">{fmtVal(diluted)}</span></div>
+                        <div className="flex justify-between"><span>{t.holdings.invested}</span><span className="tabular-nums">{fmtVal(invested)}</span></div>
+                        <div className="flex justify-between"><span>{t.dashboard.totalDividends}</span><span className="tabular-nums text-sky-600">{fmtVal(s.totalDividends)}</span></div>
                       </div>
                     </details>
                   </div>
@@ -521,9 +527,9 @@ export default function Dashboard() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
               </svg>
             </div>
-            <p className="text-slate-500 text-sm">暂无持仓</p>
+            <p className="text-slate-500 text-sm">{t.dashboard.noHoldings}</p>
             <Link to="/transactions/add" className="inline-flex mt-2 text-sm text-slate-900 font-medium hover:underline">
-              添加第一笔交易 &rarr;
+              {t.dashboard.addFirstTransaction} &rarr;
             </Link>
           </CardContent>
         </Card>

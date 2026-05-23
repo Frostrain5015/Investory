@@ -2,12 +2,13 @@ import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import * as echarts from 'echarts'
 import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
+import { useT } from '@/i18n/I18nContext'
 
 interface IndexData { name: string; flag: string; lat: number; lng: number; price: number; change: number; changePct: number; symbol: string; fetchedAt?: string }
 
 interface IndicatorData { name: string; symbol: string; price: number; change: number; changePct: number; fetchedAt?: string }
 
-interface NewsItem { title: string; source: string; url: string; summary: string; category: string; score: number; country_code: string; published_at: string }
+interface NewsItem { title: string; source: string; url: string; summary: string; category: string; country_code: string; published_at: string }
 
 const LEADING = ['上证指数', '恒生指数', '标普500']
 
@@ -58,18 +59,26 @@ function hexToRgb(hex: string): [number, number, number] {
   return [(v >> 16) & 255, (v >> 8) & 255, v & 255]
 }
 
-function fmtNum(n: number, dec: number): string {
-  if (Math.abs(n) >= 10000) return (n / 10000).toFixed(1) + '万'
-  return n.toFixed(dec)
+function fmtNum(n: number, dec: number, lang: string): string {
+  if (lang === 'zh' && Math.abs(n) >= 10000) {
+    return (n / 10000).toFixed(1) + '万'
+  }
+  return n.toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US', {
+    minimumFractionDigits: dec,
+    maximumFractionDigits: dec,
+  })
 }
 
 export default function Market() {
+  const { t, lang } = useT()
   const { positiveHex, negativeHex, positiveClass, negativeClass } = useSettings()
   const [indices, setIndices] = useState<IndexData[]>([])
   const [indicators, setIndicators] = useState<IndicatorData[]>([])
   const [loading, setLoading] = useState(true)
   const [news, setNews] = useState<NewsItem[]>([])
   const chartRef = useRef<HTMLDivElement>(null)
+
+  const timeLocale = lang === 'zh' ? 'zh-CN' : 'en-US'
 
   const loadIndices = useCallback(() => {
     fetch('/investory/api/market/indices', { credentials: 'include' })
@@ -164,17 +173,17 @@ export default function Market() {
               const group = markers[params.dataIndex]
               if (!group) return ''
               const f = group[0].flag.toLowerCase()
-              const nameMap: Record<string, string> = { cn: '中国', hk: '中国香港', us: '美国', jp: '日本', kr: '韩国', gb: '英国', de: '德国', fr: '法国', tw: '中国台湾', sg: '新加坡', in: '印度', au: '澳大利亚', ca: '加拿大', br: '巴西' }
+              const countryName = t.market.countryNames[f as keyof typeof t.market.countryNames] || group[0].flag
               return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:700;font-size:14px">
                 <img src="https://flagcdn.com/${f}.svg" style="width:22px;height:15px;border-radius:2px"/>
-                ${nameMap[group[0].flag.toLowerCase()] || group[0].flag}
+                ${countryName}
               </div>${group.map(d => {
                   const valid = Number(d.price) !== 0
                   const u = Number(d.change) >= 0
                   const color = !valid ? '#9ca3af' : u ? positiveHex : negativeHex
                   const priceText = valid ? Number(d.price).toLocaleString() : '—'
-                  const changeText = valid ? `${u ? '+' : ''}${Number(d.change).toFixed(2)} (${u ? '+' : ''}${Number(d.changePct).toFixed(2)}%)` : '暂无数据'
-                  const tsText = d.fetchedAt ? new Date(d.fetchedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
+                  const changeText = valid ? `${u ? '+' : ''}${Number(d.change).toFixed(2)} (${u ? '+' : ''}${Number(d.changePct).toFixed(2)}%)` : t.market.noData
+                  const tsText = d.fetchedAt ? new Date(d.fetchedAt).toLocaleTimeString(timeLocale, { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
                   return `<div style="display:flex;align-items:center;gap:12px;padding:3px 0;font-size:12px">
                     <span style="min-width:56px;color:#475569">${d.name}</span>
                     <span style="font-weight:600;min-width:85px;text-align:right;color:${color}">${priceText}</span>
@@ -226,18 +235,18 @@ export default function Market() {
                 formatter: (params: any) => {
                   const d = params.data
                   const cc = d.category === 'finance' ? '#6366f1' : '#f97316'
-                  const cl = d.category === 'finance' ? '财经' : '地缘'
+                  const cl = d.category === 'finance' ? t.market.categoryFinance : t.market.categoryGeopolitics
                   const flag = (d.country_code || '').toLowerCase()
-                  const nameMap: Record<string, string> = { cn: '中国', hk: '中国香港', us: '美国', jp: '日本', kr: '韩国', gb: '英国', de: '德国', fr: '法国', tw: '中国台湾', sg: '新加坡', in: '印度', au: '澳大利亚', ca: '加拿大', br: '巴西', ua: '乌克兰', ru: '俄罗斯', ir: '伊朗', il: '以色列', tr: '土耳其', mx: '墨西哥', sa: '沙特阿拉伯' }
+                  const countryName = t.market.countryNames[flag as keyof typeof t.market.countryNames] || d.country_code || ''
                   return `<div style="max-width:300px">
                     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
                       ${flag ? `<img src=\"https://flagcdn.com/${flag}.svg\" style=\"width:18px;height:12px;border-radius:2px\"/>` : ''}
                       <span style="background:${cc};color:#fff;font-size:10px;padding:2px 7px;border-radius:4px">${cl}</span>
-                      <span style="font-size:10px;color:#64748b">${nameMap[d.country_code?.toLowerCase()] || d.country_code || ''}</span>
+                      <span style="font-size:10px;color:#64748b">${countryName}</span>
                     </div>
-                    <div style="font-size:12px;font-weight:600;color:#1e293b;line-height:1.5;word-break:break-word;white-space:normal">${d.title}</div>
+                    <div style="font-size:12px;font-weight:600;color:#1e293b;line-height:1.5;overflow-wrap:break-word;white-space:normal">${d.title}</div>
                     <div style="font-size:11px;color:#94a3b8;margin-top:4px">${d.source}</div>
-                    <div style="font-size:10px;color:#3b82f6;margin-top:3px">点击查看原文 →</div>
+                    <div style="font-size:10px;color:#3b82f6;margin-top:3px">${t.market.clickToViewSource}</div>
                   </div>`
                 },
               },
@@ -273,21 +282,21 @@ export default function Market() {
       })
 
     return () => chart.dispose()
-  }, [markers, countryRegions, positiveHex, negativeHex, newsPoints])
+  }, [markers, countryRegions, positiveHex, negativeHex, newsPoints, lang, t.market.noData, t.market.clickToViewSource, t.market.categoryFinance, t.market.categoryGeopolitics, t.market.countryNames, timeLocale])
 
   if (loading) return <div className="flex flex-col items-center justify-center gap-3 h-screen">
     <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-    <span className="text-sm text-slate-400">正在加载市场...</span>
+    <span className="text-sm text-slate-400">{t.market.loading}</span>
   </div>
 
   return (
     <div className="h-full flex flex-col">
       <div className="px-6 pt-6 pb-1 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">全球市场</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.market.title}</h2>
           {lastRefresh && <span className="text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>}
         </div>
-        <span className="text-[10px] text-slate-400">数据来源：Sina / Yahoo Finance</span>
+        <span className="text-[10px] text-slate-400">{t.market.dataSource}</span>
       </div>
       {indicators.length > 0 && (
         <div className="px-6 pb-3 flex gap-4 shrink-0">
@@ -295,8 +304,8 @@ export default function Market() {
             const valid = ind.price != null && Number(ind.price) !== 0
             const up = Number(ind.change) >= 0
             const cls = valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'
-            const priceText = valid ? fmtNum(Number(ind.price), 2) : '—'
-            const chgText = valid ? `${up ? '+' : ''}${fmtNum(Math.abs(Number(ind.change)), 2)}` : '—'
+            const priceText = valid ? fmtNum(Number(ind.price), 2, lang) : '—'
+            const chgText = valid ? `${up ? '+' : ''}${fmtNum(Math.abs(Number(ind.change)), 2, lang)}` : '—'
             const pctText = valid ? `${up ? '+' : ''}${Number(ind.changePct).toFixed(2)}%` : '—'
             return (
               <a key={ind.symbol} href={`/investory/stock?symbol=${encodeURIComponent(ind.symbol)}`}
@@ -306,7 +315,7 @@ export default function Market() {
                 <div className="flex items-baseline gap-2 mt-0.5">
                   <span className={`text-xs font-medium tabular-nums ${cls}`}>{chgText}</span>
                   <span className={`text-xs font-medium tabular-nums ${cls}`}>{pctText}</span>
-                  {ind.fetchedAt && <span className="text-[10px] text-slate-400 ml-auto">{new Date(ind.fetchedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
+                  {ind.fetchedAt && <span className="text-[10px] text-slate-400 ml-auto">{new Date(ind.fetchedAt).toLocaleTimeString(timeLocale, { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
                 </div>
               </a>
             )

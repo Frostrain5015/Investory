@@ -3,6 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { chartAPI, getStockDetail, searchStocks } from '@/services/api'
 import { useSettings } from '@/hooks/use-settings'
+import { useT } from '@/i18n/I18nContext'
 import type { StockDetailResponse, Transaction, Dividend, PriceData } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot, Legend, Line } from 'recharts'
@@ -13,6 +14,7 @@ export default function StockDetail() {
   const symbol = params.get('symbol') || ''
   const { portfolioId } = useAuth()
   const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
+  const { t } = useT()
   const [data, setData] = useState<StockDetailResponse | null>(null)
   type Period = '1M' | '6M' | '1Y' | 'all' | 'custom'
   interface ChartParams { days: number; start?: string; end?: string }
@@ -27,7 +29,7 @@ export default function StockDetail() {
   const [benchmark, setBenchmark] = useState('')
   const [bmData, setBmData] = useState<{ date: string; base100: number; bmBase100: number; bmName: string }[] | null>(null)
 
-  // Benchmarks per market
+  // Benchmarks per market (proper names, not translated)
   const BENCHMARKS: Record<string, { symbol: string; name: string }[]> = {
     SH: [{ symbol: '000001.SH', name: '上证指数' }],
     SZ: [{ symbol: '399001.SZ', name: '深证成指' }],
@@ -67,7 +69,12 @@ export default function StockDetail() {
   }, [symbol, portfolioId, chartParams, benchmark])
 
   if (loading) {
-    return <div className="flex flex-col items-center justify-center gap-3 h-96"><div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-sm text-slate-400">正在加载股票详情...</span></div>
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 h-96">
+        <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+        <span className="text-sm text-slate-400">{t.stockDetail.loading}</span>
+      </div>
+    )
   }
 
   const stock = data?.stock
@@ -141,7 +148,7 @@ export default function StockDetail() {
           if (sym) fetch(`/investory/api/stocks/${encodeURIComponent(sym)}/refresh`, { method: 'POST', credentials: 'include' }).then(() => window.location.reload())
         }}
           className="ml-auto inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors">
-          刷新数据
+          {t.stockDetail.refreshData}
         </button>
         <button onClick={async () => {
           const sym = params.get('symbol')
@@ -159,11 +166,11 @@ export default function StockDetail() {
           }
         }}
           className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border text-xs font-medium transition-colors ${watching ? 'border-red-200 text-red-600 hover:bg-red-50' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
-          {watching ? '删除自选' : '添加自选'}
+          {watching ? t.stockDetail.removeFromWatchlist : t.stockDetail.addToWatchlist}
         </button>
         <Link to="/transactions/add"
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
-          添加交易
+          {t.stockDetail.addTransaction}
         </Link>
       </div>
 
@@ -171,11 +178,11 @@ export default function StockDetail() {
       {holding && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
           {([
-            { label: '持仓数量' as const, value: holding.totalShares, sub: '' as string | undefined, color: '' },
-            { label: '持仓市值' as const, value: currentPrice != null && holding?.totalShares != null ? (currentPrice * holding.totalShares).toFixed(2) : '—', sub: undefined, color: '' },
-            { label: '平均成本' as const, value: holding.avgCost?.toFixed(2), sub: undefined, color: 'text-amber-600' },
-            { label: '摊薄成本' as const, value: holding.dilutedCost?.toFixed(2), sub: undefined, color: 'text-sky-600' },
-            { label: '持仓盈亏' as const, value: (() => {
+            { label: t.stockDetail.sharesHeld, value: holding.totalShares, sub: '' as string | undefined, color: '' },
+            { label: t.stockDetail.marketValueHeld, value: currentPrice != null && holding?.totalShares != null ? (currentPrice * holding.totalShares).toFixed(2) : '—', sub: undefined, color: '' },
+            { label: t.stockDetail.avgCostHeld, value: holding.avgCost?.toFixed(2), sub: undefined, color: 'text-amber-600' },
+            { label: t.stockDetail.dilutedCostHeld, value: holding.dilutedCost?.toFixed(2), sub: undefined, color: 'text-sky-600' },
+            { label: t.stockDetail.holdingPnl, value: (() => {
                 if (currentPrice == null || !holding?.totalShares || !holding?.totalInvested) return '—'
                 const mv = currentPrice * holding.totalShares
                 const pnl = mv - holding.totalInvested + (holding.totalDividends || 0)
@@ -207,12 +214,16 @@ export default function StockDetail() {
       {/* Price chart */}
       <Card>
         <CardHeader className="flex-row items-center justify-between flex-wrap gap-y-2">
-          <CardTitle className="text-base">股价走势</CardTitle>
+          <CardTitle className="text-base">{t.stockDetail.priceChart}</CardTitle>
           <div className="flex items-center gap-2 flex-wrap gap-y-1.5">
             <div className="flex items-center gap-1">
-              {(['1M', '6M', '1Y', '全部', '自定义'] as const).map(label => {
-                const p: Period = label === '全部' ? 'all' : label === '自定义' ? 'custom' : label as Period
-                return (
+              {([
+                { label: '1M', period: '1M' as Period },
+                { label: '6M', period: '6M' as Period },
+                { label: '1Y', period: '1Y' as Period },
+                { label: t.stockDetail.periodAll, period: 'all' as Period },
+                { label: t.stockDetail.periodCustom, period: 'custom' as Period },
+              ]).map(({ label, period: p }) => (
                   <button key={label} onClick={() => {
                     setPeriod(p)
                     if (p !== 'custom') {
@@ -224,13 +235,13 @@ export default function StockDetail() {
                     {label}
                   </button>
                 )
-              })}
+              )}
             </div>
             {/* Benchmark selector */}
             {stock && BENCHMARKS[stock.market] && (
               <select value={benchmark} onChange={e => setBenchmark(e.target.value)}
                 className="h-7 px-2 rounded-md border border-slate-200 text-xs text-slate-600 bg-white focus:outline-none focus:ring-1 focus:ring-amber-400">
-                <option value="">无对比</option>
+                <option value="">{t.stockDetail.noBenchmark}</option>
                 {BENCHMARKS[stock.market].map(b => (
                   <option key={b.symbol} value={b.symbol}>vs {b.name}</option>
                 ))}
@@ -246,7 +257,7 @@ export default function StockDetail() {
                 <button onClick={() => { if (customStart && customEnd) setChartParams({ days: 0, start: customStart, end: customEnd }) }}
                   disabled={!customStart || !customEnd}
                   className="h-7 px-2.5 rounded-md bg-slate-900 text-white text-xs font-medium disabled:opacity-40 hover:bg-slate-700 transition-colors">
-                  查询
+                  {t.stockDetail.query}
                 </button>
               </div>
             )}
@@ -270,19 +281,19 @@ export default function StockDetail() {
                   <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" domain={['auto', 'auto']} />
                   {holding?.dilutedCost && Number(holding.dilutedCost) > 0 && (
                     <ReferenceLine y={Number(holding.dilutedCost)} stroke="#0ea5e9" strokeDasharray="6 4" strokeWidth={1.5}
-                      label={{ value: `摊薄 ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
+                      label={{ value: `${t.stockDetail.dilutedLabel} ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
                   )}
                   <Tooltip formatter={(value: any) => [
                     Number(value).toFixed(2), stock?.name || ''
                   ]} />
                   <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
-                  {transactions.map(t => {
-                    const match = priceData.find(p => p.date === t.tradeDate)
-                    const y = match ? Number(match.close) : Number(t.price)
+                  {transactions.map(tran => {
+                    const match = priceData.find(p => p.date === tran.tradeDate)
+                    const y = match ? Number(match.close) : Number(tran.price)
                     return (
-                    <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={y}
-                      r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}
-                      label={{ value: t.type === 'BUY' ? 'B' : 'S', position: 'top', fontSize: 11, fill: t.type === 'BUY' ? '#ef4444' : '#10b981', fontWeight: 'bold' }} />
+                    <ReferenceDot key={`tx-${tran.id}`} x={tran.tradeDate} y={y}
+                      r={5} fill={tran.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}
+                      label={{ value: tran.type === 'BUY' ? 'B' : 'S', position: 'top', fontSize: 11, fill: tran.type === 'BUY' ? '#ef4444' : '#10b981', fontWeight: 'bold' }} />
                   )})}
                   {dividends.map(d => {
                     const match = priceData.find(p => p.date === d.recordDate)
@@ -300,7 +311,7 @@ export default function StockDetail() {
                     tickFormatter={(v: string) => period === '1M' ? v.substring(5) : v.substring(0, 7)}
                     interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8"
-                    label={{ value: '基准 100', angle: -90, position: 'insideLeft', fontSize: 10, fill: '#94a3b8' }}
+                    label={{ value: t.stockDetail.base100, angle: -90, position: 'insideLeft', fontSize: 10, fill: '#94a3b8' }}
                     domain={['auto', 'auto']} />
                   <Tooltip formatter={(value: any, name: any) => {
                     const v = Number(value)
@@ -318,13 +329,13 @@ export default function StockDetail() {
                   <Line name={bmData?.[0]?.bmName || 'Benchmark'} type="monotone" dataKey="bmBase100" stroke="#f59e0b" strokeWidth={2} dot={false}
                     strokeDasharray="5 3" />
                   <Area name={stock?.name || 'Stock'} type="monotone" dataKey="base100" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
-                  {transactions.map(t => {
-                    const match = bmData!.find(p => p.date === t.tradeDate)
+                  {transactions.map(tran => {
+                    const match = bmData!.find(p => p.date === tran.tradeDate)
                     const y = match ? match.base100 : undefined
                     return y != null ? (
-                    <ReferenceDot key={`tx-${t.id}`} x={t.tradeDate} y={y}
-                      r={5} fill={t.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}
-                      label={{ value: t.type === 'BUY' ? 'B' : 'S', position: 'top', fontSize: 11, fill: t.type === 'BUY' ? '#ef4444' : '#10b981', fontWeight: 'bold' }} />
+                    <ReferenceDot key={`tx-${tran.id}`} x={tran.tradeDate} y={y}
+                      r={5} fill={tran.type === 'BUY' ? '#ef4444' : '#10b981'} stroke="#fff" strokeWidth={2}
+                      label={{ value: tran.type === 'BUY' ? 'B' : 'S', position: 'top', fontSize: 11, fill: tran.type === 'BUY' ? '#ef4444' : '#10b981', fontWeight: 'bold' }} />
                     ) : null
                   })}
                 </>
@@ -337,33 +348,33 @@ export default function StockDetail() {
       {/* Transactions + Dividends */}
       <div className="grid grid-cols-1 lg:grid-cols-7 gap-6">
         <Card className="lg:col-span-4">
-          <CardHeader><CardTitle className="text-base">交易记录</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">{t.stockDetail.transactions}</CardTitle></CardHeader>
           <CardContent className="p-0">
             {transactions.length === 0 ? (
-              <p className="text-center text-slate-400 text-sm py-6">暂无交易</p>
+              <p className="text-center text-slate-400 text-sm py-6">{t.stockDetail.noTransactions}</p>
             ) : (
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-100">
-                    <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">日期</th>
-                    <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">类型</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">股数</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">价格</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">手续费</th>
+                    <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.date}</th>
+                    <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.type}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.shares}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.transactions.price}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.fee}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {[...transactions].sort((a, b) => b.tradeDate.localeCompare(a.tradeDate)).map((t: Transaction) => (
-                    <tr key={t.id} className="border-b border-slate-50">
-                      <td className="px-4 py-2">{t.tradeDate}</td>
+                  {[...transactions].sort((a, b) => b.tradeDate.localeCompare(a.tradeDate)).map((tran: Transaction) => (
+                    <tr key={tran.id} className="border-b border-slate-50">
+                      <td className="px-4 py-2">{tran.tradeDate}</td>
                       <td className="px-4 py-2">
-                        <span className={`inline-flex rounded-lg px-2 py-0.5 text-xs font-medium ${t.type === 'BUY' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                          {t.type === 'BUY' ? '买入' : '卖出'}
+                        <span className={`inline-flex rounded-lg px-2 py-0.5 text-xs font-medium ${tran.type === 'BUY' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                          {tran.type === 'BUY' ? t.transactions.buy : t.transactions.sell}
                         </span>
                       </td>
-                      <td className="px-4 py-2 text-right">{t.shares}</td>
-                      <td className="px-4 py-2 text-right">{t.price?.toFixed(2)}</td>
-                      <td className="px-4 py-2 text-right">{t.fee?.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right">{tran.shares}</td>
+                      <td className="px-4 py-2 text-right">{tran.price?.toFixed(2)}</td>
+                      <td className="px-4 py-2 text-right">{tran.fee?.toFixed(2)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -373,17 +384,17 @@ export default function StockDetail() {
         </Card>
 
         <Card className="lg:col-span-3">
-          <CardHeader><CardTitle className="text-base">分红记录</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">{t.stockDetail.dividends}</CardTitle></CardHeader>
           <CardContent className="p-0">
             {dividends.length === 0 ? (
-              <p className="text-center text-slate-400 text-sm py-6">暂无分红</p>
+              <p className="text-center text-slate-400 text-sm py-6">{t.stockDetail.noDividends}</p>
             ) : (
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-slate-100">
-                    <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">记录日</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">每股</th>
-                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">总额</th>
+                    <th className="text-left text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.recordDate}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.perShare}</th>
+                    <th className="text-right text-xs font-medium text-slate-500 px-4 py-2">{t.stockDetail.totalAmount}</th>
                   </tr>
                 </thead>
                 <tbody>

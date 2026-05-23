@@ -4,10 +4,9 @@ import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useSettings, type BaseCurrency } from '@/hooks/use-settings'
 import { useTheme } from '@/hooks/use-theme'
+import { useT } from '@/i18n/I18nContext'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Sun, Moon, Camera, Sparkles } from 'lucide-react'
-
-const CURRENCY_LABELS: Record<BaseCurrency, string> = { CNY: '人民币 (¥)', HKD: '港币 (HK$)', USD: '美元 ($)' }
 
 export default function Settings() {
   const { username, logout } = useAuth()
@@ -15,6 +14,7 @@ export default function Settings() {
   const toast = useToast()
   const { colorScheme, toggleColorScheme, positiveClass, negativeClass, baseCurrency, setBaseCurrency, showRiskMetrics, toggleRiskMetrics } = useSettings()
   const { pref, setPref } = useTheme()
+  const { t } = useT()
   const fileRef = useRef<HTMLInputElement>(null)
   const [avatar, setAvatar] = useState(() => localStorage.getItem('investory_avatar') || '')
   const [oldPw, setOldPw] = useState('')
@@ -39,13 +39,25 @@ export default function Settings() {
   }, [])
 
   const AI_PRESETS: Record<string, { label: string; baseUrl: string; model: string }> = {
-    bailian:    { label: '阿里云百炼',   baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-    openai:     { label: 'OpenAI',       baseUrl: '',                                           model: 'gpt-4o-mini' },
-    deepseek:   { label: 'DeepSeek',     baseUrl: 'https://api.deepseek.com/v1',                model: 'deepseek-chat' },
-    moonshot:   { label: 'Moonshot',     baseUrl: 'https://api.moonshot.cn/v1',                 model: 'moonshot-v1-8k' },
-    zhipu:      { label: '智谱 GLM',     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',       model: 'glm-4-flash' },
-    anthropic:  { label: 'Anthropic',    baseUrl: '',                                           model: 'claude-haiku-4-5' },
-    custom:     { label: '自定义',       baseUrl: '',                                           model: '' },
+    bailian:    { label: t.settings.presetBailian, baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+    openai:     { label: 'OpenAI',                   baseUrl: '',                                           model: 'gpt-4o-mini' },
+    deepseek:   { label: 'DeepSeek',                 baseUrl: 'https://api.deepseek.com/v1',                model: 'deepseek-chat' },
+    moonshot:   { label: 'Moonshot',                 baseUrl: 'https://api.moonshot.cn/v1',                 model: 'moonshot-v1-8k' },
+    zhipu:      { label: t.settings.presetZhipu,     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',       model: 'glm-4-flash' },
+    anthropic:  { label: 'Anthropic',                baseUrl: '',                                           model: 'claude-haiku-4-5' },
+    custom:     { label: t.settings.presetCustom,     baseUrl: '',                                           model: '' },
+  }
+
+  const CURRENCY_LABELS: Record<BaseCurrency, string> = {
+    CNY: t.settings.currencyCny,
+    HKD: t.settings.currencyHkd,
+    USD: t.settings.currencyUsd,
+  }
+
+  const THEME_LABELS: Record<string, string> = {
+    system: t.settings.themeSystem,
+    light: t.settings.themeLight,
+    dark: t.settings.themeDark,
   }
 
   function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
@@ -61,29 +73,41 @@ export default function Settings() {
   }
 
   async function handleChangePassword() {
-    if (!oldPw || !newPw) { setPwMsg('请填写原密码和新密码'); return }
-    if (newPw.length < 6) { setPwMsg('新密码至少6位'); return }
+    if (!oldPw || !newPw) { setPwMsg(t.settings.pwFillBoth); return }
+    if (newPw.length < 6) { setPwMsg(t.settings.pwTooShort); return }
     const form = new URLSearchParams({ oldPassword: oldPw, newPassword: newPw })
     const res = await fetch('/investory/api/password', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() })
     const data = await res.json()
-    setPwMsg(data.error || '密码已修改')
-    if (data.status === 'ok') { setOldPw(''); setNewPw('') }
+    if (data.error) {
+      setPwMsg(data.error)
+    } else if (data.status === 'ok') {
+      setPwMsg(t.settings.pwChanged)
+      setOldPw(''); setNewPw('')
+    }
   }
 
   async function handleDeleteAccount() {
-    if (!(await confirm('确认注销账户？此操作不可撤销。'))) return
+    if (!(await confirm(t.settings.confirmDeleteAccount))) return
     setDeleting(true)
     try {
       const res = await fetch('/investory/api/account', { method: 'DELETE', credentials: 'include' })
-      if (res.ok) { toast('账户已注销', true); setTimeout(logout, 1500) }
-      else toast('注销失败', false)
-    } catch { toast('网络错误', false) }
+      if (res.ok) { toast(t.settings.accountDeleted, true); setTimeout(logout, 1500) }
+      else toast(t.settings.deleteFailed, false)
+    } catch { toast(t.settings.networkError, false) }
     setDeleting(false)
   }
 
+  const modelPlaceholder = aiProvider === 'openai'
+    ? 'e.g. gpt-4o-mini / gpt-4o'
+    : aiProvider === 'anthropic'
+      ? 'e.g. claude-haiku-4-5 / claude-sonnet-4-20250514'
+      : aiProvider === 'deepseek'
+        ? 'e.g. deepseek-chat'
+        : t.settings.aiModel
+
   return (
     <div className="p-6 max-w-lg mx-auto space-y-6">
-      <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">账户设置</h2>
+      <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">{t.settings.title}</h2>
 
       {/* Avatar */}
       <Card>
@@ -102,7 +126,7 @@ export default function Settings() {
           </div>
           <div>
             <p className="font-semibold text-slate-900 dark:text-slate-100">{username}</p>
-            <p className="text-xs text-slate-400 mt-0.5">点击头像上传照片</p>
+            <p className="text-xs text-slate-400 mt-0.5">{t.settings.avatarHint}</p>
           </div>
           <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
         </CardContent>
@@ -110,16 +134,16 @@ export default function Settings() {
 
       {/* Theme */}
       <Card>
-        <CardHeader><CardTitle className="text-base">主题</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">{t.settings.theme}</CardTitle></CardHeader>
         <CardContent>
           <div className="flex gap-2">
-            {([['system', '跟随系统'], ['light', '亮色'], ['dark', '暗色']] as const).map(([val, label]) => (
+            {(['system', 'light', 'dark'] as const).map(val => (
               <button key={val} onClick={() => setPref(val)}
                 className={`flex-1 h-10 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-1.5
                   ${pref === val ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                 {val === 'light' && <Sun className="w-3.5 h-3.5" />}
                 {val === 'dark' && <Moon className="w-3.5 h-3.5" />}
-                {label}
+                {THEME_LABELS[val]}
               </button>
             ))}
           </div>
@@ -128,11 +152,11 @@ export default function Settings() {
 
       {/* Color scheme */}
       <Card>
-        <CardHeader><CardTitle className="text-base">涨跌颜色</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">{t.settings.colorScheme}</CardTitle></CardHeader>
         <CardContent>
           <div className="flex items-center justify-between">
             <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{colorScheme === 'cn' ? '红涨绿跌' : '绿涨红跌'}</p>
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{colorScheme === 'cn' ? t.settings.cnColorScheme : t.settings.enColorScheme}</p>
               <div className="flex items-center gap-3 text-sm">
                 <span className={positiveClass}>+5.20%</span><span className="text-slate-300">/</span><span className={negativeClass}>-3.10%</span>
               </div>
@@ -146,7 +170,7 @@ export default function Settings() {
 
       {/* Base currency */}
       <Card>
-        <CardHeader><CardTitle className="text-base">本位币</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">{t.settings.currency}</CardTitle></CardHeader>
         <CardContent>
           <div className="flex gap-2">
             {(Object.keys(CURRENCY_LABELS) as BaseCurrency[]).map(c => (
@@ -159,14 +183,14 @@ export default function Settings() {
 
       {/* Quant metrics toggle */}
       <Card>
-        <CardHeader><CardTitle className="text-base">量化分析列</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">{t.settings.quantColumns}</CardTitle></CardHeader>
         <CardContent>
           <div className="flex items-center justify-between">
             <div className="space-y-1">
               <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                {showRiskMetrics ? '显示历史分位数和风险指标' : '隐藏量化指标列'}
+                {showRiskMetrics ? t.settings.quantColumnsOn : t.settings.quantColumnsOff}
               </p>
-              <p className="text-xs text-slate-400">在自选页面显示 Beta、波动率、历史分位数等列</p>
+              <p className="text-xs text-slate-400">{t.settings.quantColumnsDesc}</p>
             </div>
             <button onClick={toggleRiskMetrics}
               className="relative w-12 h-7 rounded-full bg-slate-200 hover:bg-slate-300 transition-colors">
@@ -181,8 +205,8 @@ export default function Settings() {
       <Card>
         <CardHeader>
           <div className="flex items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" />观澜 AI</CardTitle>
-            <span className="text-[10px] text-slate-400">默认服务商：阿里云百炼</span>
+            <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" />{t.settings.aiSettings}</CardTitle>
+            <span className="text-[10px] text-slate-400">{t.settings.aiDefaultNote}</span>
           </div>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -196,15 +220,15 @@ export default function Settings() {
             ))}
           </select>
           <input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)}
-            placeholder={aiHasKey ? '已保存自定义Key' : '自定义 API Key'}
+            placeholder={aiHasKey ? t.settings.aiKeyPlaceholder : t.settings.aiApiKey}
             className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
           {aiProvider === 'custom' && (
             <input type="text" value={aiBaseUrl} onChange={e => setAiBaseUrl(e.target.value)}
-              placeholder="API 端点地址，例如 https://api.deepseek.com/v1"
+              placeholder={t.settings.aiBaseUrl}
               className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
           )}
           <input type="text" value={aiModel} onChange={e => setAiModel(e.target.value)}
-            placeholder={aiProvider === 'openai' ? '例如 gpt-4o-mini / gpt-4o' : aiProvider === 'anthropic' ? '例如 claude-haiku-4-5' : aiProvider === 'deepseek' ? '例如 deepseek-chat' : '模型名称，服务商文档中可查'}
+            placeholder={modelPlaceholder}
             className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
           <div className="flex gap-2">
             <button onClick={async () => {
@@ -217,18 +241,18 @@ export default function Settings() {
               const data = await res.json()
               if (data.error) { toast(data.error, false); return }
               if (aiKey) setAiHasKey(true)
-              toast('AI 设置已保存', true)
+              toast(t.settings.aiSaveSuccess, true)
             }} className="flex-1 h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
-              保存设置
+              {t.settings.aiSaveBtn}
             </button>
             <button onClick={async () => {
               const res = await fetch('/investory/api/ai/settings', { method: 'DELETE', credentials: 'include' })
               const data = await res.json()
               if (data.error) { toast(data.error, false); return }
               setAiProvider('bailian'); setAiKey(''); setAiBaseUrl(''); setAiModel('qwen-plus'); setAiHasKey(false)
-              toast('已恢复系统默认 API', true)
+              toast(t.settings.aiResetSuccess, true)
             }} className="h-10 px-3 rounded-xl border border-slate-200 text-slate-500 text-sm hover:bg-slate-50 transition-colors whitespace-nowrap">
-              恢复默认
+              {t.settings.aiResetBtn}
             </button>
           </div>
         </CardContent>
@@ -236,23 +260,23 @@ export default function Settings() {
 
       {/* Password */}
       <Card>
-        <CardHeader><CardTitle className="text-base">修改密码</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base">{t.common.warn}</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <input type="password" placeholder="原密码" value={oldPw} onChange={e => setOldPw(e.target.value)}
+          <input type="password" placeholder={t.settings.oldPassword} value={oldPw} onChange={e => setOldPw(e.target.value)}
             className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200" />
-          <input type="password" placeholder="新密码（至少6位）" value={newPw} onChange={e => setNewPw(e.target.value)}
+          <input type="password" placeholder={`${t.settings.newPassword}（${t.settings.newPasswordHint}）`} value={newPw} onChange={e => setNewPw(e.target.value)}
             className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200" />
-          {pwMsg && <p className={`text-xs ${pwMsg.includes('错误') || pwMsg.includes('请') ? 'text-red-500' : 'text-emerald-600'}`}>{pwMsg}</p>}
-          <button onClick={handleChangePassword} className="w-full h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">修改密码</button>
+          {pwMsg && <p className={`text-xs ${pwMsg === t.settings.pwChanged || pwMsg === t.settings.passwordSuccess ? 'text-emerald-600' : 'text-red-500'}`}>{pwMsg}</p>}
+          <button onClick={handleChangePassword} className="w-full h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">{t.settings.passwordBtn}</button>
         </CardContent>
       </Card>
 
       {/* Danger zone */}
       <Card className="border-red-200">
-        <CardHeader><CardTitle className="text-base text-red-600">危险操作</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-base text-red-600">{t.settings.dangerZone}</CardTitle></CardHeader>
         <CardContent>
           <button onClick={handleDeleteAccount} disabled={deleting}
-            className="w-full h-10 rounded-xl border border-red-200 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">{deleting ? '注销中...' : '注销账户'}</button>
+            className="w-full h-10 rounded-xl border border-red-200 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">{deleting ? t.settings.deleting : t.settings.deleteAccount}</button>
         </CardContent>
       </Card>
     </div>

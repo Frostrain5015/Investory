@@ -1,9 +1,11 @@
 import { useMemo } from 'react'
+import { useT } from '@/i18n/I18nContext'
 import type { AllocationItem } from '@/types'
 
 interface Props { data: AllocationItem[]; colors: string[] }
 
 export default function CloudChart({ data, colors }: Props) {
+  const { t } = useT()
   const total = useMemo(() => data.reduce((s, d) => s + d.value, 0), [data])
 
   const bubbles = useMemo(() => {
@@ -17,7 +19,7 @@ export default function CloudChart({ data, colors }: Props) {
   }, [data, colors, total])
 
   if (bubbles.length === 0) {
-    return <div className="h-[280px] flex items-center justify-center text-slate-400 text-sm">暂无持仓</div>
+    return <div className="h-[280px] flex items-center justify-center text-slate-400 text-sm">{t.dashboard.noHoldings}</div>
   }
 
   return (

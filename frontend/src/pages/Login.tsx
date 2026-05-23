@@ -2,24 +2,26 @@ import { useState, useEffect, type FormEvent } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
+import { useT } from '@/i18n/I18nContext'
 import { TrendingUp } from 'lucide-react'
 
 export default function Login() {
   const { login } = useAuth()
   const { positiveHex } = useSettings()
+  const { t } = useT()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [autoLogin, setAutoLogin] = useState(false)
-  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem('investory_creds'))
 
+  // Auto-login: if saved credentials exist, auto-fill and submit
   useEffect(() => {
     const saved = localStorage.getItem('investory_creds')
     if (saved) {
       try {
         const creds = JSON.parse(saved) as { u: string; p: string }
-        if (creds.u) {
+        if (creds.u && creds.p) {
           setAutoLogin(true)
           setUsername(creds.u)
           setPassword(atob(creds.p))
@@ -33,7 +35,7 @@ export default function Login() {
     if (autoLogin && username && password && loading) {
       login(username, password).then(result => {
         if (!result.success) {
-          setError(result.error || '登录失败')
+          setError(result.error || t.login.errorLoginFailed)
           setLoading(false)
           setAutoLogin(false)
         }
@@ -48,13 +50,10 @@ export default function Login() {
     const result = await login(username, password)
     setLoading(false)
     if (!result.success) {
-      setError(result.error || '登录失败')
+      setError(result.error || t.login.errorLoginFailed)
     } else {
-      if (rememberMe) {
-        localStorage.setItem('investory_creds', JSON.stringify({ u: username, p: btoa(password) }))
-      } else {
-        localStorage.removeItem('investory_creds')
-      }
+      // Always save credentials — cleared on explicit logout in use-auth
+      localStorage.setItem('investory_creds', JSON.stringify({ u: username, p: btoa(password) }))
     }
   }
 
@@ -65,22 +64,22 @@ export default function Login() {
           <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: positiveHex }}>
             <TrendingUp className="w-6 h-6 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Investory</h1>
-          <p className="text-sm text-slate-500 mt-1">与时间为友 与价值同行</p>
+          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">{t.login.title}</h1>
+          <p className="text-sm text-slate-500 mt-1">{t.login.tagline}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6 space-y-4">
           {autoLogin && loading && !error && (
             <div className="flex items-center gap-2 text-slate-500 text-sm justify-center">
               <div className="w-4 h-4 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
-              自动登录中...
+              {t.login.autoLoggingIn}
             </div>
           )}
           {error && (
             <div className="bg-red-50 text-red-600 text-sm rounded-xl px-4 py-3">{error}</div>
           )}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">用户名</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">{t.login.username}</label>
             <input
               type="text"
               value={username}
@@ -90,7 +89,7 @@ export default function Login() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">密码</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">{t.login.password}</label>
             <input
               type="password"
               value={password}
@@ -99,26 +98,17 @@ export default function Login() {
               className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-300 transition-colors"
             />
           </div>
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={rememberMe}
-              onChange={e => setRememberMe(e.target.checked)}
-              className="w-4 h-4 rounded border-slate-300 accent-slate-900 cursor-pointer"
-            />
-            <span className="text-sm text-slate-500">记住我</span>
-          </label>
           <button
             type="submit"
             disabled={loading}
             className="w-full h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors disabled:opacity-50"
           >
-            {loading ? '登录中...' : '登录'}
+            {loading ? t.login.loggingIn : t.login.loginBtn}
           </button>
         </form>
 
         <p className="text-center text-sm text-slate-500 mt-4">
-          还没有账户？<Link to="/register" className="text-slate-900 font-medium hover:underline">创建账户</Link>
+          {t.login.noAccount}<Link to="/register" className="text-slate-900 font-medium hover:underline">{t.login.createAccount}</Link>
         </p>
       </div>
     </div>

@@ -5,23 +5,29 @@ import { searchStocks, getCashBalances } from '@/services/api'
 import type { StockSearchItem } from '@/types'
 import { displaySymbol } from '@/lib/format'
 import { Card, CardContent } from '@/components/ui/card'
+import { useT } from '@/i18n/I18nContext'
 
 const CURRENCY_SYMBOL: Record<string, string> = { CNY: '¥', HKD: 'HK$', USD: '$' }
 
-const TYPES = [
-  { value: 'BUY',          label: '买入' },
-  { value: 'SELL',         label: '卖出' },
-  { value: 'DIV',          label: '分红' },
-  { value: 'TRANSFER_IN',  label: '转入' },
-  { value: 'TRANSFER_OUT', label: '转出' },
-] as const
+const TYPES = ['BUY', 'SELL', 'DIV', 'TRANSFER_IN', 'TRANSFER_OUT'] as const
 
-type TxType = typeof TYPES[number]['value']
+type TxType = typeof TYPES[number]
 
 const inputCls = 'w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10'
 
+function typeLabel(txType: TxType, lang: string): string {
+  switch (txType) {
+    case 'BUY':          return lang === 'zh' ? '买入' : 'Buy'
+    case 'SELL':         return lang === 'zh' ? '卖出' : 'Sell'
+    case 'DIV':          return lang === 'zh' ? '分红' : 'Dividend'
+    case 'TRANSFER_IN':  return lang === 'zh' ? '转入' : 'Transfer In'
+    case 'TRANSFER_OUT': return lang === 'zh' ? '转出' : 'Transfer Out'
+  }
+}
+
 export default function AddTransaction() {
   const navigate = useNavigate()
+  const { t, lang } = useT()
   const [params] = useSearchParams()
   const editId = params.get('edit')
   const initType = (params.get('type') as TxType) || 'BUY'
@@ -107,9 +113,14 @@ export default function AddTransaction() {
       if (!res.ok) {
         const body = await res.json().catch(() => ({}))
         if (body.error === 'INSUFFICIENT_CASH') {
-          setSubmitError(`现金余额不足：${CURRENCY_SYMBOL[currency] ?? currency}${Number(body.balance).toFixed(2)}，本次需要 ${CURRENCY_SYMBOL[currency] ?? currency}${Number(body.required).toFixed(2)}，请转入资金`)
+          const sym = CURRENCY_SYMBOL[currency] ?? currency
+          const bal = Number(body.balance).toFixed(2)
+          const req = Number(body.required).toFixed(2)
+          setSubmitError(lang === 'zh'
+            ? `现金余额不足：${sym}${bal}，本次需要 ${sym}${req}，请转入资金`
+            : `Insufficient balance: ${sym}${bal}, required ${sym}${req}, please transfer funds`)
         } else {
-          setSubmitError('提交失败，请重试')
+          setSubmitError(lang === 'zh' ? '提交失败，请重试' : 'Submit failed, please retry')
         }
         setSubmitting(false)
         return
@@ -142,9 +153,11 @@ export default function AddTransaction() {
           const sym = CURRENCY_SYMBOL[cur] ?? cur
           const bal = typeof body.balance === 'number' ? body.balance.toFixed(2) : Number(body.balance).toFixed(2)
           const req = typeof body.required === 'number' ? body.required.toFixed(2) : Number(body.required).toFixed(2)
-          setSubmitError(`现金余额不足：${sym}${bal}，本次需要 ${sym}${req}，请转入资金`)
+          setSubmitError(lang === 'zh'
+            ? `现金余额不足：${sym}${bal}，本次需要 ${sym}${req}，请转入资金`
+            : `Insufficient balance: ${sym}${bal}, required ${sym}${req}, please transfer funds`)
         } else {
-          setSubmitError('提交失败，请重试')
+          setSubmitError(lang === 'zh' ? '提交失败，请重试' : 'Submit failed, please retry')
         }
         setSubmitting(false)
         return
@@ -154,33 +167,44 @@ export default function AddTransaction() {
   }
 
   const selectedCurrency = selectedStock?.currency ?? 'CNY'
+  const cashHintLabel = lang === 'zh' ? '当前可用现金：' : 'Available cash: '
   const cashHint = type === 'BUY' && selectedStock
     ? (cashBalances[selectedCurrency] != null
-        ? `${CURRENCY_SYMBOL[selectedCurrency] ?? selectedCurrency}${Number(cashBalances[selectedCurrency]).toFixed(2)} 可用`
+        ? `${CURRENCY_SYMBOL[selectedCurrency] ?? selectedCurrency}${Number(cashBalances[selectedCurrency]).toFixed(2)} ${lang === 'zh' ? '可用' : 'available'}`
         : null)
     : null
 
   const needsStock = type !== 'TRANSFER_IN' && type !== 'TRANSFER_OUT'
 
+  const currencyOptions = [
+    { value: 'CNY', label: lang === 'zh' ? '¥ 人民币' : '¥ CNY' },
+    { value: 'HKD', label: lang === 'zh' ? 'HK$ 港币' : 'HK$ HKD' },
+    { value: 'USD', label: lang === 'zh' ? '$ 美元' : '$ USD' },
+  ]
+
   return (
     <div className="p-6 max-w-lg mx-auto space-y-6">
-      <h2 className="text-xl font-bold text-slate-900 tracking-tight">{editId ? '编辑交易' : '添加交易'}</h2>
+      <h2 className="text-xl font-bold text-slate-900 tracking-tight">
+        {editId
+          ? (lang === 'zh' ? '编辑交易' : 'Edit Transaction')
+          : (lang === 'zh' ? '添加交易' : 'Add Transaction')}
+      </h2>
       <Card>
         <CardContent className="pt-6">
           <form onSubmit={handleSubmit} className="space-y-4">
 
             {/* Segmented type selector */}
             <div className="relative flex rounded-xl bg-slate-100 p-1">
-              {TYPES.map(t => (
-                <button key={t.value} type="button" onClick={() => { setType(t.value); setSubmitError(null) }}
+              {TYPES.map(txType => (
+                <button key={txType} type="button" onClick={() => { setType(txType); setSubmitError(null) }}
                   className="relative flex-1 py-1.5 text-xs font-medium z-10 transition-colors"
-                  style={{ color: type === t.value ? '#0f172a' : '#64748b' }}>
-                  {type === t.value && (
+                  style={{ color: type === txType ? '#0f172a' : '#64748b' }}>
+                  {type === txType && (
                     <motion.div layoutId="activeTab"
                       className="absolute inset-0 bg-white rounded-lg shadow-sm"
                       transition={{ type: 'spring', stiffness: 500, damping: 40 }} />
                   )}
-                  <span className="relative">{t.label}</span>
+                  <span className="relative">{typeLabel(txType, lang)}</span>
                 </button>
               ))}
             </div>
@@ -188,13 +212,14 @@ export default function AddTransaction() {
             {/* Stock search (BUY / SELL / DIV) */}
             {needsStock && (
               <div className="relative">
-                <label className="block text-sm font-medium text-slate-700 mb-1.5">股票</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">{t.transactions.stock}</label>
                 <input type="text"
                   value={selectedStock ? `${selectedStock.name} (${selectedStock.symbol ? displaySymbol(selectedStock.symbol, selectedStock.market) : ''})` : stockQuery}
                   onChange={e => { setSelectedStock(null); setStockQuery(e.target.value); setShowDropdown(true) }}
                   onFocus={() => stocks.length > 0 && setShowDropdown(true)}
                   onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
-                  placeholder="搜索股票代码或名称..." required
+                  placeholder={lang === 'zh' ? '搜索股票代码或名称...' : 'Search by symbol or name...'}
+                  required
                   disabled={!!editId}
                   className={inputCls + ' disabled:bg-slate-50 disabled:text-slate-500'} />
                 {showDropdown && stocks.length > 0 && !selectedStock && (
@@ -225,20 +250,20 @@ export default function AddTransaction() {
                   <>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">金额</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">{t.transactions.amount}</label>
                         <input type="number" step="any" value={shares} onChange={e => setShares(e.target.value)} required className={inputCls} />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">币种</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">{lang === 'zh' ? '币种' : 'Currency'}</label>
                         <select value={currency} onChange={e => setCurrency(e.target.value)} className={inputCls}>
-                          <option value="CNY">¥ 人民币</option>
-                          <option value="HKD">HK$ 港币</option>
-                          <option value="USD">$ 美元</option>
+                          {currencyOptions.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                          ))}
                         </select>
                       </div>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1.5">日期</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">{t.transactions.date}</label>
                       <input type="date" value={tradeDate} onChange={e => setTradeDate(e.target.value)} required className={inputCls} />
                     </div>
                   </>
@@ -247,11 +272,11 @@ export default function AddTransaction() {
                 {type === 'DIV' && (
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1.5">每股分红</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">{lang === 'zh' ? '每股分红' : 'Per Share'}</label>
                       <input type="number" step="any" value={dividendPerShare} onChange={e => setDividendPerShare(e.target.value)} required className={inputCls} />
                     </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1.5">登记日期</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-1.5">{lang === 'zh' ? '登记日期' : 'Record Date'}</label>
                       <input type="date" value={tradeDate} onChange={e => setTradeDate(e.target.value)} required className={inputCls} />
                     </div>
                   </div>
@@ -261,25 +286,25 @@ export default function AddTransaction() {
                   <>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">股数</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">{t.transactions.shares}</label>
                         <input type="number" step="any" value={shares} onChange={e => setShares(e.target.value)} required className={inputCls} />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">价格</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">{t.transactions.price}</label>
                         <input type="number" step="any" value={price} onChange={e => setPrice(e.target.value)} required className={inputCls} />
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">手续费</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">{lang === 'zh' ? '手续费' : 'Fee'}</label>
                         <input type="number" step="any" value={fee} onChange={e => setFee(e.target.value)} className={inputCls} />
                       </div>
                       <div>
-                        <label className="block text-sm font-medium text-slate-700 mb-1.5">交易日期</label>
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5">{t.transactions.date}</label>
                         <input type="date" value={tradeDate} onChange={e => setTradeDate(e.target.value)} required className={inputCls} />
                       </div>
                     </div>
-                    {cashHint && <p className="text-xs text-slate-400">当前可用现金：{cashHint}</p>}
+                    {cashHint && <p className="text-xs text-slate-400">{cashHintLabel}{cashHint}</p>}
                   </>
                 )}
 
@@ -287,7 +312,7 @@ export default function AddTransaction() {
             </AnimatePresence>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">备注</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">{lang === 'zh' ? '备注' : 'Note'}</label>
               <input type="text" value={note} onChange={e => setNote(e.target.value)} className={inputCls} />
             </div>
 
@@ -297,10 +322,14 @@ export default function AddTransaction() {
 
             <div className="flex gap-3">
               <button type="button" onClick={() => navigate('/transactions')}
-                className="flex-1 h-10 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">取消</button>
+                className="flex-1 h-10 rounded-xl border border-slate-200 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">{t.common.cancel}</button>
               <button type="submit" disabled={submitting || (needsStock && !selectedStock)}
                 className="flex-1 h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors disabled:opacity-50">
-                {submitting ? '提交中...' : editId ? '保存修改' : '确认'}
+                {submitting
+                  ? (lang === 'zh' ? '提交中...' : 'Submitting...')
+                  : editId
+                    ? (lang === 'zh' ? '保存修改' : 'Save Changes')
+                    : t.common.confirm}
               </button>
             </div>
           </form>

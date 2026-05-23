@@ -4,6 +4,7 @@ import { SettingsProvider } from '@/hooks/use-settings'
 import { ThemeProvider } from '@/hooks/use-theme'
 import { ToastProvider } from '@/components/Toast'
 import { ConfirmProvider } from '@/hooks/use-confirm'
+import { I18nProvider, useT } from '@/i18n/I18nContext'
 import Layout from '@/components/Layout'
 import Hero from '@/pages/Hero'
 import Login from '@/pages/Login'
@@ -21,16 +22,19 @@ import Portfolio from '@/pages/Portfolio'
 import Settings from '@/pages/Settings'
 import Quant from '@/pages/Quant'
 
+function LoadingScreen() {
+  const { t } = useT()
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 h-screen bg-slate-50">
+      <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+      <span className="text-sm text-slate-400">{t.common.loading}</span>
+    </div>
+  )
+}
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated, loading } = useAuth()
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 h-screen bg-slate-50">
-        <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-        <span className="text-sm text-slate-400">正在加载Investory...</span>
-      </div>
-    )
-  }
+  if (loading) return <LoadingScreen />
   return authenticated ? children : <Navigate to="/" replace />
 }
 
@@ -45,6 +49,7 @@ export default function App() {
     <AuthProvider>
       <SettingsProvider>
       <ThemeProvider>
+      <I18nProvider>
       <ToastProvider>
       <ConfirmProvider>
       <Routes>
@@ -70,6 +75,7 @@ export default function App() {
       </Routes>
       </ConfirmProvider>
       </ToastProvider>
+      </I18nProvider>
       </ThemeProvider>
       </SettingsProvider>
     </AuthProvider>

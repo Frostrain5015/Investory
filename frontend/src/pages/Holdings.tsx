@@ -7,6 +7,7 @@ import { searchStocks, chartAPI, getHoldingsMetrics } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { displaySymbol, fmtPriceTs } from '@/lib/format'
 import Sparkline from '@/components/Sparkline'
+import { useT } from '@/i18n/I18nContext'
 import type { StockSearchItem, PriceData, StockMetrics } from '@/types'
 import { Search, X, Plus, GripVertical } from 'lucide-react'
 
@@ -19,15 +20,18 @@ function marketToGroup(market: string): string {
   return market
 }
 
-const GROUP_DEFS: Omit<MarketGroup, 'items'>[] = [
-  { key: 'A',  label: '中国A股', flag: 'https://flagcdn.com/cn.svg' },
-  { key: 'HK', label: '香港股市', flag: 'https://flagcdn.com/hk.svg' },
-  { key: 'US', label: '美国股市', flag: 'https://flagcdn.com/us.svg' },
-]
+const GROUP_META: Record<string, { flag: string }> = {
+  A:  { flag: 'https://flagcdn.com/cn.svg' },
+  HK: { flag: 'https://flagcdn.com/hk.svg' },
+  US: { flag: 'https://flagcdn.com/us.svg' },
+}
+
+const GROUP_KEYS = ['A', 'HK', 'US'] as const
 
 export default function Holdings() {
   const { portfolioId } = useAuth()
   const { positiveClass, negativeClass, showRiskMetrics } = useSettings()
+  const { t } = useT()
   const [items, setItems] = useState<WatchItem[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
@@ -145,16 +149,18 @@ export default function Holdings() {
   }
 
   const groups = useMemo<MarketGroup[]>(() => {
-    return GROUP_DEFS.map(def => ({
-      ...def,
-      items: items.filter(item => marketToGroup(item.market) === def.key),
+    return GROUP_KEYS.map(key => ({
+      key,
+      label: t.holdings.marketGroupLabels[key],
+      flag: GROUP_META[key].flag,
+      items: items.filter(item => marketToGroup(item.market) === key),
     })).filter(g => g.items.length > 0)
-  }, [items])
+  }, [items, t])
 
   if (loading) {
     return <div className="flex flex-col items-center justify-center gap-3 h-96">
       <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-      <span className="text-sm text-slate-400">正在加载持仓...</span>
+      <span className="text-sm text-slate-400">{t.common.loading}</span>
     </div>
   }
 
@@ -162,24 +168,24 @@ export default function Holdings() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">自选</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.holdings.title}</h2>
           {lastRefresh && <span className="text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>}
         </div>
         <div className="relative flex items-center gap-2">
           <button onClick={() => { setManaging(!managing); setShowAdd(false) }}
             className={`h-9 px-4 rounded-xl text-xs font-medium transition-colors border ${managing ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-            管理
+            {t.common.edit}
           </button>
           <button onClick={() => setShowAdd(!showAdd)}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
-            <Plus className="w-3.5 h-3.5" />添加自选
+            <Plus className="w-3.5 h-3.5" />{t.common.add}
           </button>
           {showAdd && (
             <div className="absolute right-0 top-full mt-1 w-72 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden z-50">
               <div className="p-2">
                 <div className="relative">
                   <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                  <input type="text" placeholder="搜索股票..." value={query}
+                  <input type="text" placeholder={t.common.search} value={query}
                     onChange={e => setQuery(e.target.value)}
                     className="w-full h-9 pl-8 pr-3 rounded-lg border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/5" autoFocus />
                 </div>
@@ -196,7 +202,7 @@ export default function Holdings() {
                 </div>
               )}
               {query && results.length === 0 && (
-                <div className="px-4 py-3 text-xs text-slate-400">未找到匹配的股票</div>
+                <div className="px-4 py-3 text-xs text-slate-400">{t.common.none}</div>
               )}
             </div>
           )}
@@ -204,7 +210,7 @@ export default function Holdings() {
       </div>
 
       {items.length === 0 ? (
-        <div className="py-12 text-center text-slate-500 text-sm">暂无数据</div>
+        <div className="py-12 text-center text-slate-500 text-sm">{t.holdings.noHoldings}</div>
       ) : (
         <div className="space-y-6">
           {groups.map(group => (
@@ -212,22 +218,22 @@ export default function Holdings() {
               <div className="flex items-center gap-2 px-6 pt-4 pb-2">
                 <img src={group.flag} alt="" className="w-5 h-3.5 rounded-sm shadow-sm" />
                 <h3 className="text-sm font-bold text-slate-700">{group.label}</h3>
-                <span className="text-xs text-slate-400">{group.items.length}只</span>
+                <span className="text-xs text-slate-400">{group.items.length}{t.holdings.stockCountUnit}</span>
               </div>
               <CardContent className="p-0">
                 <div className="overflow-auto">
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b border-slate-100">
-                        <th className="text-left text-xs font-medium text-slate-500 px-6 py-2">股票</th>
-                        <th className="text-center text-xs font-medium text-slate-500 px-1 py-2 w-[68px]">1M</th>
-                        <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">现价</th>
-                        <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">今日涨跌</th>
-                        <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">涨跌幅</th>
+                        <th className="text-left text-xs font-medium text-slate-500 px-6 py-2">{t.holdings.stock}</th>
+                        <th className="text-center text-xs font-medium text-slate-500 px-1 py-2 w-[68px]">{t.holdings.oneMonth}</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.stockDetail.price}</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.market.change}</th>
+                        <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.market.changePct}</th>
                         {showRiskMetrics && <>
-                          <th className="text-center text-xs font-medium text-slate-500 px-3 py-2">分位数</th>
+                          <th className="text-center text-xs font-medium text-slate-500 px-3 py-2">{t.holdings.percentile}</th>
                           <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">Beta</th>
-                          <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">波动率</th>
+                          <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.holdings.volatility}</th>
                         </>}
                         <th className="text-right text-xs font-medium text-slate-500 px-3 py-2 w-10"></th>
                       </tr>

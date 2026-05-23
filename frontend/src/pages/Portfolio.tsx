@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { useConfirm } from '@/hooks/use-confirm'
+import { useT } from '@/i18n/I18nContext'
 import { Card, CardContent } from '@/components/ui/card'
 import { Plus, Trash2, Pencil } from 'lucide-react'
 
@@ -9,6 +10,7 @@ interface Portfolio { id: number; userId: number; name: string }
 export default function Portfolio() {
   const confirm = useConfirm()
   const { portfolioId, setPortfolioId, setPortfolioName } = useAuth()
+  const { t } = useT()
   const [portfolios, setPortfolios] = useState<Portfolio[]>([])
   const [newName, setNewName] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -56,18 +58,23 @@ export default function Portfolio() {
   }
 
   async function handleDelete(id: number) {
-    if (!(await confirm('确认删除该组合？'))) return
+    if (!(await confirm(t.portfolio.confirmDelete))) return
     await fetch(`/investory/api/portfolios/${id}`, { method: 'DELETE', credentials: 'include' })
     load()
   }
 
   if (loading) {
-    return <div className="flex flex-col items-center justify-center gap-3 h-96"><div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-sm text-slate-400">正在加载组合...</span></div>
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 h-96">
+        <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+        <span className="text-sm text-slate-400">{t.portfolio.loading}</span>
+      </div>
+    )
   }
 
   return (
     <div className="p-6 max-w-lg mx-auto space-y-6">
-      <h2 className="text-xl font-bold text-slate-900 tracking-tight">我的投资组合</h2>
+      <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.portfolio.title}</h2>
 
       <Card>
         <CardContent className="pt-6">
@@ -90,7 +97,7 @@ export default function Portfolio() {
                 )}
                 <div className="flex items-center gap-2">
                   {p.id === portfolioId && (
-                    <span className="text-xs bg-emerald-500 text-white px-2 py-0.5 rounded-lg">当前</span>
+                    <span className="text-xs bg-emerald-500 text-white px-2 py-0.5 rounded-lg">{t.portfolio.current}</span>
                   )}
                   <button onClick={(e) => { e.stopPropagation(); setEditingId(p.id); setEditName(p.name) }}
                     className={`p-1.5 rounded-lg transition-colors ${p.id === portfolioId ? 'hover:bg-slate-700' : 'hover:bg-slate-100'}`}>
@@ -104,7 +111,7 @@ export default function Portfolio() {
               </div>
             ))}
             {portfolios.length === 0 && (
-              <p className="text-center text-slate-400 text-sm py-4">暂无组合</p>
+              <p className="text-center text-slate-400 text-sm py-4">{t.portfolio.noPortfolio}</p>
             )}
           </div>
         </CardContent>
@@ -114,11 +121,11 @@ export default function Portfolio() {
         <CardContent className="pt-6">
           <div className="flex gap-3">
             <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)}
-              placeholder="新组合名称"
+              placeholder={t.portfolio.newPortfolioPlaceholder}
               className="flex-1 h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
             <button onClick={handleCreate} disabled={!newName.trim()}
               className="inline-flex items-center gap-1.5 h-10 px-4 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors disabled:opacity-50">
-              <Plus className="w-4 h-4" /> 创建
+              <Plus className="w-4 h-4" /> {t.portfolio.create}
             </button>
           </div>
         </CardContent>

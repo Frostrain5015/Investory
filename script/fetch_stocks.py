@@ -115,8 +115,11 @@ def upsert_prices(conn, rows: list) -> int:
     rows 格式: [(stock_id, trade_date_str, open, close, high, low, volume), ...]
     返回影响行数（INSERT=1, UPDATE=2, MySQL ODKU 约定）。
     """
+    import math
     if not rows:
         return 0
+    # Replace NaN with None — Yahoo Finance occasionally returns nan for delisted/suspended stocks
+    clean = [tuple(None if isinstance(v, float) and math.isnan(v) else v for v in r) for r in rows]
     cur = conn.cursor()
     cur.executemany(
         """INSERT INTO stock_prices (stock_id, trade_date, open, close, high, low, volume)
@@ -124,7 +127,7 @@ def upsert_prices(conn, rows: list) -> int:
            ON DUPLICATE KEY UPDATE
              open=VALUES(open), close=VALUES(close), high=VALUES(high),
              low=VALUES(low), volume=VALUES(volume)""",
-        rows,
+        clean,
     )
     conn.commit()
     n = cur.rowcount

@@ -8,6 +8,13 @@ body {
   margin: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-wrap: break-word;
+}
+
+/* Prevent text from collapsing into single-char-per-line on narrow mobile containers */
+h1, h2, h3, h4, h5, h6, p, span, a, th, td, label, button, li,
+[class*="text-"] {
+  overflow-wrap: break-word;
 }
 
 /* ════════════════════════════════════════════════════════════

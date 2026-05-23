@@ -2,13 +2,16 @@ import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
+import { useT } from '@/i18n/I18nContext'
 import { chartAPI } from '@/services/api'
 import type { PnlCalendarItem } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 
-const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
-const MONTHS = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月']
+const WEEKDAYS_ZH = ['日', '一', '二', '三', '四', '五', '六'] as const
+const WEEKDAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
+const MONTHS_ZH = ['1月','2月','3月','4月','5月','6月','7月','8月','9月','10月','11月','12月'] as const
+const MONTHS_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'] as const
 
 type ViewMode = 'yearly' | 'monthly'
 type PnlDisplay = 'amount' | 'pct'
@@ -20,18 +23,33 @@ type Selected =
   | { kind: 'day'; date: string }
   | { kind: 'month'; year: number; month: number }
 
-const TYPE_LABELS: Record<string, string> = { BUY: '买入', SELL: '卖出', DIV: '分红', TRANSFER_IN: '转入', TRANSFER_OUT: '转出' }
-
 export default function PnlCalendar() {
   const { portfolioId } = useAuth()
   const { convertCurrency, positiveClass, negativeClass } = useSettings()
+  const { t, lang } = useT()
 
-  function fmt(v: number): string {
+  const WEEKDAYS = lang === 'zh' ? WEEKDAYS_ZH : WEEKDAYS_EN
+  const MONTHS = lang === 'zh' ? MONTHS_ZH : MONTHS_EN
+  const TYPE_LABELS: Record<string, string> = {
+    BUY: t.pnl.buy,
+    SELL: t.pnl.sell,
+    DIV: t.pnl.dividend,
+    TRANSFER_IN: t.pnl.transferIn,
+    TRANSFER_OUT: t.pnl.transferOut,
+  }
+
+  function fmtNum(v: number): string {
     const cv = convertCurrency(v)
-    const s = Math.abs(cv).toLocaleString('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
+    const locale = lang === 'zh' ? 'zh-CN' : 'en-US'
+    const s = Math.abs(cv).toLocaleString(locale, { minimumFractionDigits: 0, maximumFractionDigits: 2 })
     return s.includes('.') ? s.replace(/\.?0+$/, '') : s
   }
   function sign(v: number) { return v >= 0 ? '+' : '-' }
+
+  /** replace {key} placeholders in a format string */
+  function fmt(str: string, vars: Record<string, string | number>) {
+    return str.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? k))
+  }
 
   const [viewMode, setViewMode] = useState<ViewMode>('yearly')
   const [pnlDisplay, setPnlDisplay] = useState<PnlDisplay>('amount')
@@ -64,8 +82,8 @@ export default function PnlCalendar() {
       .then(r => r.json())
       .then((d: Record<string, unknown>) => {
         const title = selected.kind === 'day'
-          ? `${selected.date} 盈亏详情`
-          : `${selected.year}年${selected.month}月 月度盈亏`
+          ? fmt(t.pnl.dayDetailTitle, { date: selected.date })
+          : fmt(t.pnl.monthDetailTitle, { year: selected.year, month: selected.month })
         setDetail({
           title,
           totalPnl: Number(d.totalPnl ?? 0),
@@ -75,7 +93,7 @@ export default function PnlCalendar() {
       })
       .catch(() => setDetail(null))
       .finally(() => setDetailLoading(false))
-  }, [selected])
+  }, [selected, t.pnl.dayDetailTitle, t.pnl.monthDetailTitle])
 
   const dateMap = useMemo(() => {
     const map = new Map<string, { pnl: number; total: number }>()
@@ -144,36 +162,42 @@ export default function PnlCalendar() {
   if (loading) return (
     <div className="flex flex-col items-center justify-center gap-3 h-96">
       <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-      <span className="text-sm text-slate-400">正在加载日历...</span>
+      <span className="text-sm text-slate-400">{t.pnl.loadingCalendar}</span>
     </div>
   )
+
+  const displayLabel = pnlDisplay === 'amount' ? t.pnl.pnlValue : t.pnl.pctChange
 
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">日历</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.pnl.title}</h2>
           {periodTotalPnl.amt !== 0 && (
             <span className={`text-sm font-bold ${periodTotalPnl.amt >= 0 ? 'text-red-700' : 'text-emerald-700'}`}>
-              {sign(periodTotalPnl.amt)}{fmt(periodTotalPnl.amt)}
+              {sign(periodTotalPnl.amt)}{fmtNum(periodTotalPnl.amt)}
               {periodTotalPnl.pct !== 0 && <span className="ml-1.5">{sign(periodTotalPnl.pct)}{Math.abs(periodTotalPnl.pct).toFixed(1)}%</span>}
             </span>
           )}
         </div>
         <div className="flex items-center gap-3">
           <div className="flex bg-slate-100 rounded-lg p-0.5">
-            <button onClick={() => setPnlDisplay('amount')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${pnlDisplay === 'amount' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>金额</button>
-            <button onClick={() => setPnlDisplay('pct')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${pnlDisplay === 'pct' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>涨跌幅</button>
+            <button onClick={() => setPnlDisplay('amount')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${pnlDisplay === 'amount' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.amount}</button>
+            <button onClick={() => setPnlDisplay('pct')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${pnlDisplay === 'pct' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.pctChange}</button>
           </div>
           <div className="flex bg-slate-100 rounded-lg p-0.5">
-            <button onClick={() => setViewMode('yearly')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${viewMode === 'yearly' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>按年</button>
-            <button onClick={() => setViewMode('monthly')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${viewMode === 'monthly' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>按月</button>
+            <button onClick={() => setViewMode('yearly')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${viewMode === 'yearly' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.yearly}</button>
+            <button onClick={() => setViewMode('monthly')} className={`px-3 py-1.5 rounded-md text-xs font-medium ${viewMode === 'monthly' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{t.pnl.monthly}</button>
           </div>
           <div className="flex items-center gap-2">
             <button onClick={() => viewMode === 'yearly' ? setYear(y => y - 1) : setMonth(m => { if (m === 0) { setYear(y => y - 1); return 11 } return m - 1 })}
               className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-slate-100"><ChevronLeft className="w-4 h-4" /></button>
-            <span className="text-sm font-medium w-28 text-center">{viewMode === 'yearly' ? `${year}年` : `${year}年 ${month + 1}月`}</span>
+            <span className="text-sm font-medium w-28 text-center">
+              {viewMode === 'yearly'
+                ? fmt(t.pnl.yearFormat, { year })
+                : fmt(t.pnl.monthFormat, { year, month: month + 1 })}
+            </span>
             <button onClick={() => viewMode === 'yearly' ? setYear(y => y + 1) : setMonth(m => { if (m === 11) { setYear(y => y + 1); return 0 } return m + 1 })}
               className="h-8 w-8 flex items-center justify-center rounded-lg hover:bg-slate-100"><ChevronRight className="w-4 h-4" /></button>
           </div>
@@ -183,7 +207,7 @@ export default function PnlCalendar() {
       {/* Yearly grid */}
       {viewMode === 'yearly' ? (
         <Card>
-          <CardHeader><CardTitle className="text-base">{year}年 月度{pnlDisplay === 'amount' ? '盈亏' : '涨跌幅'}</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-base">{fmt(t.pnl.monthlyTitle, { year, display: displayLabel })}</CardTitle></CardHeader>
           <CardContent>
             <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-6 gap-3">
               {monthlyTotals.map((m, i) => {
@@ -198,7 +222,7 @@ export default function PnlCalendar() {
                     <span className="text-xs text-slate-400">{MONTHS[i]}</span>
                     {!noData && (
                       <span className={`text-lg font-bold mt-1 ${s.text}`}>
-                        {pnlDisplay === 'amount' ? `${sign(val)}${fmt(val)}` : `${sign(val)}${Math.abs(val).toFixed(1)}%`}
+                        {pnlDisplay === 'amount' ? `${sign(val)}${fmtNum(val)}` : `${sign(val)}${Math.abs(val).toFixed(1)}%`}
                       </span>
                     )}
                   </div>
@@ -228,7 +252,7 @@ export default function PnlCalendar() {
                     {val !== 0 && (
                       <span className={`text-sm font-semibold mt-0.5 ${s.text}`}>
                         {pnlDisplay === 'amount'
-                          ? `${sign(val)}${fmt(val)}`
+                          ? `${sign(val)}${fmtNum(val)}`
                           : `${val > 0 ? '+' : ''}${Math.abs(val) < 10 ? val.toFixed(1) : Math.round(val)}%`}
                       </span>
                     )}
@@ -260,7 +284,7 @@ export default function PnlCalendar() {
                   <h3 className="text-base font-bold text-slate-900">{detail?.title ?? '...'}</h3>
                   {detail && (
                     <p className={`text-sm font-semibold mt-0.5 ${detail.totalPnl >= 0 ? positiveClass : negativeClass}`}>
-                      {sign(detail.totalPnl)}{fmt(detail.totalPnl)}
+                      {sign(detail.totalPnl)}{fmtNum(detail.totalPnl)}
                     </p>
                   )}
                 </div>
@@ -273,13 +297,13 @@ export default function PnlCalendar() {
                 {detailLoading ? (
                   <div className="flex flex-col items-center justify-center gap-2 h-24">
                     <div className="w-6 h-6 border-2 border-slate-300 border-t-slate-700 rounded-full animate-spin" />
-                    <span className="text-xs text-slate-400">正在加载交易日详情...</span>
+                    <span className="text-xs text-slate-400">{t.pnl.loadingDetail}</span>
                   </div>
                 ) : detail ? (
                   <div className="space-y-4">
                     {detail.holdings.length > 0 && (
                       <div>
-                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">持仓贡献</p>
+                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">{t.pnl.holdingContribution}</p>
                         <div className="space-y-1.5">
                           {[...detail.holdings].sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl)).map((h, i) => (
                             <div key={i} className="flex items-center justify-between py-1.5 px-3 rounded-xl bg-slate-50">
@@ -289,7 +313,7 @@ export default function PnlCalendar() {
                                   {sign(Number(h.priceChange))}{Math.abs(Number(h.priceChange)).toFixed(2)}%
                                 </span>
                                 <span className={`tabular-nums font-semibold min-w-[56px] text-right ${Number(h.pnl) >= 0 ? positiveClass : negativeClass}`}>
-                                  {sign(Number(h.pnl))}{fmt(Number(h.pnl))}
+                                  {sign(Number(h.pnl))}{fmtNum(Number(h.pnl))}
                                 </span>
                               </div>
                             </div>
@@ -299,16 +323,16 @@ export default function PnlCalendar() {
                     )}
                     {detail.transactions.length > 0 && (
                       <div>
-                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">交易记录</p>
+                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">{t.pnl.transactions}</p>
                         <div className="space-y-1.5">
-                          {detail.transactions.map((t, i) => (
+                          {detail.transactions.map((tran, i) => (
                             <div key={i} className="flex items-center gap-3 py-1.5 px-3 rounded-xl bg-slate-50 text-sm">
-                              <span className={`font-medium shrink-0 ${t.type === 'BUY' ? 'text-red-600' : t.type === 'SELL' ? 'text-emerald-600' : 'text-slate-600'}`}>
-                                {TYPE_LABELS[t.type] ?? t.type}
+                              <span className={`font-medium shrink-0 ${tran.type === 'BUY' ? 'text-red-600' : tran.type === 'SELL' ? 'text-emerald-600' : 'text-slate-600'}`}>
+                                {TYPE_LABELS[tran.type] ?? tran.type}
                               </span>
-                              <span className="text-slate-700 truncate">{t.stockName || '—'}</span>
-                              {t.shares != null && t.price != null && (
-                                <span className="text-slate-400 ml-auto tabular-nums shrink-0">{t.shares} × {t.price}</span>
+                              <span className="text-slate-700 truncate">{tran.stockName || '—'}</span>
+                              {tran.shares != null && tran.price != null && (
+                                <span className="text-slate-400 ml-auto tabular-nums shrink-0">{tran.shares} x {tran.price}</span>
                               )}
                             </div>
                           ))}
@@ -316,11 +340,11 @@ export default function PnlCalendar() {
                       </div>
                     )}
                     {detail.holdings.length === 0 && detail.transactions.length === 0 && (
-                      <p className="text-sm text-slate-400 text-center py-8">暂无详细数据</p>
+                      <p className="text-sm text-slate-400 text-center py-8">{t.pnl.noDetailData}</p>
                     )}
                   </div>
                 ) : (
-                  <p className="text-sm text-slate-400 text-center py-8">加载失败</p>
+                  <p className="text-sm text-slate-400 text-center py-8">{t.pnl.loadError}</p>
                 )}
               </div>
             </motion.div>

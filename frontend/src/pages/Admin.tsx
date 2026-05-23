@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
+import { useT } from '@/i18n/I18nContext'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Database, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock, Square, Pause, PlayCircle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -13,7 +14,6 @@ interface SseEvent { event: string; msg?: string; current?: number; total?: numb
 interface UserRow { id: number; username: string; email: string | null; created_at: string; txn_count: number; portfolio_count: number }
 interface CrawlHistoryRow { market: string; started_at: string; ended_at: string; rows_written: number; stocks_failed: number; status: string }
 
-const MARKET_LABELS: Record<string, string> = { A: 'A股', HK: '港股', US: '美股', IDX: '全球指数' }
 const MARKET_FLAGS: Record<string, string> = { A: 'cn', HK: 'hk', US: 'us', IDX: 'un' }
 
 function todayStr() { return new Date().toISOString().slice(0, 10) }
@@ -76,6 +76,7 @@ export default function Admin() {
   const { isAdmin } = useAuth()
   const toast = useToast()
   const confirm = useConfirm()
+  const { t, lang } = useT()
   const [status, setStatus] = useState<DbStatus | null>(null)
   const [loadingStatus, setLoadingStatus] = useState(true)
   const cs = useCrawlStore()
@@ -85,6 +86,14 @@ export default function Admin() {
   const [crawlHistory, setCrawlHistory] = useState<CrawlHistoryRow[]>([])
   const [verbose, setVerbose] = useState(false)
   const logEndRef = useRef<HTMLDivElement>(null)
+
+  // Market label lookup from i18n keys
+  const marketLabels: Record<string, string> = {
+    A: t.admin.aShares,
+    HK: t.admin.hkStocks,
+    US: t.admin.usStocks,
+    IDX: t.admin.indices,
+  }
 
   const fetchStatus = useCallback(() => {
     setLoadingStatus(true)
@@ -133,7 +142,7 @@ export default function Admin() {
         const heartbeat = setInterval(() => {
           if (gPaused) return
           if (Date.now() - gLastBump > 15000) {
-            cs.setLogs(prev => [...prev, '✗ 连接超时'])
+            cs.setLogs(prev => [...prev, `✗ ${t.admin.connTimeout}`])
             const es = gEsRef
             if (es) { es.close(); gEsRef = null }
             if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
@@ -148,7 +157,7 @@ export default function Admin() {
         eventSource.addEventListener('status', (e) => {
           gLastBump = Date.now()
           const d: SseEvent = JSON.parse(e.data)
-          cs.setLogs(prev => [...prev, `[状态] ${d.msg}`])
+          cs.setLogs(prev => [...prev, `${t.admin.statusLabel} ${d.msg}`])
         })
         eventSource.addEventListener('progress', (e) => {
           gLastBump = Date.now()
@@ -158,7 +167,7 @@ export default function Admin() {
         eventSource.addEventListener('info', (e) => {
           gLastBump = Date.now()
           const d: SseEvent = JSON.parse(e.data)
-          cs.setLogs(prev => [...prev, `[信息] ${d.msg}`])
+          cs.setLogs(prev => [...prev, `${t.admin.infoLabel} ${d.msg}`])
         })
         eventSource.addEventListener('log', (e) => {
           gLastBump = Date.now()
@@ -224,7 +233,7 @@ export default function Admin() {
     const heartbeat = setInterval(() => {
       if (gPaused) return
       if (Date.now() - gLastBump > 15000) {
-        cs.setLogs(prev => [...prev, '✗ 连接超时'])
+        cs.setLogs(prev => [...prev, `✗ ${t.admin.connTimeout}`])
         const es = gEsRef
         if (es) { es.close(); gEsRef = null }
         if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
@@ -239,7 +248,7 @@ export default function Admin() {
     eventSource.addEventListener('status', (e) => {
       gLastBump = Date.now()
       const d: SseEvent = JSON.parse(e.data)
-      cs.setLogs(prev => [...prev, `[状态] ${d.msg}`])
+      cs.setLogs(prev => [...prev, `${t.admin.statusLabel} ${d.msg}`])
     })
     eventSource.addEventListener('progress', (e) => {
       gLastBump = Date.now()
@@ -249,7 +258,7 @@ export default function Admin() {
     eventSource.addEventListener('info', (e) => {
       gLastBump = Date.now()
       const d: SseEvent = JSON.parse(e.data)
-      cs.setLogs(prev => [...prev, `[信息] ${d.msg}`])
+      cs.setLogs(prev => [...prev, `${t.admin.infoLabel} ${d.msg}`])
     })
     eventSource.addEventListener('log', (e) => {
       gLastBump = Date.now()
@@ -305,32 +314,38 @@ export default function Admin() {
     const data = await res.json()
     if (!data.error) {
       cs.setPaused(nowPaused)
-      cs.setLogs(prev => [...prev, nowPaused ? '⏸ 已暂停' : '▶ 已继续'])
+      cs.setLogs(prev => [...prev, nowPaused ? t.admin.pauseDone : t.admin.resumeDone])
     }
   }
 
   async function impersonate(userId: number) {
-    if (!(await confirm('确认以该用户身份登录？'))) return
+    if (!(await confirm(t.admin.confirmImpersonate))) return
     await fetch(`/investory/api/admin/impersonate/${userId}`, { method: 'POST', credentials: 'include' })
     window.location.href = '/investory/dashboard'
   }
 
   async function deleteUser(userId: number, username: string) {
-    if (!(await confirm(`确认注销用户 "${username}"？此操作不可撤销。`))) return
+    if (!(await confirm(`${t.admin.confirmDeleteUserPrefix} "${username}"？${t.admin.irreversible}`))) return
     const res = await fetch(`/investory/api/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
     const data = await res.json()
     if (data.error) { toast(data.error, false); return }
     fetchUsers()
   }
 
+  const crawlStatusLabel = (s: string) => {
+    if (s === 'ok') return t.admin.crawlOk
+    if (s === 'running') return t.admin.crawlRunning
+    return t.admin.crawlFailed
+  }
+
   if (!isAdmin) {
-    return <div className="flex items-center justify-center h-screen bg-slate-50 text-slate-500">无权限</div>
+    return <div className="flex items-center justify-center h-screen bg-slate-50 text-slate-500">{t.admin.noPermission}</div>
   }
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">管理后台</h2>
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.admin.title}</h2>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 text-xs">
             <input type="date" value={dateStart}
@@ -344,18 +359,18 @@ export default function Admin() {
           <button onClick={() => startCrawl('all')}
             disabled={cs.crawling !== null}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
-            <Globe className="w-3.5 h-3.5" />全市场抓取
+            <Globe className="w-3.5 h-3.5" />{t.admin.allMarketCrawl}
           </button>
           <button onClick={() => { fetchStatus(); fetchUsers(); fetchCrawlHistory() }} disabled={loadingStatus}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-100 text-slate-600 text-xs font-medium hover:bg-slate-200 transition-colors">
-            <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />刷新
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />{t.common.refresh}
           </button>
         </div>
       </div>
 
       {/* Market status cards */}
       {loadingStatus ? (
-        <div className="flex flex-col items-center justify-center gap-3 h-48"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-sm text-slate-400">正在加载Investory数据库...</span></div>
+        <div className="flex flex-col items-center justify-center gap-3 h-48"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-sm text-slate-400">{t.admin.loadingDb}</span></div>
       ) : status ? (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -365,24 +380,24 @@ export default function Admin() {
                   <CardTitle className="text-sm flex items-center justify-between">
                     <span className="flex items-center gap-1.5">
                       <img src={`https://flagcdn.com/${MARKET_FLAGS[m.market] ?? m.market}.svg`} alt="" className="w-4 h-3 rounded-sm" />
-                      {MARKET_LABELS[m.market] ?? m.market}
+                      {marketLabels[m.market] ?? m.market}
                     </span>
                     <button onClick={() => startCrawl(marketToScript(m.market))}
                       disabled={cs.crawling !== null}
                       className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-slate-900 text-white text-[10px] font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
-                      <Play className="w-3 h-3" />抓取
+                      <Play className="w-3 h-3" />{t.admin.crawl}
                     </button>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-sm">
-                    <span className="text-slate-400">股票数</span>
+                    <span className="text-slate-400">{t.admin.stockCount}</span>
                     <span className="text-right font-medium tabular-nums">{m.stock_count.toLocaleString()}</span>
-                    <span className="text-slate-400">K线行数</span>
+                    <span className="text-slate-400">{t.admin.klineRows}</span>
                     <span className="text-right font-medium tabular-nums">{Number(m.price_rows).toLocaleString()}</span>
-                    <span className="text-slate-400">最早</span>
+                    <span className="text-slate-400">{t.admin.earliest}</span>
                     <span className="text-right font-medium tabular-nums text-xs">{m.earliest_date}</span>
-                    <span className="text-slate-400">最新</span>
+                    <span className="text-slate-400">{t.admin.latest}</span>
                     <span className="text-right font-medium tabular-nums text-xs">{m.latest_date}</span>
                   </div>
                 </CardContent>
@@ -392,28 +407,28 @@ export default function Admin() {
 
           <div className="flex items-center gap-1 text-sm text-slate-500">
             <Database className="w-3.5 h-3.5 mr-1" />
-            <span>Investory数据库</span>
+            <span>{t.admin.dbTitle}</span>
             <span className="text-slate-300">|</span>
-            <span>共<strong className="text-slate-700">{status.totals.stock_count.toLocaleString()}</strong>只标的</span>
+            <span>{t.admin.totalPrefix}<strong className="text-slate-700">{status.totals.stock_count.toLocaleString()}</strong>{t.admin.stockUnit}</span>
             <span className="text-slate-300">|</span>
-            <span><strong className="text-slate-700">{Number(status.totals.price_rows).toLocaleString()}</strong>行K线数据</span>
+            <span><strong className="text-slate-700">{Number(status.totals.price_rows).toLocaleString()}</strong>{t.admin.klineRowsUnit}</span>
             <span className="text-slate-300">|</span>
-            <span><strong className="text-slate-700">{status.tables.reduce((s, t) => s + (t.total_mb || 0), 0).toFixed(0)}</strong>MB占用空间</span>
+            <span><strong className="text-slate-700">{status.tables.reduce((s, t) => s + (t.total_mb || 0), 0).toFixed(0)}</strong>{t.admin.dbSizeUnit}</span>
           </div>
 
           {crawlHistory.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle className="text-sm flex items-center justify-between">
-                  <span className="flex items-center gap-2"><Clock className="w-3.5 h-3.5" />最近定时抓取</span>
+                  <span className="flex items-center gap-2"><Clock className="w-3.5 h-3.5" />{t.admin.recentCrawls}</span>
                   <button
                     onClick={async () => {
-                      if (!(await confirm('确认清空所有定时抓取记录？'))) return
+                      if (!(await confirm(t.admin.confirmClearHistory))) return
                       await fetch('/investory/api/admin/crawl-history', { method: 'DELETE', credentials: 'include' })
                       fetchCrawlHistory()
                     }}
                     className="h-6 px-2 rounded-md bg-red-50 text-red-500 hover:bg-red-100 text-[10px] font-medium transition-colors">
-                    清空记录
+                    {t.admin.clearHistory}
                   </button>
                 </CardTitle>
               </CardHeader>
@@ -421,11 +436,11 @@ export default function Admin() {
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-slate-100">
-                      <th className="text-left font-medium text-slate-500 px-4 py-2">市场</th>
-                      <th className="text-left font-medium text-slate-500 px-3 py-2">开始时间</th>
-                      <th className="text-right font-medium text-slate-500 px-3 py-2">写入行</th>
-                      <th className="text-right font-medium text-slate-500 px-3 py-2">失败</th>
-                      <th className="text-center font-medium text-slate-500 px-4 py-2">状态</th>
+                      <th className="text-left font-medium text-slate-500 px-4 py-2">{t.admin.market_}</th>
+                      <th className="text-left font-medium text-slate-500 px-3 py-2">{t.admin.startTime}</th>
+                      <th className="text-right font-medium text-slate-500 px-3 py-2">{t.admin.rowsWritten}</th>
+                      <th className="text-right font-medium text-slate-500 px-3 py-2">{t.admin.failed}</th>
+                      <th className="text-center font-medium text-slate-500 px-4 py-2">{t.admin.status}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -433,15 +448,15 @@ export default function Admin() {
                       const started = h.started_at ? new Date(h.started_at) : null
                       return (
                         <tr key={h.market} className="border-b border-slate-50">
-                          <td className="px-4 py-2 font-medium text-slate-700">{MARKET_LABELS[h.market] ?? h.market}</td>
+                          <td className="px-4 py-2 font-medium text-slate-700">{marketLabels[h.market] ?? h.market}</td>
                           <td className="px-3 py-2 text-slate-400">
-                            {started ? started.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
+                            {started ? started.toLocaleString(lang === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-'}
                           </td>
                           <td className="px-3 py-2 text-right tabular-nums">{Number(h.rows_written).toLocaleString()}</td>
                           <td className="px-3 py-2 text-right tabular-nums">{h.stocks_failed}</td>
                           <td className="px-4 py-2 text-center">
                             <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${h.status === 'ok' ? 'bg-emerald-50 text-emerald-600' : h.status === 'running' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
-                              {h.status === 'ok' ? '成功' : h.status === 'running' ? '运行中' : '失败'}
+                              {crawlStatusLabel(h.status)}
                             </span>
                           </td>
                         </tr>
@@ -454,7 +469,7 @@ export default function Admin() {
           )}
         </>
       ) : (
-        <div className="text-center py-12 text-slate-400 text-sm">加载失败</div>
+        <div className="text-center py-12 text-slate-400 text-sm">{t.admin.loadFailed}</div>
       )}
 
       {/* Crawl progress & log */}
@@ -470,10 +485,10 @@ export default function Admin() {
               <CardHeader>
                 <CardTitle className="text-sm flex items-center gap-2">
                   <Terminal className="w-3.5 h-3.5" />
-                  {cs.paused ? '已暂停' : '正在抓取'} {cs.crawling === 'all' ? '全市场' : cs.crawling!.toUpperCase()}
+                  {cs.paused ? t.admin.paused : t.admin.crawling} {cs.crawling === 'all' ? t.admin.allMarkets : cs.crawling!.toUpperCase()}
                   <button onClick={() => setVerbose(!verbose)}
                     className={`h-6 px-2 rounded-md text-[10px] font-medium ml-2 transition-colors ${verbose ? 'bg-slate-200 text-slate-600' : 'bg-slate-100 text-slate-500'}`}>
-                    {verbose ? '简略' : '详细'}
+                    {verbose ? t.admin.brief : t.admin.verbose}
                   </button>
                   <div className="ml-auto flex items-center gap-1.5">
                     {cs.progress && (
@@ -483,11 +498,11 @@ export default function Admin() {
                     )}
                     <button onClick={togglePause}
                       className={`inline-flex items-center gap-1 h-6 px-2 rounded-md text-[10px] font-medium transition-colors ${cs.paused ? 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200' : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
-                      {cs.paused ? <><PlayCircle className="w-3 h-3" />继续</> : <><Pause className="w-3 h-3" />暂停</>}
+                      {cs.paused ? <><PlayCircle className="w-3 h-3" />{t.admin.resume}</> : <><Pause className="w-3 h-3" />{t.admin.pause}</>}
                     </button>
                     <button onClick={stopCrawl}
                       className="inline-flex items-center gap-1 h-6 px-2 rounded-md bg-red-100 text-red-600 hover:bg-red-200 text-[10px] font-medium transition-colors">
-                      <Square className="w-3 h-3" />停止
+                      <Square className="w-3 h-3" />{t.admin.stop}
                     </button>
                   </div>
                 </CardTitle>
@@ -506,7 +521,7 @@ export default function Admin() {
                 ) : (
                   <div className="flex items-center gap-2 text-sm text-slate-400 py-2 mb-3">
                     <div className="w-4 h-4 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-                    正在启动...
+                    {t.admin.starting}
                   </div>
                 )}
                 <AnimatePresence>
@@ -519,11 +534,11 @@ export default function Admin() {
                       transition={{ duration: 0.2 }}
                       className="bg-slate-900 rounded-xl p-4 max-h-80 overflow-auto font-mono text-xs">
                       {cs.logs.map((line, i) => (
-                        <div key={i} className={`py-0.5 ${line.startsWith('✓') ? 'text-emerald-400' : line.startsWith('✗') ? 'text-red-400' : line.startsWith('[状态]') ? 'text-sky-400' : line.startsWith('[信息]') ? 'text-slate-400' : 'text-slate-300'}`}>
+                        <div key={i} className={`py-0.5 ${line.startsWith('✓') ? 'text-emerald-400' : line.startsWith('✗') ? 'text-red-400' : line.startsWith(t.admin.statusLabel) ? 'text-sky-400' : line.startsWith(t.admin.infoLabel) ? 'text-slate-400' : 'text-slate-300'}`}>
                           {line}
                         </div>
                       ))}
-                      {cs.logs.length === 0 && <div className="text-slate-500">等待输出...</div>}
+                      {cs.logs.length === 0 && <div className="text-slate-500">{t.admin.waitingOutput}</div>}
                       <div ref={logEndRef} />
                     </motion.div>
                   )}
@@ -549,16 +564,16 @@ export default function Admin() {
 
       {/* User list */}
       <Card>
-        <CardHeader><CardTitle className="text-sm">用户管理</CardTitle></CardHeader>
+        <CardHeader><CardTitle className="text-sm">{t.admin.userManagement}</CardTitle></CardHeader>
         <CardContent className="p-0">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-slate-100">
-                <th className="text-left font-medium text-slate-500 px-4 py-2">ID</th>
-                <th className="text-left font-medium text-slate-500 px-3 py-2">用户名</th>
-                <th className="text-left font-medium text-slate-500 px-3 py-2 hidden sm:table-cell">注册时间</th>
-                <th className="text-right font-medium text-slate-500 px-3 py-2 hidden sm:table-cell">交易数</th>
-                <th className="text-right font-medium text-slate-500 px-4 py-2">操作</th>
+                <th className="text-left font-medium text-slate-500 px-4 py-2">{t.admin.userId}</th>
+                <th className="text-left font-medium text-slate-500 px-3 py-2">{t.admin.username}</th>
+                <th className="text-left font-medium text-slate-500 px-3 py-2 hidden sm:table-cell">{t.admin.registerTime}</th>
+                <th className="text-right font-medium text-slate-500 px-3 py-2 hidden sm:table-cell">{t.admin.txnCount}</th>
+                <th className="text-right font-medium text-slate-500 px-4 py-2">{t.admin.actions}</th>
               </tr>
             </thead>
             <tbody>
@@ -572,18 +587,18 @@ export default function Admin() {
                     <div className="flex items-center gap-1.5 justify-end">
                       <button onClick={() => impersonate(u.id)}
                         className="inline-flex items-center gap-1 h-6 px-2 rounded-md bg-slate-100 text-slate-600 hover:bg-slate-200 text-[10px] transition-colors">
-                        <LogIn className="w-3 h-3" />登录为
+                        <LogIn className="w-3 h-3" />{t.admin.loginAs}
                       </button>
                       <button onClick={() => deleteUser(u.id, u.username)}
                         className="inline-flex items-center gap-1 h-6 px-2 rounded-md bg-red-50 text-red-500 hover:bg-red-100 text-[10px] transition-colors">
-                        <UserX className="w-3 h-3" />注销
+                        <UserX className="w-3 h-3" />{t.admin.deregister}
                       </button>
                     </div>
                   </td>
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan={5} className="text-center py-8 text-slate-400">加载中...</td></tr>
+                <tr><td colSpan={5} className="text-center py-8 text-slate-400">{t.common.loading}</td></tr>
               )}
             </tbody>
           </table>

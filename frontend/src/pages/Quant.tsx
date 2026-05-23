@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings } from '@/services/api'
 import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
@@ -9,25 +9,30 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { displaySymbol } from '@/lib/format'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
 import type { BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent } from '@/types'
+import { useT } from '@/i18n/I18nContext'
+import type { Translation } from '@/i18n/translations'
 
-const TECHNICAL_INDICATORS = [
-  { name: 'sma', label: 'SMA', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> SMA' }, { value: 'below', label: '< SMA' }] },
-  { name: 'ema', label: 'EMA', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> EMA' }, { value: 'below', label: '< EMA' }] },
-  { name: 'rsi', label: 'RSI', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 14 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
-  { name: 'macd_histogram', label: 'MACD柱', params: [{ name: 'fast', label: '快线', type: 'number' as const, default: 12 }, { name: 'slow', label: '慢线', type: 'number' as const, default: 26 }], conditions: [{ value: 'above', label: '> 0' }, { value: 'below', label: '< 0' }] },
-  { name: 'bollinger_lower', label: '布林下轨', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: '< 下轨' }] },
-  { name: 'volume_ma', label: '成交量MA', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '放量' }] },
-  { name: 'kdj_k', label: 'KDJ-K', params: [{ name: 'period', label: '周期', type: 'number' as const, default: 9 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
-]
+function buildEntryIndicators(t: Translation) {
+  const q = t.quant
+  return [
+    { name: 'sma', label: q.indicatorSma, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> SMA' }, { value: 'below', label: '< SMA' }] },
+    { name: 'ema', label: q.indicatorEma, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> EMA' }, { value: 'below', label: '< EMA' }] },
+    { name: 'rsi', label: q.indicatorRsi, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 14 }], conditions: [{ value: 'oversold', label: q.indCondOversold }, { value: 'overbought', label: q.indCondOverbought }] },
+    { name: 'macd_histogram', label: q.indicatorMacdHist, params: [{ name: 'fast', label: q.indParamFast, type: 'number' as const, default: 12 }, { name: 'slow', label: q.indParamSlow, type: 'number' as const, default: 26 }], conditions: [{ value: 'above', label: '> 0' }, { value: 'below', label: '< 0' }] },
+    { name: 'bollinger_lower', label: q.indicatorBollLower, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: q.indCondBelowLower }] },
+    { name: 'volume_ma', label: q.indicatorVolMa, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: q.indCondSurge }] },
+    { name: 'kdj_k', label: q.indicatorKdjK, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 9 }], conditions: [{ value: 'oversold', label: q.indCondOversold }, { value: 'overbought', label: q.indCondOverbought }] },
+  ]
+}
 
-const EXIT_ONLY_INDICATORS = [
-  { name: 'stop_loss', label: '止损', params: [{ name: 'pct', label: '跌幅%', type: 'number' as const, default: 8 }], conditions: [{ value: 'triggered', label: '触发止损' }] },
-  { name: 'take_profit', label: '止盈', params: [{ name: 'pct', label: '涨幅%', type: 'number' as const, default: 20 }], conditions: [{ value: 'triggered', label: '触发止盈' }] },
-  { name: 'trailing_stop', label: '移动止损', params: [{ name: 'pct', label: '回落%', type: 'number' as const, default: 5 }], conditions: [{ value: 'triggered', label: '触发移动止损' }] },
-]
-
-const ENTRY_INDICATORS = TECHNICAL_INDICATORS
-const EXIT_INDICATORS = [...TECHNICAL_INDICATORS, ...EXIT_ONLY_INDICATORS]
+function buildExitOnlyIndicators(t: Translation) {
+  const q = t.quant
+  return [
+    { name: 'stop_loss', label: q.indicatorStopLoss, params: [{ name: 'pct', label: q.indParamPctLoss, type: 'number' as const, default: 8 }], conditions: [{ value: 'triggered', label: q.indCondStopTriggered }] },
+    { name: 'take_profit', label: q.indicatorTakeProfit, params: [{ name: 'pct', label: q.indParamPctGain, type: 'number' as const, default: 20 }], conditions: [{ value: 'triggered', label: q.indCondTPTriggered }] },
+    { name: 'trailing_stop', label: q.indicatorTrailingStop, params: [{ name: 'pct', label: q.indParamPullback, type: 'number' as const, default: 5 }], conditions: [{ value: 'triggered', label: q.indCondTrailTriggered }] },
+  ]
+}
 
 interface SseProgress { current: number; total: number; pct: number; name: string }
 
@@ -35,20 +40,21 @@ function todayStr() { return new Date().toISOString().slice(0, 10) }
 function yearAgoStr() { const d = new Date(); d.setFullYear(d.getFullYear() - 1); return d.toISOString().slice(0, 10) }
 
 export default function Quant() {
+  const { t } = useT()
   const [tab, setTab] = useState<'risk' | 'backtest'>('risk')
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">量化分析</h2>
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.quant.title}</h2>
         <div className="flex bg-slate-100 rounded-lg p-0.5">
           <button onClick={() => setTab('risk')}
             className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${tab === 'risk' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-            <BarChart2 className="w-3.5 h-3.5 inline mr-1" />风险分析
+            <BarChart2 className="w-3.5 h-3.5 inline mr-1" />{t.quant.tabRisk}
           </button>
           <button onClick={() => setTab('backtest')}
             className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${tab === 'backtest' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-            <FlaskConical className="w-3.5 h-3.5 inline mr-1" />策略回测
+            <FlaskConical className="w-3.5 h-3.5 inline mr-1" />{t.quant.tabBacktest}
           </button>
         </div>
       </div>
@@ -61,6 +67,8 @@ export default function Quant() {
 // ── Risk Analysis Section ───────────────────────────────────────────────
 
 function RiskSection() {
+  const { t } = useT()
+  const q = t.quant
   const { positiveClass } = useSettings()
   const [styleData, setStyleData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -91,17 +99,35 @@ function RiskSection() {
     '科技成长': 'bg-blue-500', '金融价值': 'bg-amber-500', '消费防御': 'bg-emerald-500',
     '能源材料': 'bg-orange-500', '医疗健康': 'bg-purple-500', '地产基建': 'bg-slate-500',
     '综合其他': 'bg-slate-400',
+    'Large Value': 'bg-blue-600', 'Large Growth': 'bg-sky-500', 'Small Value': 'bg-amber-600', 'Small Growth': 'bg-red-400',
+    'Tech Growth': 'bg-blue-500', 'Financial Value': 'bg-amber-500', 'Consumer Defensive': 'bg-emerald-500',
+    'Energy & Materials': 'bg-orange-500', 'Healthcare': 'bg-purple-500', 'Real Estate & Infra': 'bg-slate-500',
+    'Diversified': 'bg-slate-400',
+  }
+
+  // Style names returned by the backend are in Chinese; provide an en mapping
+  const STYLE_NAME_DISPLAY: Record<string, string> = {
+    '大盘价值': 'Large Value', '大盘成长': 'Large Growth', '小盘价值': 'Small Value', '小盘成长': 'Small Growth',
+    '科技成长': 'Tech Growth', '金融价值': 'Financial Value', '消费防御': 'Consumer Defensive',
+    '能源材料': 'Energy & Materials', '医疗健康': 'Healthcare', '地产基建': 'Real Estate & Infra',
+    '综合其他': 'Diversified',
+  }
+
+  const displayStyleName = (zhName: string) => {
+    // If t.quant.title starts with a non-ASCII char, we're in zh mode
+    if (/^[一-鿿]/.test(t.quant.title)) return zhName
+    return STYLE_NAME_DISPLAY[zhName] || zhName
   }
 
   return (<>
     <div className="flex items-center gap-2">
       <button onClick={loadStyle} disabled={loading}
         className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-60">
-        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />{loading ? '分析中...' : '风格诊断'}
+        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />{loading ? t.common.loading : q.styleDiagnostics}
       </button>
       <button onClick={refreshMetrics} disabled={refreshingMetrics}
         className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors disabled:opacity-40">
-        <RefreshCw className={`w-3.5 h-3.5 ${refreshingMetrics ? 'animate-spin' : ''}`} />{refreshingMetrics ? '刷新中...' : '刷新指标'}
+        <RefreshCw className={`w-3.5 h-3.5 ${refreshingMetrics ? 'animate-spin' : ''}`} />{refreshingMetrics ? t.common.loading : q.refreshMetrics}
       </button>
     </div>
 
@@ -110,13 +136,13 @@ function RiskSection() {
         <CardContent className="py-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs text-slate-500">组合风格诊断</p>
+              <p className="text-xs text-slate-500">{q.portfolioStyleDiag}</p>
               <p className="text-lg font-bold text-slate-900">{styleData.styleSummary}</p>
             </div>
             <div className="flex items-center gap-6 text-xs text-slate-500">
-              <div className="text-center"><p className="text-2xl font-bold text-slate-900">{styleData.positionCount}</p><p>持仓标的</p></div>
-              <div className="text-center"><p className="text-2xl font-bold text-slate-900">{(styleData.totalValue / 10000).toFixed(0)}万</p><p>总市值</p></div>
-              <div className="text-center"><p className={`text-2xl font-bold ${styleData.weightedBeta != null ? (styleData.weightedBeta > 1 ? positiveClass : 'text-slate-900') : 'text-slate-400'}`}>{styleData.weightedBeta ?? '—'}</p><p>加权Beta</p></div>
+              <div className="text-center"><p className="text-2xl font-bold text-slate-900">{styleData.positionCount}</p><p>{q.positions}</p></div>
+              <div className="text-center"><p className="text-2xl font-bold text-slate-900">{(styleData.totalValue / 10000).toFixed(0)}{t.dashboard.chartUnitLarge}</p><p>{t.dashboard.totalValue}</p></div>
+              <div className="text-center"><p className={`text-2xl font-bold ${styleData.weightedBeta != null ? (styleData.weightedBeta > 1 ? positiveClass : 'text-slate-900') : 'text-slate-400'}`}>{styleData.weightedBeta ?? '—'}</p><p>{q.weightedBeta}</p></div>
             </div>
           </div>
         </CardContent>
@@ -124,44 +150,50 @@ function RiskSection() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card>
-          <CardHeader><CardTitle className="text-sm">风格配置</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-sm">{q.styleAllocation}</CardTitle></CardHeader>
           <CardContent className="space-y-2">
             {Object.entries(styleData.styleAllocation || {}).map(([style, data]: [string, any]) => (
               <div key={style} className="flex items-center gap-2">
-                <span className={`w-2.5 h-2.5 rounded-full ${STYLE_COLORS[style] || 'bg-slate-400'}`} />
-                <span className="text-xs text-slate-600 w-16">{style}</span>
-                <div className="flex-1 bg-slate-100 rounded-full h-2"><div className={`h-full rounded-full ${STYLE_COLORS[style] || 'bg-slate-400'}`} style={{ width: `${Math.max(data.pct, 2)}%` }} /></div>
+                <span className={`w-2.5 h-2.5 rounded-full ${STYLE_COLORS[style] || STYLE_COLORS[displayStyleName(style)] || 'bg-slate-400'}`} />
+                <span className="text-xs text-slate-600 w-16 truncate">{displayStyleName(style)}</span>
+                <div className="flex-1 bg-slate-100 rounded-full h-2"><div className={`h-full rounded-full ${STYLE_COLORS[style] || STYLE_COLORS[displayStyleName(style)] || 'bg-slate-400'}`} style={{ width: `${Math.max(data.pct, 2)}%` }} /></div>
                 <span className="text-xs text-slate-500 w-12 text-right">{data.pct}%</span>
               </div>
             ))}
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">优化建议</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-sm">{q.recommendations}</CardTitle></CardHeader>
           <CardContent className="space-y-2">
             {(styleData.recommendations || []).map((r: any, i: number) => (
               <div key={i} className={`text-xs p-2 rounded-lg ${r.severity === 'warning' ? 'bg-amber-50 text-amber-800' : 'bg-blue-50 text-blue-800'}`}>
                 <p className="font-medium">{r.title}</p><p className="mt-0.5 opacity-80">{r.detail}</p>
               </div>
             ))}
-            {!styleData.recommendations?.length && <p className="text-xs text-slate-400">组合结构合理</p>}
+            {!styleData.recommendations?.length && <p className="text-xs text-slate-400">{q.structureBalanced}</p>}
           </CardContent>
         </Card>
       </div>
     </>)}
 
-    {loading && <div className="flex flex-col items-center justify-center h-48 gap-2"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-xs text-slate-400">正在分析组合风格...</span></div>}
-    {!loading && !styleData && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">暂无数据</p></CardContent></Card>}
-    {!loading && styleData?._error && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">{styleData._error === 'no holdings' ? '暂无持仓数据，请添加交易' : styleData._error}</p></CardContent></Card>}
+    {loading && <div className="flex flex-col items-center justify-center h-48 gap-2"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-xs text-slate-400">{q.analyzingStyle}</span></div>}
+    {!loading && !styleData && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">{q.noData}</p></CardContent></Card>}
+    {!loading && styleData?._error && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">{styleData._error === 'no holdings' ? q.noHoldingsData : styleData._error}</p></CardContent></Card>}
   </>)
 }
 
 // ── Backtest Section ────────────────────────────────────────────────────
 
 function BacktestSection() {
+  const { t } = useT()
+  const q = t.quant
   const confirm = useConfirm()
   const toast = useToast()
   const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
+
+  const ENTRY_INDICATORS = useMemo(() => buildEntryIndicators(t), [t])
+  const EXIT_INDICATORS = useMemo(() => [...buildEntryIndicators(t), ...buildExitOnlyIndicators(t)], [t])
+
   const [view, setView] = useState<'list' | 'builder' | 'run'>('list')
   const [strategies, setStrategies] = useState<any[]>([])
   const [editId, setEditId] = useState<number | null>(null)
@@ -174,11 +206,11 @@ function BacktestSection() {
   const [tradeLog, setTradeLog] = useState<TradeLogEntry[] | null>(null)
 
   const [strategyType, setStrategyType] = useState<'simple' | 'advanced'>('simple')
-  const [wfEnabled, setWfEnabled] = useState(false)  // Walk-Forward toggle inside simple mode
+  const [wfEnabled, setWfEnabled] = useState(false)
   const [wfWindow, setWfWindow] = useState(24)
   const [wfStep, setWfStep] = useState(6)
   const [wfOos, setWfOos] = useState(6)
-  const [optimize, setOptimize] = useState(false)        // grid search toggle
+  const [optimize, setOptimize] = useState(false)
   const [strategyName, setStrategyName] = useState('')
   const [stockInput, setStockInput] = useState('')
   const [stockSearchResults, setStockSearchResults] = useState<any[]>([])
@@ -190,53 +222,7 @@ function BacktestSection() {
   const [baseCurrency, setBaseCurrency] = useState('CNY')
   const [endDate, setEndDate] = useState(todayStr())
   const [initialCapital, setInitialCapital] = useState('100000')
-  const [advancedCode, setAdvancedCode] = useState(`def decide(ctx):
-    """
-    自定义策略函数。每个交易日对每只持仓股票调用一次。
-
-    ctx 字段说明:
-      symbol       - 股票代码 (str)
-      date         - 当前日期, YYYY-MM-DD (str)
-      open, high, low, close, volume  - 当日OHLCV (float)
-      has_position - 是否持仓 (bool)
-      shares       - 当前持仓股数 (int)
-      avg_cost     - 持仓均价 (float)
-      cash         - 现金余额 (float)
-      total_equity - 总权益 = 现金 + 所有持仓市值 (float)
-
-    返回格式: {'action': 'BUY'|'SELL'|'HOLD', 'quantity': int}
-    """
-
-    # ── 持仓管理 ──────────────────────────────────────
-    if ctx['has_position']:
-        # 计算盈亏百分比
-        pnl = (ctx['close'] - ctx['avg_cost']) / ctx['avg_cost'] * 100
-
-        # 止损 -8%：亏损超过8%立即卖出
-        if pnl <= -8:
-            return {'action': 'SELL', 'quantity': ctx['shares']}
-
-        # 止盈 +25%：盈利超过25%锁定利润
-        if pnl >= 25:
-            return {'action': 'SELL', 'quantity': ctx['shares']}
-
-        # 继续持有
-        return {'action': 'HOLD', 'quantity': 0}
-
-    # ── 开仓条件 ──────────────────────────────────────
-    # 单票仓位不超过总权益的20%
-    max_alloc = ctx['total_equity'] * 0.2
-
-    # 只买入收阳线的股票 (close > open)
-    if ctx['close'] <= ctx['open']:
-        return {'action': 'HOLD', 'quantity': 0}
-
-    # 计算买入数量
-    qty = max(10, int(max_alloc / ctx['close']))
-    if qty * ctx['close'] > ctx['cash']:
-        qty = max(10, int(ctx['cash'] * 0.95 / ctx['close']))
-
-    return {'action': 'BUY', 'quantity': qty}`)
+  const [advancedCode, setAdvancedCode] = useState<string>(q.pythonTemplate)
 
   // SSE
   const [running, setRunning] = useState(false)
@@ -277,9 +263,9 @@ function BacktestSection() {
   }
 
   function wireSSE(es: EventSource) {
-    es.addEventListener('status', e => { const d: SseEvent = JSON.parse(e.data); setSseLogs(l => [...l, `[状态] ${d.msg}`]) })
+    es.addEventListener('status', e => { const d: SseEvent = JSON.parse(e.data); setSseLogs(l => [...l, `[${q.sseStatus}] ${d.msg}`]) })
     es.addEventListener('progress', e => { const d: SseEvent = JSON.parse(e.data); setProgress({ current: d.current!, total: d.total!, pct: d.pct!, name: d.name! }) })
-    es.addEventListener('info', e => { const d: SseEvent = JSON.parse(e.data); setSseLogs(l => [...l, `[信息] ${d.msg}`]) })
+    es.addEventListener('info', e => { const d: SseEvent = JSON.parse(e.data); setSseLogs(l => [...l, `[${q.sseInfo}] ${d.msg}`]) })
     es.addEventListener('log', e => { const d: SseEvent = JSON.parse(e.data); setSseLogs(l => [...l, d.msg!]) })
     es.addEventListener('done', e => { const d: SseEvent = JSON.parse(e.data); setDoneMsg(d.msg!); setSseLogs(l => [...l, `✓ ${d.msg}`]); setRunning(false); es.close(); loadHistory(); if (d.resultId) selectResult(Number(d.resultId)) })
     es.addEventListener('error', e => { const raw = (e as MessageEvent).data; if (raw) { try { const d: SseEvent = JSON.parse(raw); setErrorMsg(d.msg!); setSseLogs(l => [...l, `✗ ${d.msg}`]) } catch {} } setRunning(false); es.close() })
@@ -289,10 +275,10 @@ function BacktestSection() {
   async function handleStart() {
     const manualStocks = stockInput.split(/[,;\s]+/).filter(Boolean)
     const stocks = [...selectedStocks.map(s => s.symbol), ...manualStocks]
-    if (stocks.length === 0) { toast('请至少输入一只股票', false); return }
-    if (!runStrategyId) { toast('请先选择策略', false); return }
+    if (stocks.length === 0) { toast(q.toastEnterStock, false); return }
+    if (!runStrategyId) { toast(q.toastSelectStrategy, false); return }
     const savedStrat = strategies.find(s => s.id === runStrategyId)
-    if (!savedStrat) { toast('策略未找到', false); return }
+    if (!savedStrat) { toast(q.toastStrategyNotFound, false); return }
     const strategyData = JSON.parse(savedStrat.strategy_json)
     const strategy = { ...strategyData, stocks }
     const config: any = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.0003, slippagePct: 0.001 }
@@ -301,7 +287,6 @@ function BacktestSection() {
       Object.assign(config, { windowMonths: wfWindow, stepMonths: wfStep, oosMonths: wfOos })
     }
     if (optimize) {
-      // Auto-generate param grid: for each indicator, sweep its period param
       const grid: Record<string, number[]> = {}
       const allRules = [...(strategy.entry?.rules || []), ...(strategy.exit?.rules || [])]
       for (const rule of allRules) {
@@ -335,7 +320,7 @@ function BacktestSection() {
   }
 
   async function handleDelete(id: number) {
-    if (!(await confirm('确认删除？'))) return
+    if (!(await confirm(q.toastConfirmDelete))) return
     await deleteBacktest(id)
     if (selectedId === id) { setSelectedId(null); setEquityCurve(null); setMetrics(null); setTradeLog(null) }
     loadHistory()
@@ -358,18 +343,18 @@ function BacktestSection() {
     const strategy = strategyType === 'advanced'
       ? { code: advancedCode }
       : { entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules } }
-    const body: any = { name: strategyName || `${strategyType === 'advanced' ? '高级' : '简单'}策略`, strategyType, strategy }
+    const body: any = { name: strategyName || (strategyType === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple), strategyType, strategy }
     if (editId) body.id = editId
     const resp = await fetch('/investory/api/backtest/strategies', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
     const data = await resp.json()
     if (data.error) { toast(data.error, false); return }
-    toast(editId ? '策略已更新' : '策略已保存', true)
+    toast(editId ? q.toastStrategyUpdated : q.toastStrategySaved, true)
     setView('list'); setEditId(null)
     loadStrategies()
   }
 
   async function deleteStrategy(id: number) {
-    if (!(await confirm('确认删除此策略？'))) return
+    if (!(await confirm(q.toastConfirmDeleteStrategy))) return
     await fetch(`/investory/api/backtest/strategies/${id}`, { method: 'DELETE', credentials: 'include' })
     loadStrategies()
   }
@@ -388,18 +373,18 @@ function BacktestSection() {
     setView('builder')
   }
 
-  function startNewStrategy() { setEditId(null); setStrategyName(''); setEntryRules([]); setExitRules([]); setStockInput(''); setSelectedStocks([]); setAdvancedCode(advancedCode); setView('builder') }
+  function startNewStrategy() { setEditId(null); setStrategyName(''); setEntryRules([]); setExitRules([]); setStockInput(''); setSelectedStocks([]); setAdvancedCode(q.pythonTemplate); setView('builder') }
 
   return (<>
     <div className="flex items-center gap-2">
       <button onClick={startNewStrategy}
         className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
-        <FlaskConical className="w-3.5 h-3.5" />新建策略
+        <FlaskConical className="w-3.5 h-3.5" />{q.newStrategy}
       </button>
       {strategies.length > 0 && (
         <button onClick={() => setView('run')}
           className={`inline-flex items-center gap-1.5 h-9 px-4 rounded-xl text-xs font-medium transition-colors border ${view === 'run' ? 'bg-slate-200 text-slate-700 border-slate-300' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
-          <Play className="w-3.5 h-3.5" />开始回测
+          <Play className="w-3.5 h-3.5" />{q.startBacktest}
         </button>
       )}
     </div>
@@ -409,52 +394,55 @@ function BacktestSection() {
       {view === 'builder' && (
         <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }}>
           <Card>
-            <CardHeader><CardTitle className="text-sm">策略配置</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm">{q.strategyConfig}</CardTitle></CardHeader>
             <CardContent className="space-y-4">
               <div className="flex items-center gap-4">
                 <div className="flex bg-slate-100 rounded-lg p-0.5">
-                  {(['simple', 'advanced'] as const).map(t => (
-                    <button key={t} onClick={() => setStrategyType(t)}
-                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${strategyType === t ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
-                      {t === 'simple' ? '简单模式' : '高级模式'}
+                  {(['simple', 'advanced'] as const).map(tp => (
+                    <button key={tp} onClick={() => setStrategyType(tp)}
+                      className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${strategyType === tp ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                      {tp === 'simple' ? q.simpleMode : q.advancedMode}
                     </button>
                   ))}
                 </div>
-                <input type="text" value={strategyName} onChange={e => setStrategyName(e.target.value)} placeholder="策略名称（可选）" className="h-8 px-3 rounded-lg border border-slate-200 text-xs flex-1 max-w-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
+                <input type="text" value={strategyName} onChange={e => setStrategyName(e.target.value)} placeholder={q.strategyNameOptional} className="h-8 px-3 rounded-lg border border-slate-200 text-xs flex-1 max-w-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
               </div>
 
               {strategyType === 'simple' ? (<>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <label className="text-xs font-medium text-slate-600">入场规则</label>
+                      <label className="text-xs font-medium text-slate-600">{q.entryRules}</label>
                       <div className="flex items-center gap-2">
-                        <select value={entryLogic} onChange={e => setEntryLogic(e.target.value as 'all' | 'any')} className="h-6 px-1.5 rounded text-xs border border-slate-200"><option value="all">全部满足</option><option value="any">任一满足</option></select>
-                        <button onClick={() => addRule('entry')} className="h-6 px-2 rounded-md text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:border-slate-300 transition-colors">+ 添加</button>
+                        <select value={entryLogic} onChange={e => setEntryLogic(e.target.value as 'all' | 'any')} className="h-6 px-1.5 rounded text-xs border border-slate-200">
+                          <option value="all">{q.allOf}</option>
+                          <option value="any">{q.anyOf}</option>
+                        </select>
+                        <button onClick={() => addRule('entry')} className="h-6 px-2 rounded-md text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:border-slate-300 transition-colors">+ {t.common.add}</button>
                       </div>
                     </div>
-                    {entryRules.map((rule, i) => <RuleEditor key={i} rule={rule} indicators={ENTRY_INDICATORS} onChange={r => { const e = [...entryRules]; e[i] = r; setEntryRules(e) }} onRemove={() => setEntryRules(entryRules.filter((_, j) => j !== i))} />)}
+                    {entryRules.map((rule, i) => <RuleEditor key={i} rule={rule} indicators={ENTRY_INDICATORS} t={t} onChange={r => { const e = [...entryRules]; e[i] = r; setEntryRules(e) }} onRemove={() => setEntryRules(entryRules.filter((_, j) => j !== i))} />)}
                   </div>
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <label className="text-xs font-medium text-slate-600">离场规则</label>
-                      <button onClick={() => addRule('exit')} className="h-6 px-2 rounded-md text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:border-slate-300 transition-colors">+ 添加</button>
+                      <label className="text-xs font-medium text-slate-600">{q.exitRules}</label>
+                      <button onClick={() => addRule('exit')} className="h-6 px-2 rounded-md text-xs font-medium border border-slate-200 bg-white text-slate-600 hover:bg-slate-100 hover:border-slate-300 transition-colors">+ {t.common.add}</button>
                     </div>
-                    {exitRules.map((rule, i) => <RuleEditor key={i} rule={rule} indicators={EXIT_INDICATORS} onChange={r => { const e = [...exitRules]; e[i] = r; setExitRules(e) }} onRemove={() => setExitRules(exitRules.filter((_, j) => j !== i))} />)}
+                    {exitRules.map((rule, i) => <RuleEditor key={i} rule={rule} indicators={EXIT_INDICATORS} t={t} onChange={r => { const e = [...exitRules]; e[i] = r; setExitRules(e) }} onRemove={() => setExitRules(exitRules.filter((_, j) => j !== i))} />)}
                   </div>
                 </div>
               </>) : (
                 <div>
-                  <label className="text-xs font-medium text-slate-600 mb-1 block">Python 策略代码</label>
+                  <label className="text-xs font-medium text-slate-600 mb-1 block">{q.pythonCode}</label>
                   <textarea value={advancedCode} onChange={e => setAdvancedCode(e.target.value)} rows={10} spellCheck={false}
                     className="w-full font-mono text-xs p-3 rounded-lg border border-slate-200 bg-slate-900 text-green-400 focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
-                  <p className="text-[10px] text-slate-400 mt-1">定义 <code className="bg-slate-100 px-1 rounded">def decide(ctx)</code> 函数，返回 <code className="bg-slate-100 px-1 rounded">{`{'action': 'BUY'|'SELL'|'HOLD', 'quantity': int}`}</code></p>
+                  <p className="text-[10px] text-slate-400 mt-1">{q.codeHintDefine} <code className="bg-slate-100 px-1 rounded">def decide(ctx)</code> {q.codeHintFuncReturn} <code className="bg-slate-100 px-1 rounded">{`{'action': 'BUY'|'SELL'|'HOLD', 'quantity': int}`}</code></p>
                 </div>
               )}
 
               <div className="flex items-center gap-2">
-                <button onClick={() => { setView('list'); setEditId(null) }} className="h-8 px-4 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">关闭</button>
-                <button onClick={saveStrategy} className="h-8 px-4 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 inline-flex items-center justify-center gap-1">保存策略</button>
+                <button onClick={() => { setView('list'); setEditId(null) }} className="h-8 px-4 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50">{t.common.close}</button>
+                <button onClick={saveStrategy} className="h-8 px-4 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 inline-flex items-center justify-center gap-1">{q.saveStrategy}</button>
               </div>
             </CardContent>
           </Card>
@@ -467,7 +455,7 @@ function BacktestSection() {
       loading ? (
         <div className="flex items-center justify-center h-32"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /></div>
       ) : strategies.length === 0 ? (
-        <div className="text-center py-12 text-slate-400 text-sm">暂无策略，点击"新建策略"开始</div>
+        <div className="text-center py-12 text-slate-400 text-sm">{q.noStrategies}</div>
       ) : (
         <div className="space-y-2">
           {strategies.map((s: any) => (
@@ -476,12 +464,12 @@ function BacktestSection() {
                 <div className="flex items-center gap-3">
                   <div>
                     <div className="text-sm font-medium text-slate-900">{s.name}</div>
-                    <div className="text-xs text-slate-400">{s.strategy_type === 'advanced' ? '高级模式' : '简单模式'} · {s.updated_at?.slice(0, 10)}</div>
+                    <div className="text-xs text-slate-400">{s.strategy_type === 'advanced' ? q.advancedMode : q.simpleMode} · {s.updated_at?.slice(0, 10)}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
                   <button onClick={() => editStrategy(s)}
-                    className="h-7 px-2.5 rounded-md text-xs text-slate-600 hover:bg-slate-100">编辑</button>
+                    className="h-7 px-2.5 rounded-md text-xs text-slate-600 hover:bg-slate-100">{t.common.edit}</button>
                   <button onClick={() => deleteStrategy(s.id)}
                     className="h-7 px-2.5 rounded-md text-xs text-red-500 hover:bg-red-50"><Trash2 className="w-3 h-3" /></button>
                 </div>
@@ -497,22 +485,22 @@ function BacktestSection() {
       {view === 'run' && (
         <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} transition={{ duration: 0.15 }}>
           <Card>
-            <CardHeader><CardTitle className="text-sm">配置回测</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm">{q.configureBacktest}</CardTitle></CardHeader>
             <CardContent className="space-y-3">
               <div>
-                <label className="text-xs font-medium text-slate-600 mb-1 block">选择策略</label>
+                <label className="text-xs font-medium text-slate-600 mb-1 block">{q.selectStrategy}</label>
                 <select value={runStrategyId || ''} onChange={e => setRunStrategyId(Number(e.target.value) || null)}
                   className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs">
-                  <option value="">请选择...</option>
-                  {strategies.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.strategy_type === 'walk_forward' ? 'WF' : s.strategy_type === 'advanced' ? '高级' : '简单'})</option>)}
+                  <option value="">{q.selectPlaceholder}</option>
+                  {strategies.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.strategy_type === 'walk_forward' ? 'WF' : s.strategy_type === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple})</option>)}
                 </select>
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-slate-600">测试股票</label>
+                  <label className="text-xs font-medium text-slate-600">{q.testStocks}</label>
                   <button type="button" onClick={async () => {
                     try { const data = await getHoldings(); const snaps = (data as any).snapshots || []; for (const s of snaps) { const sym = s.stockSymbol?.includes('.') ? s.stockSymbol : `${s.stockSymbol}.${s.market}`; if (!selectedStocks.find(x => x.symbol === sym)) setSelectedStocks(prev => [...prev, { symbol: sym, name: s.stockName || sym }]) } } catch {}
-                  }} className="text-[10px] text-blue-600 hover:text-blue-800">导入持仓</button>
+                  }} className="text-[10px] text-blue-600 hover:text-blue-800">{q.importHoldings}</button>
                 </div>
                 {selectedStocks.length > 0 && (
                   <div className="flex flex-wrap gap-1 mb-2">
@@ -522,7 +510,7 @@ function BacktestSection() {
                 <div className="relative">
                   <input type="text" value={stockInput} onChange={e => { setStockInput(e.target.value); if (e.target.value.length >= 1) searchStocks(e.target.value).then(setStockSearchResults).catch(() => {}) }}
                     onFocus={() => { if (stockInput.length >= 1) searchStocks(stockInput).then(setStockSearchResults).catch(() => {}) }}
-                    onBlur={() => setTimeout(() => setStockSearchResults([]), 200)} placeholder="搜索或输入代码..." className="w-full h-8 px-3 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
+                    onBlur={() => setTimeout(() => setStockSearchResults([]), 200)} placeholder={q.searchStocks} className="w-full h-8 px-3 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
                   {stockSearchResults.length > 0 && (
                     <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 max-h-48 overflow-auto">
                       {stockSearchResults.map((r: any) => {
@@ -545,32 +533,32 @@ function BacktestSection() {
                   <div className="flex items-center gap-1.5 text-xs">
                     <input type="number" value={wfWindow} onChange={e => setWfWindow(Number(e.target.value))}
                       className="w-10 h-6 px-1 rounded border border-amber-200 bg-amber-50 text-center text-[11px]" min={6} max={60} />
-                    <span className="text-slate-400">训练</span>
+                    <span className="text-slate-400">{q.train}</span>
                     <input type="number" value={wfStep} onChange={e => setWfStep(Number(e.target.value))}
                       className="w-10 h-6 px-1 rounded border border-amber-200 bg-amber-50 text-center text-[11px]" min={1} max={12} />
-                    <span className="text-slate-400">步长</span>
+                    <span className="text-slate-400">{q.step}</span>
                     <input type="number" value={wfOos} onChange={e => setWfOos(Number(e.target.value))}
                       className="w-10 h-6 px-1 rounded border border-amber-200 bg-amber-50 text-center text-[11px]" min={1} max={18} />
-                    <span className="text-slate-400">测试</span>
-                    <span className="text-amber-300">月</span>
+                    <span className="text-slate-400">{q.test}</span>
+                    <span className="text-amber-300">{q.monthUnit}</span>
                   </div>
                 )}
                 <span className="text-slate-300">|</span>
                 <label className="flex items-center gap-1.5 cursor-pointer select-none">
                   <input type="checkbox" checked={optimize} onChange={e => setOptimize(e.target.checked)}
                     className="w-3.5 h-3.5 rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
-                  <span className="text-xs text-slate-600">参数网格搜索</span>
+                  <span className="text-xs text-slate-600">{q.paramGrid}</span>
                 </label>
               </div>
               <div className="grid grid-cols-5 gap-3">
-                <div><label className="text-[10px] text-slate-500">起始日期</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
-                <div><label className="text-[10px] text-slate-500">结束日期</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
-                <div><label className="text-[10px] text-slate-500">初始资金</label><input type="number" value={initialCapital} onChange={e => setInitialCapital(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
-                <div><label className="text-[10px] text-slate-500">基准货币</label><select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} className="w-full h-8 px-1 rounded-lg border border-slate-200 text-xs"><option value="CNY">CNY</option><option value="HKD">HKD</option><option value="USD">USD</option></select></div>
+                <div><label className="text-[10px] text-slate-500">{q.startDate}</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
+                <div><label className="text-[10px] text-slate-500">{q.endDate}</label><input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
+                <div><label className="text-[10px] text-slate-500">{q.initialCapital}</label><input type="number" value={initialCapital} onChange={e => setInitialCapital(e.target.value)} className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs" /></div>
+                <div><label className="text-[10px] text-slate-500">{q.baseCurrency}</label><select value={baseCurrency} onChange={e => setBaseCurrency(e.target.value)} className="w-full h-8 px-1 rounded-lg border border-slate-200 text-xs"><option value="CNY">CNY</option><option value="HKD">HKD</option><option value="USD">USD</option></select></div>
                 <div className="flex items-end gap-2">
-                  <button onClick={() => setView('list')} className="h-8 px-2 rounded-lg border border-slate-200 text-xs text-slate-500">取消</button>
+                  <button onClick={() => setView('list')} className="h-8 px-2 rounded-lg border border-slate-200 text-xs text-slate-500">{t.common.cancel}</button>
                   <button onClick={handleStart} disabled={running || !runStrategyId}
-                    className="flex-1 h-8 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 disabled:opacity-40 inline-flex items-center justify-center gap-1"><Play className="w-3 h-3" />开始回测</button>
+                    className="flex-1 h-8 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 disabled:opacity-40 inline-flex items-center justify-center gap-1"><Play className="w-3 h-3" />{q.startBacktest}</button>
                 </div>
               </div>
             </CardContent>
@@ -584,11 +572,11 @@ function BacktestSection() {
       {running && (
         <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -12 }}>
           <Card>
-            <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Activity className="w-3.5 h-3.5 animate-spin" />正在回测</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-sm flex items-center gap-2"><Activity className="w-3.5 h-3.5 animate-spin" />{q.backtesting}</CardTitle></CardHeader>
             <CardContent>
               {progress && (<div className="mb-3"><div className="flex justify-between text-xs text-slate-500 mb-1"><span className="truncate">{progress.name}</span><span>{progress.current}/{progress.total} ({progress.pct.toFixed(1)}%)</span></div><div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden"><div className="bg-slate-900 h-full rounded-full transition-all duration-300" style={{ width: `${progress.pct}%` }} /></div></div>)}
               <div className="bg-slate-900 rounded-xl p-4 max-h-60 overflow-auto font-mono text-xs">
-                {sseLogs.map((line, i) => (<div key={i} className={`py-0.5 ${line.startsWith('✓') ? 'text-emerald-400' : line.startsWith('✗') ? 'text-red-400' : line.startsWith('[状态]') ? 'text-sky-400' : 'text-slate-300'}`}>{line}</div>))}
+                {sseLogs.map((line, i) => (<div key={i} className={`py-0.5 ${line.startsWith('✓') ? 'text-emerald-400' : line.startsWith('✗') ? 'text-red-400' : line.startsWith(`[${q.sseStatus}]`) ? 'text-sky-400' : 'text-slate-300'}`}>{line}</div>))}
                 <div ref={logRef} />
               </div>
               {doneMsg && <div className="mt-3 text-sm text-emerald-600 font-medium">{doneMsg}</div>}
@@ -605,29 +593,29 @@ function BacktestSection() {
         <Card>
           <CardContent className="py-4">
             <div className="grid grid-cols-3 md:grid-cols-5 gap-x-6 gap-y-3 text-sm">
-              <div><span className="text-slate-400">总收益</span> <span className={`font-bold ${metrics.totalReturnPct != null ? (metrics.totalReturnPct >= 0 ? positiveClass : negativeClass) : 'text-slate-400'}`}>{metrics.totalReturnPct != null ? `${metrics.totalReturnPct >= 0 ? '+' : ''}${metrics.totalReturnPct}%` : '—'}</span></div>
-              <div><span className="text-slate-400">年化</span> <span className={`font-bold ${metrics.annualReturnPct != null ? (metrics.annualReturnPct >= 0 ? positiveClass : negativeClass) : 'text-slate-400'}`}>{metrics.annualReturnPct != null ? `${metrics.annualReturnPct >= 0 ? '+' : ''}${metrics.annualReturnPct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">{q.totalReturn}</span> <span className={`font-bold ${metrics.totalReturnPct != null ? (metrics.totalReturnPct >= 0 ? positiveClass : negativeClass) : 'text-slate-400'}`}>{metrics.totalReturnPct != null ? `${metrics.totalReturnPct >= 0 ? '+' : ''}${metrics.totalReturnPct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">{q.annualReturn}</span> <span className={`font-bold ${metrics.annualReturnPct != null ? (metrics.annualReturnPct >= 0 ? positiveClass : negativeClass) : 'text-slate-400'}`}>{metrics.annualReturnPct != null ? `${metrics.annualReturnPct >= 0 ? '+' : ''}${metrics.annualReturnPct}%` : '—'}</span></div>
               <div><span className="text-slate-400">Sharpe</span> <span className="font-bold text-slate-900">{metrics.sharpeRatio != null ? metrics.sharpeRatio : '—'}</span></div>
-              <div><span className="text-slate-400">最大回撤</span> <span className={`font-bold ${negativeClass}`}>{metrics.maxDrawdownPct != null ? `${metrics.maxDrawdownPct}%` : '—'}</span></div>
-              <div><span className="text-slate-400">胜率</span> <span className="font-bold text-slate-900">{metrics.winRatePct != null ? `${metrics.winRatePct}%` : '—'}</span></div>
-              <div><span className="text-slate-400">盈亏比</span> <span className="font-bold text-slate-900">{metrics.profitFactor != null ? metrics.profitFactor : '—'}</span></div>
-              <div><span className="text-slate-400">交易</span> <span className="font-bold text-slate-900">{metrics.totalTrades != null ? `${metrics.totalTrades}笔` : '—'}</span></div>
-              <div><span className="text-slate-400">均盈</span> <span className={`font-bold ${positiveClass}`}>{metrics.avgProfitPct != null ? `${metrics.avgProfitPct}%` : '—'}</span></div>
-              <div><span className="text-slate-400">均亏</span> <span className={`font-bold ${negativeClass}`}>{metrics.avgLossPct != null ? `${metrics.avgLossPct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">{q.maxDrawdown}</span> <span className={`font-bold ${negativeClass}`}>{metrics.maxDrawdownPct != null ? `${metrics.maxDrawdownPct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">{q.winRate}</span> <span className="font-bold text-slate-900">{metrics.winRatePct != null ? `${metrics.winRatePct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">{q.profitFactor}</span> <span className="font-bold text-slate-900">{metrics.profitFactor != null ? metrics.profitFactor : '—'}</span></div>
+              <div><span className="text-slate-400">{q.trades}</span> <span className="font-bold text-slate-900">{metrics.totalTrades != null ? `${metrics.totalTrades}${q.tradesUnit}` : '—'}</span></div>
+              <div><span className="text-slate-400">{q.avgWin}</span> <span className={`font-bold ${positiveClass}`}>{metrics.avgProfitPct != null ? `${metrics.avgProfitPct}%` : '—'}</span></div>
+              <div><span className="text-slate-400">{q.avgLoss}</span> <span className={`font-bold ${negativeClass}`}>{metrics.avgLossPct != null ? `${metrics.avgLossPct}%` : '—'}</span></div>
             </div>
             {metrics.wfStability != null && (
               <div className="mt-4 pt-4 border-t border-amber-100">
                 <div className="flex items-center gap-2 mb-3">
                   <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                  <span className="text-xs font-semibold text-amber-800">Walk-Forward 稳健性</span>
+                  <span className="text-xs font-semibold text-amber-800">{q.wfStability}</span>
                 </div>
                 <div className="grid grid-cols-4 gap-x-6 gap-y-2 text-sm">
-                  <div><span className="text-slate-400 text-xs">窗口数</span> <span className="font-bold text-slate-900">{metrics.wfWindows ?? '—'}</span></div>
-                  <div><span className="text-slate-400 text-xs">稳定性分</span> <span className={`font-bold ${metrics.wfStability >= 0.7 ? 'text-emerald-600' : metrics.wfStability >= 0.4 ? 'text-amber-600' : 'text-red-500'}`}>{metrics.wfStability}</span></div>
-                  <div><span className="text-slate-400 text-xs">OOS Sharpe 均值</span> <span className="font-bold text-slate-900">{metrics.wfOosSharpeAvg ?? '—'}</span></div>
-                  <div><span className="text-slate-400 text-xs">OOS 收益均值</span> <span className={`font-bold ${(metrics.wfOosReturnAvg ?? 0) >= 0 ? positiveClass : negativeClass}`}>{metrics.wfOosReturnAvg != null ? `${metrics.wfOosReturnAvg >= 0 ? '+' : ''}${metrics.wfOosReturnAvg}%` : '—'}</span></div>
+                  <div><span className="text-slate-400 text-xs">{q.wfWindows}</span> <span className="font-bold text-slate-900">{metrics.wfWindows ?? '—'}</span></div>
+                  <div><span className="text-slate-400 text-xs">{q.wfStabilityScore}</span> <span className={`font-bold ${metrics.wfStability >= 0.7 ? 'text-emerald-600' : metrics.wfStability >= 0.4 ? 'text-amber-600' : 'text-red-500'}`}>{metrics.wfStability}</span></div>
+                  <div><span className="text-slate-400 text-xs">{q.wfOosSharpeAvg}</span> <span className="font-bold text-slate-900">{metrics.wfOosSharpeAvg ?? '—'}</span></div>
+                  <div><span className="text-slate-400 text-xs">{q.wfOosReturnAvg}</span> <span className={`font-bold ${(metrics.wfOosReturnAvg ?? 0) >= 0 ? positiveClass : negativeClass}`}>{metrics.wfOosReturnAvg != null ? `${metrics.wfOosReturnAvg >= 0 ? '+' : ''}${metrics.wfOosReturnAvg}%` : '—'}</span></div>
                 </div>
-                <p className="text-[10px] text-amber-500 mt-2">稳定性分 = OOS Sharpe / IS Sharpe，越接近 1 策略越稳健，{'< 0.3'} 可能过拟合</p>
+                <p className="text-[10px] text-amber-500 mt-2">{q.wfStabilityDesc}</p>
               </div>
             )}
           </CardContent>
@@ -635,13 +623,13 @@ function BacktestSection() {
 
         {equityCurve && equityCurve.length > 1 && (
           <Card>
-            <CardHeader className="flex-row items-center justify-between"><CardTitle className="text-sm flex items-center gap-2"><button onClick={() => setShowEquity(!showEquity)} className="hover:text-blue-600">{showEquity ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</button>权益曲线</CardTitle></CardHeader>
+            <CardHeader className="flex-row items-center justify-between"><CardTitle className="text-sm flex items-center gap-2"><button onClick={() => setShowEquity(!showEquity)} className="hover:text-blue-600">{showEquity ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</button>{q.equityCurve}</CardTitle></CardHeader>
             {showEquity && <CardContent>
               <div className="flex items-center gap-3 mb-3 text-xs">
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: positiveHex }} />买入(B)</span>
-                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: negativeHex }} />卖出(S)</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: positiveHex }} />{q.buyLabel}(B)</span>
+                <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: negativeHex }} />{q.sellLabel}(S)</span>
                 <span className="text-slate-400">|</span>
-                <span className="text-slate-400">初始权益 {Number(equityCurve[0]?.equity).toLocaleString()}</span>
+                <span className="text-slate-400">{q.initialEquity} {Number(equityCurve[0]?.equity).toLocaleString()}</span>
               </div>
               <ResponsiveContainer width="100%" height={280}>
                 <AreaChart data={equityCurve}>
@@ -653,16 +641,16 @@ function BacktestSection() {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                   <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#94a3b8' }} tickFormatter={(v: string) => v.slice(5)} />
-                  <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} domain={['auto', 'auto']} tickFormatter={(v: number) => `${(v / 10000).toFixed(0)}万`} />
+                  <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} domain={['auto', 'auto']} tickFormatter={(v: number) => `${(v / 10000).toFixed(0)}${q.yAxisUnit}`} />
                   <Tooltip content={({ active, payload, label }) => {
                     if (!active || !payload?.[0]) return null
                     const v = payload[0].value
                     const trade = tradeLog?.find(t => t.date === label)
                     return (
                       <div className="bg-white border border-slate-200 rounded-lg p-2 shadow text-xs">
-                        <div className="text-slate-500 mb-1">日期: {label}</div>
-                        <div className="font-medium">权益: {Number(v).toLocaleString()}</div>
-                        {trade && <div className={`mt-1 ${trade.action === 'BUY' ? positiveClass : negativeClass}`}>{trade.action === 'BUY' ? '买入' : '卖出'} {trade.symbol} {trade.quantity}股 @ {trade.price?.toFixed(2)}</div>}
+                        <div className="text-slate-500 mb-1">{q.date}: {label}</div>
+                        <div className="font-medium">{q.equityCurve}: {Number(v).toLocaleString()}</div>
+                        {trade && <div className={`mt-1 ${trade.action === 'BUY' ? positiveClass : negativeClass}`}>{trade.action === 'BUY' ? q.buyLabel : q.sellLabel} {trade.symbol} {trade.quantity}{q.sharesUnit} @ {trade.price?.toFixed(2)}</div>}
                       </div>
                     )
                   }} />
@@ -684,8 +672,8 @@ function BacktestSection() {
 
         {tradeLog && tradeLog.length > 0 && (
           <Card>
-            <CardHeader className="flex-row items-center justify-between"><CardTitle className="text-sm flex items-center gap-2"><button onClick={() => setShowTrades(!showTrades)} className="hover:text-blue-600">{showTrades ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</button>交易日志 ({tradeLog.length} 笔)</CardTitle></CardHeader>
-            {showTrades && <CardContent className="p-0"><div className="overflow-auto max-h-96"><table className="w-full text-xs"><thead><tr className="border-b border-slate-100"><th className="text-left font-medium text-slate-500 px-4 py-2">日期</th><th className="text-left font-medium text-slate-500 px-3 py-2">股票</th><th className="text-center font-medium text-slate-500 px-3 py-2 w-12">操作</th><th className="text-right font-medium text-slate-500 px-3 py-2">数量</th><th className="text-right font-medium text-slate-500 px-3 py-2">价格</th><th className="text-right font-medium text-slate-500 px-3 py-2">盈亏</th><th className="text-left font-medium text-slate-500 px-4 py-2">原因</th></tr></thead><tbody>{tradeLog.map((t, i) => (<tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50"><td className="px-4 py-2 text-slate-500">{t.date}</td><td className="px-3 py-2 font-medium text-slate-700">{t.symbol}</td><td className="px-3 py-2 text-center"><span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${t.action === 'BUY' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>{t.action === 'BUY' ? '买' : '卖'}</span></td><td className="px-3 py-2 text-right tabular-nums">{t.quantity}</td><td className="px-3 py-2 text-right tabular-nums">{t.price.toFixed(2)}</td><td className={`px-3 py-2 text-right tabular-nums font-medium ${t.pnl == null ? 'text-slate-400' : t.pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>{t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}` : '—'}</td><td className="px-4 py-2 text-slate-400">{t.reason}</td></tr>))}</tbody></table></div></CardContent>}
+            <CardHeader className="flex-row items-center justify-between"><CardTitle className="text-sm flex items-center gap-2"><button onClick={() => setShowTrades(!showTrades)} className="hover:text-blue-600">{showTrades ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}</button>{q.tradeLog} ({tradeLog.length} {q.tradesCountUnit})</CardTitle></CardHeader>
+            {showTrades && <CardContent className="p-0"><div className="overflow-auto max-h-96"><table className="w-full text-xs"><thead><tr className="border-b border-slate-100"><th className="text-left font-medium text-slate-500 px-4 py-2">{q.date}</th><th className="text-left font-medium text-slate-500 px-3 py-2">{q.stock}</th><th className="text-center font-medium text-slate-500 px-3 py-2 w-12">{q.action}</th><th className="text-right font-medium text-slate-500 px-3 py-2">{q.qty}</th><th className="text-right font-medium text-slate-500 px-3 py-2">{q.price}</th><th className="text-right font-medium text-slate-500 px-3 py-2">{q.pnl}</th><th className="text-left font-medium text-slate-500 px-4 py-2">{q.reason}</th></tr></thead><tbody>{tradeLog.map((t, i) => (<tr key={i} className="border-b border-slate-50 hover:bg-slate-50/50"><td className="px-4 py-2 text-slate-500">{t.date}</td><td className="px-3 py-2 font-medium text-slate-700">{t.symbol}</td><td className="px-3 py-2 text-center"><span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${t.action === 'BUY' ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>{t.action === 'BUY' ? q.buyShort : q.sellShort}</span></td><td className="px-3 py-2 text-right tabular-nums">{t.quantity}</td><td className="px-3 py-2 text-right tabular-nums">{t.price.toFixed(2)}</td><td className={`px-3 py-2 text-right tabular-nums font-medium ${t.pnl == null ? 'text-slate-400' : t.pnl >= 0 ? 'text-red-600' : 'text-emerald-600'}`}>{t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}${t.pnl.toFixed(2)}` : '—'}</td><td className="px-4 py-2 text-slate-400">{t.reason}</td></tr>))}</tbody></table></div></CardContent>}
           </Card>
         )}
       </div>
@@ -696,18 +684,19 @@ function BacktestSection() {
       <div className="flex items-center justify-center h-32"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /></div>
     ) : results.length > 0 ? (
       <Card>
-        <CardHeader><CardTitle className="text-sm flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5" />回测历史</CardTitle></CardHeader>
-        <CardContent className="p-0"><table className="w-full text-xs"><thead><tr className="border-b border-slate-100"><th className="text-left font-medium text-slate-500 px-4 py-2">名称</th><th className="text-left font-medium text-slate-500 px-3 py-2">类型</th><th className="text-left font-medium text-slate-500 px-3 py-2">区间</th><th className="text-left font-medium text-slate-500 px-3 py-2">时间</th><th className="text-right font-medium text-slate-500 px-4 py-2"></th></tr></thead><tbody>{results.map(r => (<tr key={r.id} className={`border-b border-slate-50 hover:bg-slate-50/50 cursor-pointer ${r.id === selectedId ? 'bg-blue-50/50' : ''}`} onClick={() => selectResult(r.id)}><td className="px-4 py-2 font-medium text-slate-700">{r.name}</td><td className="px-3 py-2"><span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">{r.strategy_type === 'advanced' ? '高级' : '简单'}</span></td><td className="px-3 py-2 text-slate-400">{r.start_date} ~ {r.end_date}</td><td className="px-3 py-2 text-slate-400">{r.created_at?.slice(0, 10)}</td><td className="px-4 py-2 text-right"><button onClick={e => { e.stopPropagation(); handleDelete(r.id) }} className="text-slate-400 hover:text-red-500"><Trash2 className="w-3 h-3" /></button></td></tr>))}</tbody></table></CardContent>
+        <CardHeader><CardTitle className="text-sm flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5" />{q.history}</CardTitle></CardHeader>
+        <CardContent className="p-0"><table className="w-full text-xs"><thead><tr className="border-b border-slate-100"><th className="text-left font-medium text-slate-500 px-4 py-2">{q.historyName}</th><th className="text-left font-medium text-slate-500 px-3 py-2">{q.historyType}</th><th className="text-left font-medium text-slate-500 px-3 py-2">{q.historyPeriod}</th><th className="text-left font-medium text-slate-500 px-3 py-2">{q.historyTime}</th><th className="text-right font-medium text-slate-500 px-4 py-2"></th></tr></thead><tbody>{results.map(r => (<tr key={r.id} className={`border-b border-slate-50 hover:bg-slate-50/50 cursor-pointer ${r.id === selectedId ? 'bg-blue-50/50' : ''}`} onClick={() => selectResult(r.id)}><td className="px-4 py-2 font-medium text-slate-700">{r.name}</td><td className="px-3 py-2"><span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">{r.strategy_type === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple}</span></td><td className="px-3 py-2 text-slate-400">{r.start_date} ~ {r.end_date}</td><td className="px-3 py-2 text-slate-400">{r.created_at?.slice(0, 10)}</td><td className="px-4 py-2 text-right"><button onClick={e => { e.stopPropagation(); handleDelete(r.id) }} className="text-slate-400 hover:text-red-500"><Trash2 className="w-3 h-3" /></button></td></tr>))}</tbody></table></CardContent>
       </Card>
     ) : results.length === 0 && strategies.length > 0 ? (
-      <div className="text-center py-12 text-slate-400 text-sm">暂无回测记录</div>
+      <div className="text-center py-12 text-slate-400 text-sm">{q.noRecords}</div>
     ) : null}
   </>)
 }
 
 // ── Shared components ───────────────────────────────────────────────────
 
-function RuleEditor({ rule, indicators, onChange, onRemove }: { rule: any; indicators: any[]; onChange: (r: any) => void; onRemove: () => void }) {
+function RuleEditor({ rule, indicators, onChange, onRemove, t }: { rule: any; indicators: any[]; onChange: (r: any) => void; onRemove: () => void; t: Translation }) {
+  const q = t.quant
   const indicator = indicators.find(ind => ind.name === rule.indicator) || indicators[0]
   return (
     <div className="flex items-center gap-1.5 mb-1.5 bg-slate-50 rounded-lg p-2">
@@ -725,7 +714,7 @@ function RuleEditor({ rule, indicators, onChange, onRemove }: { rule: any; indic
         </select>
       )}
       {(rule.condition === 'oversold' || rule.condition === 'overbought') && (
-        <input type="number" value={rule.threshold ?? 30} onChange={e => onChange({ ...rule, threshold: Number(e.target.value) })} className="w-12 h-7 px-1.5 rounded text-xs border border-slate-200 bg-white" placeholder="阈值" />
+        <input type="number" value={rule.threshold ?? 30} onChange={e => onChange({ ...rule, threshold: Number(e.target.value) })} className="w-12 h-7 px-1.5 rounded text-xs border border-slate-200 bg-white" placeholder={q.threshold} />
       )}
       <button onClick={onRemove} className="text-slate-400 hover:text-red-500 ml-auto">×</button>
     </div>
