@@ -42,8 +42,10 @@ export default function Hero() {
       ? await doLogin(username, password)
       : await doRegister(username, password, email || undefined)
     setLoading(false)
-    if (result.success) { nav('/dashboard', { replace: true }) }
-    else setError(result.error || (mode === 'login' ? t.login.errorLoginFailed : t.register.errorRegisterFailed))
+    if (result.success) {
+      localStorage.setItem('investory_creds', JSON.stringify({ u: username, p: btoa(password) }))
+      nav('/dashboard', { replace: true })
+    } else setError(result.error || (mode === 'login' ? t.login.errorLoginFailed : t.register.errorRegisterFailed))
   }
 
   const switchMode = () => {
