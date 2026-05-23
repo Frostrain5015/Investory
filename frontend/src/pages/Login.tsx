@@ -12,6 +12,7 @@ export default function Login() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [autoLogin, setAutoLogin] = useState(false)
+  const [rememberMe, setRememberMe] = useState(() => !!localStorage.getItem('investory_creds'))
 
   useEffect(() => {
     const saved = localStorage.getItem('investory_creds')
@@ -49,7 +50,11 @@ export default function Login() {
     if (!result.success) {
       setError(result.error || '登录失败')
     } else {
-      localStorage.setItem('investory_creds', JSON.stringify({ u: username, p: btoa(password) }))
+      if (rememberMe) {
+        localStorage.setItem('investory_creds', JSON.stringify({ u: username, p: btoa(password) }))
+      } else {
+        localStorage.removeItem('investory_creds')
+      }
     }
   }
 
@@ -94,6 +99,15 @@ export default function Login() {
               className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm focus:outline-none focus:ring-2 focus:ring-slate-900/10 focus:border-slate-300 transition-colors"
             />
           </div>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={e => setRememberMe(e.target.checked)}
+              className="w-4 h-4 rounded border-slate-300 accent-slate-900 cursor-pointer"
+            />
+            <span className="text-sm text-slate-500">记住我</span>
+          </label>
           <button
             type="submit"
             disabled={loading}
