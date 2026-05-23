@@ -99,22 +99,9 @@ def resolve_symbol(conn, symbol: str):
 # ── Database tools ──────────────────────────────────────────────────────
 
 def get_db_conn():
-    import configparser
-    cfg = configparser.ConfigParser()
-    cfg_file = SCRIPT_DIR / "config.ini"
-    if cfg_file.exists(): cfg.read(cfg_file, encoding="utf-8")
-    def g(s, k, d=""):
-        try: return cfg.get(s, k).strip()
-        except: return d
-    import pymysql
-    return pymysql.connect(
-        host=os.getenv("DB_HOST", g("database","host","localhost")),
-        port=int(os.getenv("DB_PORT", g("database","port","3306"))),
-        database=os.getenv("DB_NAME", g("database","name","investory")),
-        user=os.getenv("DB_USER", g("database","user","root")),
-        password=os.getenv("DB_PASSWORD", g("database","password","")),
-        charset="utf8mb4", autocommit=True,
-    )
+    from db import load_config, get_conn as db_get_conn
+    cfg = load_config()
+    return db_get_conn(cfg)
 
 
 def tool_get_portfolio(portfolio_id: int) -> dict:
@@ -597,6 +584,61 @@ def tool_optimize_portfolio(portfolio_id: int, max_weight: float = 0.30, mode: s
 
 # ── Tool definitions (OpenAI format) ────────────────────────────────────
 
+# ── 全球市场工具 ──────────────────────────────────────────────────────────
+
+_GLOBAL_INDICES = [
+    ("000001.SH",  "上证指数",   "CN"), ("399001.SZ",  "深证成指",   "CN"),
+    ("399006.SZ",  "创业板指",   "CN"),
+    ("HSI.HK",     "恒生指数",   "HK"), ("HSCE.HK",    "国企指数",   "HK"),
+    ("HSTECH.HK",  "恒生科技",   "HK"),
+    ("GSPC.US",    "标普500",    "US"), ("DJI.US",     "道琼斯工业", "US"),
+    ("IXIC.US",    "纳斯达克综合","US"),
+    ("N225.JP",    "日经225",    "JP"), ("KS11.KR",    "韩国KOSPI",  "KR"),
+    ("FTSE.GB",    "富时100",    "GB"), ("GDAXI.DE",   "德国DAX",    "DE"),
+    ("FCHI.FR",    "法国CAC40",  "FR"), ("TWII.TW",    "台湾加权",   "TW"),
+    ("STI.SG",     "新加坡STI",  "SG"), ("BSESN.IN",   "印度SENSEX", "IN"),
+    ("AXJO.AU",    "澳洲ASX200", "AU"), ("GSPTSE.CA",  "加拿大TSX",  "CA"),
+    ("BVSP.BR",    "巴西Bovespa","BR"),
+    ("DXY.IDX",    "美元指数",   "IDX"),("XAU.CMD",    "黄金/美元",  "CMD"),
+    ("BTC.CCY",    "比特币/美元","CCY"),("CL.CMD",     "WTI原油",    "CMD"),
+]
+
+def tool_get_global_indices() -> dict:
+    conn = get_db_conn()
+    cur = conn.cursor()
+    results = []
+    for symbol, name, country in _GLOBAL_INDICES:
+        cur.execute("""
+            SELECT sp.close, sp.trade_date
+            FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id
+            WHERE s.symbol = %s ORDER BY sp.trade_date DESC LIMIT 2
+        """, (symbol,))
+        rows = cur.fetchall()
+        if len(rows) >= 2:
+            price = float(rows[0][0]); prev = float(rows[1][0])
+            chg = price - prev; chg_pct = (chg / prev) * 100 if prev else 0
+            results.append({"name": name, "country": country,
+                "price": round(price, 2), "change": round(chg, 2),
+                "changePct": round(chg_pct, 2), "date": str(rows[0][1])})
+    cur.close(); conn.close()
+    return {"indices": results, "note": f"共{len(results)}个指数"}
+
+def tool_get_world_news(limit: int = 10) -> dict:
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT title, source, category, summary, url, country_code
+        FROM world_news WHERE fetched_date = CURDATE()
+        ORDER BY score DESC LIMIT %s
+    """, (min(limit, 20),))
+    rows = cur.fetchall()
+    news = [{"title": r[0], "source": r[1], "category": r[2],
+        "summary": r[3], "url": r[4], "countryCode": r[5]} for r in rows]
+    cur.close(); conn.close()
+    return {"news": news, "count": len(news),
+        "note": f"今日共{len(news)}条要闻" if news else "今日暂无新闻"}
+
+
 TOOLS = [
     {"type": "function", "function": {
         "name": "get_portfolio", "description": "获取当前持仓组合的完整数据：每只标的的名称、代码、市值、盈亏比例、权重。用户问持仓相关问题时必须先调用此工具。",
@@ -704,6 +746,16 @@ TOOLS = [
             "mode": {"type": "string", "description": "优化模式: sharpe(默认), minvar, riskparity"}
         }, "required": ["portfolio_id"]}
     }},
+    {"type": "function", "function": {
+        "name": "get_global_indices", "description": "获取全球 20 个股市指数 + 4 个商品/汇率指标的最新行情。问全球/世界/大盘走势/市场概况时调用。",
+        "parameters": {"type": "object", "properties": {}}
+    }},
+    {"type": "function", "function": {
+        "name": "get_world_news", "description": "获取今日全球财经/地缘要闻。问最新新闻、时事、今日大事时调用。",
+        "parameters": {"type": "object", "properties": {
+            "limit": {"type": "integer", "description": "返回条数，默认10，最多20"}
+        }}
+    }},
 ]
 
 TOOL_LABELS = {
@@ -725,6 +777,8 @@ TOOL_LABELS = {
     "web_search": "联网搜索",
     "get_fundamentals": "查询基本面",
     "optimize_portfolio": "组合优化",
+    "get_global_indices": "获取全球指数",
+    "get_world_news": "获取全球要闻",
     "remember": "保存记忆",
     "forget": "删除记忆",
     "ask_user": "",
@@ -830,6 +884,10 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
             float(args.get("max_weight", 0.30)),
             args.get("mode", "sharpe"),
         )
+    elif name == "get_global_indices":
+        return tool_get_global_indices()
+    elif name == "get_world_news":
+        return tool_get_world_news(args.get("limit", 10))
     return {"error": f"unknown tool: {name}"}
 
 
@@ -875,7 +933,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     # chain-of-thought overhead before the first token.  Deep-think mode re-enables
     # it so the model can use its native reasoning chain.
     is_dashscope = bool(api_base and ("dashscope" in api_base or "aliyuncs" in api_base))
-    extra_body = {"enable_thinking": deep_think} if is_dashscope else {}
+    extra_body = {"enable_thinking": True} if (is_dashscope and deep_think) else {}
 
     # Route simple queries to the fast model to minimise TTFT; complex analysis
     # stays on the configured full model.  Deep-think always uses the full model.
@@ -912,6 +970,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     tool_calls = {}  # idx -> {id, name, args}
     has_tools = False
     for chunk in stream:
+        if not chunk.choices: continue
         delta = chunk.choices[0].delta
         if delta.tool_calls:
             has_tools = True
@@ -978,6 +1037,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         tool_calls = {}
         has_tools = False
         for chunk in stream:
+            if not chunk.choices: continue
             delta = chunk.choices[0].delta
             if delta.tool_calls:
                 has_tools = True

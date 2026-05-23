@@ -12,9 +12,11 @@ import paramiko, os, sys, subprocess, time
 
 HOST      = "116.62.179.231"
 USER      = "root"
-LOCAL_JAR = r"d:\Java Projects\investory\backend\target\investory.jar"
-REMOTE_JAR= "/opt/investory/investory.jar"
-SERVICE   = "investory"
+LOCAL_JAR  = r"d:\Java Projects\investory\backend\target\investory.jar"
+LOCAL_SCRIPT_DIR = r"d:\Java Projects\investory\script"
+REMOTE_JAR = "/opt/investory/investory.jar"
+REMOTE_SCRIPT_DIR = "/opt/investory/script"
+SERVICE    = "investory"
 
 CRAWL_PROC_PATTERN = "fetch_stocks.py"   # any active crawl shows this
 
@@ -65,9 +67,21 @@ def build_jar():
 
 def upload(client):
     size = os.path.getsize(LOCAL_JAR)
-    print(f"Uploading {size/1024/1024:.1f} MB ...")
+    print(f"Uploading JAR ({size/1024/1024:.1f} MB) ...")
     sftp = client.open_sftp()
     sftp.put(LOCAL_JAR, REMOTE_JAR)
+    sftp.close()
+    print("JAR done.")
+    print("Uploading Python scripts ...")
+    sftp = client.open_sftp()
+    for f in os.listdir(LOCAL_SCRIPT_DIR):
+        if f == "config.ini" or f.startswith("__pycache__"):
+            continue
+        src = os.path.join(LOCAL_SCRIPT_DIR, f)
+        dst = f"{REMOTE_SCRIPT_DIR}/{f}"
+        if os.path.isfile(src):
+            sftp.put(src, dst)
+            print(f"  {f}")
     sftp.close()
     print("Upload done.")
 
