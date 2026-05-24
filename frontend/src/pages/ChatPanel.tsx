@@ -127,11 +127,16 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
         setAskData({ question: d.question, options: d.options || [] })
       })
       es.addEventListener('confirm', (e) => {
-        const d = JSON.parse(e.data).data
-        const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d
-        gActiveConfirm = parsed
-        setConfirmData(parsed)
-        setConfirmStatus('pending')
+        try {
+          const raw = JSON.parse(e.data)
+          const d = raw.data || raw
+          const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d
+          if (parsed && parsed.items && parsed.items.length > 0) {
+            gActiveConfirm = parsed
+            setConfirmData(parsed)
+            setConfirmStatus('pending')
+          }
+        } catch {}
       })
       es.addEventListener('tool', (e) => {
         const d: SseEvent = JSON.parse(e.data)
@@ -351,7 +356,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
         {/* Confirm card — rendered outside streaming block so it survives done event */}
-        {confirmData && (
+        {confirmData && confirmData.items && (
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-white border-2 border-emerald-500 shadow-lg shadow-emerald-500/10 space-y-2">
               <div className="flex items-center gap-2 text-emerald-700">
