@@ -280,7 +280,7 @@ export default function Market() {
           const leader = indices.find(d => d.flag === flag && d.name === entry.lead)
             || indices.find(d => d.flag === flag)
           if (leader?.symbol) {
-            window.location.href = `/stock?symbol=${encodeURIComponent(leader.symbol)}`
+            window.location.href = import.meta.env.BASE_URL + `stock?symbol=${encodeURIComponent(leader.symbol)}`
           }
         })
       })

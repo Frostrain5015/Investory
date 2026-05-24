@@ -322,7 +322,7 @@ export default function Admin() {
   async function impersonate(userId: number) {
     if (!(await confirm(t.admin.confirmImpersonate))) return
     await fetch(`${BASE}/api/admin/impersonate/${userId}`, { method: 'POST', credentials: 'include' })
-    window.location.href = '/dashboard'
+    window.location.href = import.meta.env.BASE_URL + 'dashboard'
   }
 
   async function deleteUser(userId: number, username: string) {

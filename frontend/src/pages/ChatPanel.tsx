@@ -368,13 +368,16 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
               {confirmData.items.map((item, i) => {
                 const b = item.body || {}
                 const isDelete = item.action === 'delete'
+                const isRemove = item.action === 'remove_watchlist'
+                const isWatchlist = item.action === 'add_watchlist' || isRemove
                 const isTransfer = b.type === 'TRANSFER_IN' || b.type === 'TRANSFER_OUT'
                 const isDiv = b.type === 'DIV'
                 const typeLabels: Record<string, string> = { BUY: '买入', SELL: '卖出', DIV: '分红', TRANSFER_IN: '转入', TRANSFER_OUT: '转出' }
+                const cardBg = isDelete || isRemove ? 'bg-red-50 text-red-700' : isWatchlist ? 'bg-blue-50 text-blue-700' : 'bg-slate-50 text-slate-500'
                 return (
-                  <div key={i} className={`text-[11px] leading-relaxed rounded-lg px-3 py-2 space-y-0.5 ${isDelete ? 'bg-red-50 text-red-700' : 'bg-slate-50 text-slate-500'}`}>
+                  <div key={i} className={`text-[11px] leading-relaxed rounded-lg px-3 py-2 space-y-0.5 ${cardBg}`}>
                     {item.label && <div className="text-xs font-medium">{item.label}</div>}
-                    <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                    {!isWatchlist && <div className="flex flex-wrap gap-x-3 gap-y-0.5">
                       {b.stockName && <span>{b.stockName}</span>}
                       {b.type && <span className="font-semibold">{typeLabels[b.type] || b.type}</span>}
                       {b.shares > 0 && <span>{isDiv ? `每股 ${b.shares}` : isTransfer ? `${b.shares}` : `${b.shares} 股`}</span>}
@@ -384,7 +387,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                       {b.currency && <span>{b.currency}</span>}
                       {b.amountPerShare != null && b.amountPerShare > 0 && <span>分红/股 {b.amountPerShare}</span>}
                       {b.note && <span className="text-slate-400">备注: {b.note}</span>}
-                    </div>
+                    </div>}
                   </div>
                 )
               })}

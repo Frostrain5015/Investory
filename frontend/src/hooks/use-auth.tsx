@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   function logout() {
     fetch(BASE + '/logout', { credentials: 'include' })
-      .finally(() => { window.location.href = '/' })
+      .finally(() => { window.location.href = import.meta.env.BASE_URL })
   }
 
   return (
