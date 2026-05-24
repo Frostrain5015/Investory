@@ -285,7 +285,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
             </div>
           </div>
         )}
-        {messages.map((m, i) => (
+        {Array.isArray(messages) && messages.map((m, i) => (
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${m.role === 'user' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-800'}`}>
               {m.role === 'assistant'
@@ -356,7 +356,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
           </div>
         )}
         {/* Confirm card — rendered outside streaming block so it survives done event */}
-        {confirmData && confirmData.items && (
+        {confirmData && Array.isArray(confirmData.items) && (
           <div className="flex justify-start">
             <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-white border-2 border-emerald-500 shadow-lg shadow-emerald-500/10 space-y-2">
               <div className="flex items-center gap-2 text-emerald-700">
@@ -366,14 +366,17 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                 <span className="text-xs font-semibold">{confirmData.title}</span>
               </div>
               {confirmData.items.map((item, i) => {
-                const b = item.body
+                const b = item.body || {}
+                const isDelete = item.action === 'delete'
                 const isTransfer = b.type === 'TRANSFER_IN' || b.type === 'TRANSFER_OUT'
                 const isDiv = b.type === 'DIV'
                 const typeLabels: Record<string, string> = { BUY: '买入', SELL: '卖出', DIV: '分红', TRANSFER_IN: '转入', TRANSFER_OUT: '转出' }
                 return (
-                  <div key={i} className="text-[11px] leading-relaxed text-slate-500 bg-slate-50 rounded-lg px-3 py-2 space-y-0.5">
+                  <div key={i} className={`text-[11px] leading-relaxed rounded-lg px-3 py-2 space-y-0.5 ${isDelete ? 'bg-red-50 text-red-700' : 'bg-slate-50 text-slate-500'}`}>
+                    {item.label && <div className="text-xs font-medium">{item.label}</div>}
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                      {b.type && <span className="font-semibold text-slate-700">{typeLabels[b.type] || b.type}</span>}
+                      {b.stockName && <span>{b.stockName}</span>}
+                      {b.type && <span className="font-semibold">{typeLabels[b.type] || b.type}</span>}
                       {b.shares > 0 && <span>{isDiv ? `每股 ${b.shares}` : isTransfer ? `${b.shares}` : `${b.shares} 股`}</span>}
                       {b.price > 0 && !isTransfer && <span>@ {b.price}</span>}
                       {b.fee > 0 && <span>手续费 {b.fee}</span>}

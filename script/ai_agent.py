@@ -1055,35 +1055,105 @@ def _confirm_create(args: dict) -> dict:
     })
     if t == "DIV":
         body["amountPerShare"] = args.get("shares", 0)
+    # Resolve stock name for display
+    stock_name = args.get("stockName", "")
+    if not stock_name and sid > 0:
+        try:
+            conn = get_db_conn()
+            cur = conn.cursor()
+            cur.execute("SELECT name FROM stocks WHERE id = %s", (sid,))
+            row = cur.fetchone()
+            cur.close(); conn.close()
+            if row: stock_name = row[0]
+        except: pass
+    if stock_name:
+        body["stockName"] = stock_name
     endpoint = _build_tx_endpoint(body)
     return _emit_confirm([{
         "action": "create", "label": " | ".join(label_parts),
-        "endpoint": endpoint, "method": "POST", "body": body,
+        "endpoint": endpoint, "method": "POST", "body": _clean_body(body),
     }], " | ".join(label_parts))
 
 def _confirm_update(args: dict) -> dict:
-    """Build a single update-transaction confirmation."""
-    body = {"id": args.get("id")}
+    """Build a single update-transaction confirmation — looks up existing record."""
+    tid = args.get("id")
+    body = {"id": tid}
     for k in ("stockId", "type", "shares", "price", "fee", "tradeDate", "currency", "note", "amountPerShare"):
         if k in args and args[k] is not None:
             body[k] = args[k]
     t = body.get("type", "")
     endpoint = "/api/dividends" if t == "DIV" else "/api/transactions"
+    # Look up existing record for display label
+    label = f"编辑交易 #{tid}"
+    if tid:
+        try:
+            conn = get_db_conn()
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT t.type, s.name, s.symbol, t.shares, t.price, t.trade_date
+                FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
+                WHERE t.id = %s
+            """, (tid,))
+            row = cur.fetchone()
+            cur.close(); conn.close()
+            if row:
+                ttype, name, sym, shares, price, tdate = row[0], row[1], row[2], row[3], row[4], row[5]
+                label = f"编辑: {'买入' if ttype == 'BUY' else '卖出' if ttype == 'SELL' else ttype} {name or sym or '?'} {shares}股 @ {price} ({tdate})"
+                if not body.get("type"): body["type"] = ttype
+        except:
+            pass
     return _emit_confirm([{
-        "action": "update", "label": f"编辑交易 #{args.get('id')}",
-        "endpoint": f"{endpoint}/{args.get('id')}", "method": "PUT", "body": body,
-    }], f"编辑交易 #{args.get('id')}")
+        "action": "update", "label": label,
+        "endpoint": f"{endpoint}/{tid}", "method": "PUT", "body": _clean_body(body),
+    }], label)
 
 def _confirm_delete(args: dict) -> dict:
-    """Build a delete confirmation."""
+    """Build a delete confirmation — looks up transaction details for display."""
     ids = args.get("ids", [])
+    if not ids:
+        return {"error": "no ids provided"}
+    conn = get_db_conn()
     items = []
+    type_labels = {"BUY": "买入", "SELL": "卖出", "DIV": "分红", "TRANSFER_IN": "转入", "TRANSFER_OUT": "转出"}
     for tid in ids:
-        items.append({
-            "action": "delete", "label": f"删除交易 #{tid}",
-            "endpoint": f"/api/transactions/{tid}", "method": "DELETE", "body": {},
-        })
-    return _emit_confirm(items, f"删除 {len(ids)} 笔交易")
+        try:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT t.id, t.type, s.name, s.symbol, t.shares, t.price, t.trade_date, t.currency
+                FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
+                WHERE t.id = %s
+            """, (tid,))
+            row = cur.fetchone()
+            cur.close()
+            if row:
+                ttype, name, sym, shares, price, tdate, curr = row[1], row[2], row[3], row[4], row[5], row[6], row[7]
+                tl = type_labels.get(ttype, ttype)
+                if ttype in ("TRANSFER_IN", "TRANSFER_OUT"):
+                    detail = f"{tl} {shares} {curr} ({tdate})"
+                elif ttype == "DIV":
+                    detail = f"{tl} {name or sym or '?'} {shares}/股 ({tdate})"
+                else:
+                    detail = f"{tl} {name or sym or '?'} {shares}股 @ {price} ({tdate})"
+                endpoint = "/api/dividends" if ttype == "DIV" else "/api/transactions"
+                items.append({
+                    "action": "delete", "label": detail,
+                    "endpoint": f"{endpoint}/{tid}", "method": "DELETE",
+                    "body": {"id": tid, "type": ttype, "shares": float(shares or 0), "price": float(price or 0),
+                             "tradeDate": str(tdate) if tdate else "", "currency": curr or "CNY",
+                             "stockName": name or sym or "?"},
+                })
+            else:
+                items.append({
+                    "action": "delete", "label": f"删除交易 #{tid} (未找到)",
+                    "endpoint": f"/api/transactions/{tid}", "method": "DELETE", "body": {"id": tid},
+                })
+        except:
+            items.append({
+                "action": "delete", "label": f"删除交易 #{tid}",
+                "endpoint": f"/api/transactions/{tid}", "method": "DELETE", "body": {"id": tid},
+            })
+    conn.close()
+    return _emit_confirm(items, f"删除 {len(items)} 笔交易")
 
 def _confirm_bulk_create(args: dict) -> dict:
     """Build a bulk create confirmation."""
