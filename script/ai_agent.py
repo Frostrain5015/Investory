@@ -25,6 +25,14 @@ _COMPLEX_SIGNALS = [
     "基本面", "估值", "财务", "行业", "赛道",
 ]
 
+# Keywords that signal the user wants to write/modify transaction records
+_TRANSACTION_WRITE_SIGNALS = [
+    "买入", "卖出", "买", "卖", "交易", "添加", "新增", "创建",
+    "分红", "删除", "修改", "编辑", "更改", "调整",
+    "增持", "减持", "清仓", "减仓", "加仓", "补仓",
+    "buy", "sell", "add", "delete", "remove", "update", "edit",
+]
+
 def _is_complex_query(messages: list) -> bool:
     """Return True if the latest user message warrants the full model."""
     last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
@@ -32,6 +40,9 @@ def _is_complex_query(messages: list) -> bool:
         return True
     text = str(last_user.get("content", ""))
     if any(k in text for k in _COMPLEX_SIGNALS):
+        return True
+    # Transaction write operations need function calling — force full model
+    if any(k in text for k in _TRANSACTION_WRITE_SIGNALS):
         return True
     # Long messages almost always need thorough reasoning
     return len(text) > 60
@@ -63,7 +74,7 @@ def build_system_prompt(kb: dict) -> str:
 - 用户提到某个策略时，必须先用 list_strategies 查找，再调用 get_strategy 获取完整规则
 - 用户问组合问题时：先调 get_portfolio 拿持仓，需要量化指标时再调 get_stock_metrics
 - 连续调用上限：5 次。超出则基于已有数据分析，告知用户还缺什么
-- ⚠ 交易写入铁律：用户要求新增/修改/删除交易记录时，必须调用 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction 工具。绝对禁止仅用文字描述交易参数后问"确认吗？"——这样用户不会看到确认按钮。必须先收集完整参数（缺失就问），参数齐全后直接调用 confirm 工具，不要输出文字再调用。confirm 工具会自动弹出 Accept/Refuse 确认卡片
+- ⚠ 交易写入铁律（最高优先级）：凡用户要求买入/卖出/入金/出金/分红/删除/修改交易 → 参数齐全后只允许做一件事：调用 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction。严禁用任何文字代替函数调用——即使只说一句"好的请确认"也是严重违规。调用 confirm 工具后系统会自动弹出确认按钮，不需要你用文字再说一遍。
 
 回复规则：
 - 每次不超过 3 句。生成策略代码时不受此限——但代码必须通过 generate_strategy 工具的 code 参数传递
