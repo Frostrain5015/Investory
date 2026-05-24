@@ -63,6 +63,7 @@ def build_system_prompt(kb: dict) -> str:
 - 用户提到某个策略时，必须先用 list_strategies 查找，再调用 get_strategy 获取完整规则
 - 用户问组合问题时：先调 get_portfolio 拿持仓，需要量化指标时再调 get_stock_metrics
 - 连续调用上限：5 次。超出则基于已有数据分析，告知用户还缺什么
+- ⚠ 交易写入铁律：用户要求新增/修改/删除交易记录时，必须调用 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction 工具。绝对禁止仅用文字描述交易参数后问"确认吗？"——这样用户不会看到确认按钮。必须先收集完整参数（缺失就问），参数齐全后直接调用 confirm 工具，不要输出文字再调用。confirm 工具会自动弹出 Accept/Refuse 确认卡片
 
 回复规则：
 - 每次不超过 3 句。生成策略代码时不受此限——但代码必须通过 generate_strategy 工具的 code 参数传递
@@ -758,7 +759,7 @@ TOOLS = [
     }},
     # C: Transaction write tools — confirmation required
     {"type": "function", "function": {
-        "name": "confirm_create_transaction", "description": "创建一笔交易记录。需用户确认后才执行。type: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT。所有必填参数必须从用户指令中提取完整（stockId/shares/price/currency/tradeDate等），不可编造。缺任何参数先反问用户。",
+        "name": "confirm_create_transaction", "description": "【必须调用】创建交易记录并弹出用户确认按钮。当用户要求买入/卖出/添加分红/转入转出资金时必须调用此工具。调用后会弹出 Accept/Refuse 按钮让用户在 UI 上点击确认。不要在文字中询问'确认吗'——直接用此工具。type: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT。所有参数必须从对话中完整提取，缺失先反问。",
         "parameters": {"type": "object", "properties": {
             "stockId": {"type": "integer", "description": "股票ID（从search_stocks或持仓中查询）"},
             "type": {"type": "string", "description": "交易类型: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT"},
@@ -772,7 +773,7 @@ TOOLS = [
         }, "required": ["stockId", "type", "shares", "price", "tradeDate", "currency"]}
     }},
     {"type": "function", "function": {
-        "name": "confirm_update_transaction", "description": "编辑一笔已有交易记录。需用户确认后才执行。先调用get_transactions查询现有记录获取id，再修改参数。",
+        "name": "confirm_update_transaction", "description": "【必须调用】编辑交易记录并弹出确认按钮。用户要求修改交易时调用。先调用get_transactions查询现有记录获取id。调用后弹出 Accept/Refuse 按钮。",
         "parameters": {"type": "object", "properties": {
             "id": {"type": "integer", "description": "交易记录ID，从get_transactions获取"},
             "stockId": {"type": "integer"}, "type": {"type": "string"},
@@ -783,7 +784,7 @@ TOOLS = [
         }, "required": ["id"]}
     }},
     {"type": "function", "function": {
-        "name": "confirm_delete_transaction", "description": "删除一笔或多个交易记录。需用户确认后才执行。先调用get_transactions查询现有记录。",
+        "name": "confirm_delete_transaction", "description": "【必须调用】删除交易记录并弹出确认按钮。用户要求删除交易时调用。先调用get_transactions查询现有记录获取id。调用后弹出 Accept/Refuse 按钮。",
         "parameters": {"type": "object", "properties": {
             "ids": {"type": "array", "items": {"type": "integer"}, "description": "要删除的交易ID列表"}
         }, "required": ["ids"]}
