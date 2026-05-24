@@ -11,6 +11,9 @@ public class LoginInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest req, HttpServletResponse resp, Object handler) throws Exception {
+        // Allow CORS preflight requests (OPTIONS) without authentication
+        if ("OPTIONS".equalsIgnoreCase(req.getMethod())) return true;
+
         HttpSession session = req.getSession(false);
         if (session != null && session.getAttribute("userId") != null) return true;
 
