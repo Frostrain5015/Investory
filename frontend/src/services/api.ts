@@ -231,7 +231,7 @@ export function adminCrawlStart(market: string): Promise<Response> { return fetc
 export function adminCrawlStop(): Promise<Response> { return fetch(`${BASE}/api/admin/crawl/stop`, { method: 'POST', credentials: 'include' }) }
 export function adminCrawlPause(): Promise<Response> { return fetch(`${BASE}/api/admin/crawl/pause`, { method: 'POST', credentials: 'include' }) }
 export function adminCrawlResume(): Promise<Response> { return fetch(`${BASE}/api/admin/crawl/resume`, { method: 'POST', credentials: 'include' }) }
-export function adminCrawlStream(): EventSource { return new EventSource(`${BASE}/api/admin/crawl/sse`) }
+export function adminCrawlStream(): EventSource { return new EventSource(`${BASE}/api/admin/crawl/sse`, { withCredentials: true }) }
 
 // ── Watchlist ────────────────────────────────────────────────────────────
 
@@ -250,7 +250,7 @@ export function aiChat(messages: any[], deepThink?: boolean): Promise<any> {
   return request('/api/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, deepThink }) })
 }
 export function aiClear(): Promise<any> { return request('/api/ai/clear', { method: 'POST' }) }
-export function aiStream(): EventSource { return new EventSource(`${BASE}/api/ai/stream`) }
+export function aiStream(): EventSource { return new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }) }
 export function aiGetSettings(): Promise<any> { return request('/api/ai/settings') }
 export function aiSaveSettings(data: any): Promise<any> {
   return request('/api/ai/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })

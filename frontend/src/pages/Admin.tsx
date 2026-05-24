@@ -152,7 +152,7 @@ export default function Admin() {
         }, 3000)
         cs.setHeartbeat(heartbeat)
 
-        const eventSource = new EventSource(`${BASE}/api/admin/crawl/${data.market}?reconnect=true`)
+        const eventSource = new EventSource(`${BASE}/api/admin/crawl/${data.market}?reconnect=true`, { withCredentials: true })
         cs.setEsRef(eventSource)
 
         eventSource.addEventListener('status', (e) => {
@@ -243,7 +243,7 @@ export default function Admin() {
     }, 3000)
     cs.setHeartbeat(heartbeat)
 
-    const eventSource = new EventSource(`${BASE}/api/admin/crawl/${market}?start=${dateStart}&end=${dateEnd}`)
+    const eventSource = new EventSource(`${BASE}/api/admin/crawl/${market}?start=${dateStart}&end=${dateEnd}`, { withCredentials: true })
     cs.setEsRef(eventSource)
 
     eventSource.addEventListener('status', (e) => {

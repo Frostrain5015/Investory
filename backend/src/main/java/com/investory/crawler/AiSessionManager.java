@@ -52,6 +52,10 @@ public class AiSessionManager {
         emitToAll("done", Map.of("msg", ""));
     }
 
+    public void emitConfirm(String json) {
+        emitToAll("confirm", Map.of("data", json));
+    }
+
     public void emitError(String msg) {
         emitToAll("error", Map.of("msg", msg));
     }

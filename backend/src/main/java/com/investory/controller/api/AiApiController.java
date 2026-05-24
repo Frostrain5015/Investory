@@ -148,6 +148,8 @@ public class AiApiController {
                             } catch (Exception ignored) {}
                         } else if (line.startsWith("[TOOL]")) {
                             session.emitTool(line.substring(6).trim());
+                        } else if (line.startsWith("[CONFIRM]")) {
+                            session.emitConfirm(line.substring(9).trim());
                         } else if (line.startsWith("[ERROR]")) {
                             session.emitError(line.substring(7).trim());
                         } else {

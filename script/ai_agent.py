@@ -756,6 +756,56 @@ TOOLS = [
             "limit": {"type": "integer", "description": "返回条数，默认10，最多20"}
         }}
     }},
+    # C: Transaction write tools — confirmation required
+    {"type": "function", "function": {
+        "name": "confirm_create_transaction", "description": "创建一笔交易记录。需用户确认后才执行。type: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT。所有必填参数必须从用户指令中提取完整（stockId/shares/price/currency/tradeDate等），不可编造。缺任何参数先反问用户。",
+        "parameters": {"type": "object", "properties": {
+            "stockId": {"type": "integer", "description": "股票ID（从search_stocks或持仓中查询）"},
+            "type": {"type": "string", "description": "交易类型: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT"},
+            "shares": {"type": "number", "description": "股数/分红金额/转入转出金额"},
+            "price": {"type": "number", "description": "每股价格。BUY/SELL必填，其他类型填0"},
+            "fee": {"type": "number", "description": "手续费，默认0"},
+            "tradeDate": {"type": "string", "description": "交易日期 YYYY-MM-DD，默认今天"},
+            "currency": {"type": "string", "description": "币种: CNY|HKD|USD"},
+            "note": {"type": "string", "description": "备注，可选"},
+            "amountPerShare": {"type": "number", "description": "每股分红，仅DIV类型需要"}
+        }, "required": ["stockId", "type", "shares", "price", "tradeDate", "currency"]}
+    }},
+    {"type": "function", "function": {
+        "name": "confirm_update_transaction", "description": "编辑一笔已有交易记录。需用户确认后才执行。先调用get_transactions查询现有记录获取id，再修改参数。",
+        "parameters": {"type": "object", "properties": {
+            "id": {"type": "integer", "description": "交易记录ID，从get_transactions获取"},
+            "stockId": {"type": "integer"}, "type": {"type": "string"},
+            "shares": {"type": "number"}, "price": {"type": "number"},
+            "fee": {"type": "number"}, "tradeDate": {"type": "string"},
+            "currency": {"type": "string"}, "note": {"type": "string"},
+            "amountPerShare": {"type": "number"}
+        }, "required": ["id"]}
+    }},
+    {"type": "function", "function": {
+        "name": "confirm_delete_transaction", "description": "删除一笔或多个交易记录。需用户确认后才执行。先调用get_transactions查询现有记录。",
+        "parameters": {"type": "object", "properties": {
+            "ids": {"type": "array", "items": {"type": "integer"}, "description": "要删除的交易ID列表"}
+        }, "required": ["ids"]}
+    }},
+    {"type": "function", "function": {
+        "name": "confirm_bulk_create", "description": "批量创建多笔交易。需用户确认后才执行。每笔交易的参数必须完整。",
+        "parameters": {"type": "object", "properties": {
+            "transactions": {"type": "array", "items": {"type": "object"}, "description": "交易对象列表，每项包含stockId/type/shares/price/fee/tradeDate/currency/note"}
+        }, "required": ["transactions"]}
+    }},
+    {"type": "function", "function": {
+        "name": "confirm_bulk_update", "description": "批量编辑多笔交易。需用户确认后才执行。",
+        "parameters": {"type": "object", "properties": {
+            "updates": {"type": "array", "items": {"type": "object"}, "description": "更新列表，每项须含id及要修改的字段"}
+        }, "required": ["updates"]}
+    }},
+    {"type": "function", "function": {
+        "name": "confirm_bulk_delete", "description": "批量删除多条交易。需用户确认后才执行。",
+        "parameters": {"type": "object", "properties": {
+            "ids": {"type": "array", "items": {"type": "integer"}, "description": "要删除的交易ID列表"}
+        }, "required": ["ids"]}
+    }},
 ]
 
 TOOL_LABELS = {
@@ -782,6 +832,12 @@ TOOL_LABELS = {
     "remember": "保存记忆",
     "forget": "删除记忆",
     "ask_user": "",
+    "confirm_create_transaction": "生成交易确认",
+    "confirm_update_transaction": "生成编辑确认",
+    "confirm_delete_transaction": "生成删除确认",
+    "confirm_bulk_create": "生成批量创建确认",
+    "confirm_bulk_update": "生成批量编辑确认",
+    "confirm_bulk_delete": "生成批量删除确认",
 }
 
 def _trim_result(name: str, result: object) -> object:
@@ -825,6 +881,26 @@ def _trim_result(name: str, result: object) -> object:
                 "trimmed": True,
             }
     return result
+
+
+def _emit_confirm(items: list, title: str) -> dict:
+    """Emit [CONFIRM] protocol line and return the confirmation data."""
+    import uuid
+    data = {
+        "id": f"confirm_{uuid.uuid4().hex[:8]}",
+        "title": title,
+        "items": items,
+    }
+    print(f"[CONFIRM] {json.dumps(data, ensure_ascii=False)}", flush=True)
+    return {"status": "confirmation_sent", "confirmId": data["id"], "itemCount": len(items)}
+
+
+def _build_tx_endpoint(body: dict) -> str:
+    """Determine the correct REST endpoint based on transaction type."""
+    t = body.get("type", "BUY")
+    if t == "DIV":
+        return "/api/dividends"
+    return "/api/transactions"
 
 
 def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
@@ -888,7 +964,116 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_get_global_indices()
     elif name == "get_world_news":
         return tool_get_world_news(args.get("limit", 10))
+    elif name == "confirm_create_transaction":
+        return _confirm_create(args)
+    elif name == "confirm_update_transaction":
+        return _confirm_update(args)
+    elif name == "confirm_delete_transaction":
+        return _confirm_delete(args)
+    elif name == "confirm_bulk_create":
+        return _confirm_bulk_create(args)
+    elif name == "confirm_bulk_update":
+        return _confirm_bulk_update(args)
+    elif name == "confirm_bulk_delete":
+        return _confirm_bulk_delete(args)
     return {"error": f"unknown tool: {name}"}
+
+# ── Confirm tool implementations ──────────────────────────────────
+
+def _confirm_create(args: dict) -> dict:
+    """Build a single create-transaction confirmation."""
+    t = args.get("type", "BUY")
+    label_parts = []
+    if t == "DIV":
+        label_parts.append(f"分红 {args.get('shares', 0)}/股")
+    elif t in ("TRANSFER_IN", "TRANSFER_OUT"):
+        label_parts.append(f"{'转入' if t == 'TRANSFER_IN' else '转出'} {args.get('shares', 0)} {args.get('currency', 'CNY')}")
+    else:
+        label_parts.append(f"{'买入' if t == 'BUY' else '卖出'} {args.get('shares', 0)}股")
+    if args.get("tradeDate"):
+        label_parts.append(f"日期 {args['tradeDate']}")
+    body = {
+        "stockId": args.get("stockId"), "type": t, "shares": args.get("shares"),
+        "price": args.get("price", 0), "fee": args.get("fee", 0),
+        "tradeDate": args.get("tradeDate", ""), "currency": args.get("currency", "CNY"),
+        "note": args.get("note", ""),
+    }
+    if t == "DIV":
+        body["amountPerShare"] = args.get("shares", 0)
+    endpoint = _build_tx_endpoint(body)
+    return _emit_confirm([{
+        "action": "create", "label": " | ".join(label_parts),
+        "endpoint": endpoint, "method": "POST", "body": body,
+    }], " | ".join(label_parts))
+
+def _confirm_update(args: dict) -> dict:
+    """Build a single update-transaction confirmation."""
+    body = {"id": args.get("id")}
+    for k in ("stockId", "type", "shares", "price", "fee", "tradeDate", "currency", "note", "amountPerShare"):
+        if k in args and args[k] is not None:
+            body[k] = args[k]
+    t = body.get("type", "")
+    endpoint = "/api/dividends" if t == "DIV" else "/api/transactions"
+    return _emit_confirm([{
+        "action": "update", "label": f"编辑交易 #{args.get('id')}",
+        "endpoint": f"{endpoint}/{args.get('id')}", "method": "PUT", "body": body,
+    }], f"编辑交易 #{args.get('id')}")
+
+def _confirm_delete(args: dict) -> dict:
+    """Build a delete confirmation."""
+    ids = args.get("ids", [])
+    items = []
+    for tid in ids:
+        items.append({
+            "action": "delete", "label": f"删除交易 #{tid}",
+            "endpoint": f"/api/transactions/{tid}", "method": "DELETE", "body": {},
+        })
+    return _emit_confirm(items, f"删除 {len(ids)} 笔交易")
+
+def _confirm_bulk_create(args: dict) -> dict:
+    """Build a bulk create confirmation."""
+    txs = args.get("transactions", [])
+    items = []
+    for tx in txs:
+        t = tx.get("type", "BUY")
+        body = {
+            "stockId": tx.get("stockId"), "type": t, "shares": tx.get("shares"),
+            "price": tx.get("price", 0), "fee": tx.get("fee", 0),
+            "tradeDate": tx.get("tradeDate", ""), "currency": tx.get("currency", "CNY"),
+            "note": tx.get("note", ""),
+        }
+        if t == "DIV":
+            body["amountPerShare"] = tx.get("shares", 0)
+        endpoint = _build_tx_endpoint(body)
+        items.append({
+            "action": "create", "label": f"{t} {tx.get('shares', 0)}股 @ {tx.get('price', 0)}",
+            "endpoint": endpoint, "method": "POST", "body": body,
+        })
+    return _emit_confirm(items, f"批量创建 {len(items)} 笔交易")
+
+def _confirm_bulk_update(args: dict) -> dict:
+    """Build a bulk update confirmation."""
+    updates = args.get("updates", [])
+    items = []
+    for u in updates:
+        tid = u.get("id")
+        body = {k: v for k, v in u.items() if v is not None}
+        t = body.get("type", "")
+        endpoint = "/api/dividends" if t == "DIV" else "/api/transactions"
+        items.append({
+            "action": "update", "label": f"编辑交易 #{tid}",
+            "endpoint": f"{endpoint}/{tid}", "method": "PUT", "body": body,
+        })
+    return _emit_confirm(items, f"批量编辑 {len(items)} 笔交易")
+
+def _confirm_bulk_delete(args: dict) -> dict:
+    """Build a bulk delete confirmation."""
+    ids = args.get("ids", [])
+    items = [{
+        "action": "delete", "label": f"删除交易 #{tid}",
+        "endpoint": f"/api/transactions/{tid}", "method": "DELETE", "body": {},
+    } for tid in ids]
+    return _emit_confirm(items, f"批量删除 {len(items)} 笔交易")
 
 
 def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> str:

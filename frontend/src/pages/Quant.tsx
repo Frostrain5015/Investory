@@ -257,7 +257,7 @@ function BacktestSection() {
     if (esRef.current) { esRef.current.close(); esRef.current = null }
     getBacktestStream().then(resp => {
       if (!resp.ok) return
-      const es = new EventSource(`${BASE}/api/backtest/stream`)
+      const es = new EventSource(`${BASE}/api/backtest/stream`, { withCredentials: true })
       esRef.current = es; wireSSE(es)
     }).catch(() => {})
   }

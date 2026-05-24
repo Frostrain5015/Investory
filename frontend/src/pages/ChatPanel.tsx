@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Sparkles, X, Send, RefreshCw, Trash2, Brain } from 'lucide-react'
+import { Sparkles, X, Send, RefreshCw, Trash2, Brain, Check, Loader2 } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -9,11 +9,15 @@ import { useT } from '@/i18n/I18nContext'
 import { getCachedSuggestions, getSuggestionsPromise } from '@/services/aiPreload'
 import { BASE } from '@/services/api'
 
-interface Message { role: 'user' | 'assistant'; content: string; thinking?: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string }
+interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData }
+interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
+interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
+type ConfirmStatus = 'pending' | 'accepted' | 'refused'
 
 // Module-level state survives page navigation
 let gMessages: Message[] = []
 let gListeners: (() => void)[] = []
+let gActiveConfirm: ConfirmData | null = null
 
 function notify() { gListeners.forEach(fn => fn()) }
 
@@ -54,6 +58,9 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
   const streamAccum = useRef('')  // accumulates raw stream text; read synchronously in done handler
   const [askData, setAskData] = useState<{ question: string; options: string[] } | null>(null)
+  const [confirmData, setConfirmData] = useState<ConfirmData | null>(null)
+  const [confirmStatus, setConfirmStatus] = useState<ConfirmStatus | null>(null)
+  const [executing, setExecuting] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>([])
   const esRef = useRef<EventSource | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -95,6 +102,9 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     streamAccum.current = ''
     setToolMsg('')
     setAskData(null)
+    setConfirmData(null)
+    setConfirmStatus(null)
+    gActiveConfirm = null
 
     try {
       const resp = await fetch(`${BASE}/api/ai/chat`, {
@@ -105,7 +115,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
 
       if (esRef.current) esRef.current.close()
-      const es = new EventSource(`${BASE}/api/ai/stream`)
+      const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true })
       esRef.current = es
 
       es.addEventListener('strategy', (e) => {
@@ -115,6 +125,13 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
       es.addEventListener('ask', (e) => {
         const d = JSON.parse(e.data)
         setAskData({ question: d.question, options: d.options || [] })
+      })
+      es.addEventListener('confirm', (e) => {
+        const d = JSON.parse(e.data).data
+        const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d
+        gActiveConfirm = parsed
+        setConfirmData(parsed)
+        setConfirmStatus('pending')
       })
       es.addEventListener('tool', (e) => {
         const d: SseEvent = JSON.parse(e.data)
@@ -178,6 +195,42 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     setMessages(trimmed)
     const lastUser = trimmed.filter(m => m.role === 'user').pop()
     if (lastUser) send(lastUser.content)
+  }
+
+  async function handleConfirmAccept() {
+    if (!confirmData) return
+    setExecuting(true)
+    const results: string[] = []
+    for (const item of confirmData.items) {
+      try {
+        const form = new URLSearchParams()
+        for (const [k, v] of Object.entries(item.body)) {
+          if (v !== undefined && v !== null && v !== '') form.append(k, String(v))
+        }
+        const res = await fetch(`${BASE}${item.endpoint}`, {
+          method: item.method,
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: item.method === 'DELETE' ? undefined : form.toString(),
+        })
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}))
+          results.push(`✗ ${item.label}: ${err.error || `HTTP ${res.status}`}`)
+        } else {
+          results.push(`✓ ${item.label}`)
+        }
+      } catch (e: any) {
+        results.push(`✗ ${item.label}: ${e.message}`)
+      }
+    }
+    setConfirmStatus('accepted')
+    setExecuting(false)
+    setMessages(prev => [...prev, { role: 'system', content: results.join('\n') }])
+  }
+
+  function handleConfirmRefuse() {
+    setConfirmStatus('refused')
+    setMessages(prev => [...prev, { role: 'system', content: '已取消操作' }])
   }
 
   function handleKeyDown(e: React.KeyboardEvent) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }
@@ -290,6 +343,47 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                     <button key={i} onClick={() => { setAskData(null); send(o) }}
                       className="block w-full text-left text-xs px-3 py-2 rounded-lg border border-slate-200 hover:bg-slate-50 hover:border-slate-300 transition-colors">{o}</button>
                   ))}
+                </div>
+              )}
+              {confirmData && (
+                <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
+                  <p className="text-xs font-semibold text-slate-700">{confirmData.title}</p>
+                  {confirmData.items.map((item, i) => {
+                    const b = item.body
+                    const isTransfer = b.type === 'TRANSFER_IN' || b.type === 'TRANSFER_OUT'
+                    const isDiv = b.type === 'DIV'
+                    return (
+                      <div key={i} className="text-[11px] leading-relaxed text-slate-500 bg-slate-50 rounded-lg px-3 py-2 space-y-0.5">
+                        <span className="font-medium text-slate-700">{item.label}</span>
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                          {b.stockId > 0 && <span>ID: {b.stockId}</span>}
+                          {b.type && <span className="font-medium">{b.type}</span>}
+                          {b.shares > 0 && <span>{isDiv ? `每股 ${b.shares}` : `${b.shares}股`}</span>}
+                          {b.price > 0 && <span>@{b.price}</span>}
+                          {b.fee > 0 && <span>手续费 {b.fee}</span>}
+                          {b.tradeDate && <span>日期 {b.tradeDate}</span>}
+                          {b.currency && <span>{b.currency}</span>}
+                          {b.amountPerShare != null && b.amountPerShare > 0 && <span>分红/股 {b.amountPerShare}</span>}
+                          {b.note && <span className="text-slate-400">备注: {b.note}</span>}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {confirmStatus === 'pending' && (
+                    <div className="flex gap-2 pt-1">
+                      <button onClick={handleConfirmAccept} disabled={executing}
+                        className="flex items-center gap-1 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors disabled:opacity-60">
+                        {executing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                        Accept
+                      </button>
+                      <button onClick={handleConfirmRefuse} disabled={executing}
+                        className="flex items-center gap-1 px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors">
+                        <X className="w-3.5 h-3.5" />Refuse
+                      </button>
+                    </div>
+                  )}
+                  {confirmStatus === 'accepted' && <p className="text-xs text-emerald-600">✓ 已执行</p>}
+                  {confirmStatus === 'refused' && <p className="text-xs text-slate-400">✗ 已取消</p>}
                 </div>
               )}
             </div>
