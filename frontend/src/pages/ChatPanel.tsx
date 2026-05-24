@@ -345,47 +345,54 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
                   ))}
                 </div>
               )}
-              {confirmData && (
-                <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
-                  <p className="text-xs font-semibold text-slate-700">{confirmData.title}</p>
-                  {confirmData.items.map((item, i) => {
-                    const b = item.body
-                    const isTransfer = b.type === 'TRANSFER_IN' || b.type === 'TRANSFER_OUT'
-                    const isDiv = b.type === 'DIV'
-                    return (
-                      <div key={i} className="text-[11px] leading-relaxed text-slate-500 bg-slate-50 rounded-lg px-3 py-2 space-y-0.5">
-                        <span className="font-medium text-slate-700">{item.label}</span>
-                        <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                          {b.stockId > 0 && <span>ID: {b.stockId}</span>}
-                          {b.type && <span className="font-medium">{b.type}</span>}
-                          {b.shares > 0 && <span>{isDiv ? `每股 ${b.shares}` : `${b.shares}股`}</span>}
-                          {b.price > 0 && <span>@{b.price}</span>}
-                          {b.fee > 0 && <span>手续费 {b.fee}</span>}
-                          {b.tradeDate && <span>日期 {b.tradeDate}</span>}
-                          {b.currency && <span>{b.currency}</span>}
-                          {b.amountPerShare != null && b.amountPerShare > 0 && <span>分红/股 {b.amountPerShare}</span>}
-                          {b.note && <span className="text-slate-400">备注: {b.note}</span>}
-                        </div>
-                      </div>
-                    )
-                  })}
-                  {confirmStatus === 'pending' && (
-                    <div className="flex gap-2 pt-1">
-                      <button onClick={handleConfirmAccept} disabled={executing}
-                        className="flex items-center gap-1 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors disabled:opacity-60">
-                        {executing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
-                        Accept
-                      </button>
-                      <button onClick={handleConfirmRefuse} disabled={executing}
-                        className="flex items-center gap-1 px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors">
-                        <X className="w-3.5 h-3.5" />Refuse
-                      </button>
+            </div>
+          </div>
+        )}
+        {/* Confirm card — rendered outside streaming block so it survives done event */}
+        {confirmData && (
+          <div className="flex justify-start">
+            <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-white border-2 border-emerald-500 shadow-lg shadow-emerald-500/10 space-y-2">
+              <div className="flex items-center gap-2 text-emerald-700">
+                <div className="w-5 h-5 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <Check className="w-3 h-3 text-emerald-600" />
+                </div>
+                <span className="text-xs font-semibold">{confirmData.title}</span>
+              </div>
+              {confirmData.items.map((item, i) => {
+                const b = item.body
+                const isTransfer = b.type === 'TRANSFER_IN' || b.type === 'TRANSFER_OUT'
+                const isDiv = b.type === 'DIV'
+                const typeLabels: Record<string, string> = { BUY: '买入', SELL: '卖出', DIV: '分红', TRANSFER_IN: '转入', TRANSFER_OUT: '转出' }
+                return (
+                  <div key={i} className="text-[11px] leading-relaxed text-slate-500 bg-slate-50 rounded-lg px-3 py-2 space-y-0.5">
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                      {b.type && <span className="font-semibold text-slate-700">{typeLabels[b.type] || b.type}</span>}
+                      {b.shares > 0 && <span>{isDiv ? `每股 ${b.shares}` : isTransfer ? `${b.shares}` : `${b.shares} 股`}</span>}
+                      {b.price > 0 && !isTransfer && <span>@ {b.price}</span>}
+                      {b.fee > 0 && <span>手续费 {b.fee}</span>}
+                      {b.tradeDate && <span>日期 {b.tradeDate}</span>}
+                      {b.currency && <span>{b.currency}</span>}
+                      {b.amountPerShare != null && b.amountPerShare > 0 && <span>分红/股 {b.amountPerShare}</span>}
+                      {b.note && <span className="text-slate-400">备注: {b.note}</span>}
                     </div>
-                  )}
-                  {confirmStatus === 'accepted' && <p className="text-xs text-emerald-600">✓ 已执行</p>}
-                  {confirmStatus === 'refused' && <p className="text-xs text-slate-400">✗ 已取消</p>}
+                  </div>
+                )
+              })}
+              {confirmStatus === 'pending' && (
+                <div className="flex gap-2 pt-1">
+                  <button onClick={handleConfirmAccept} disabled={executing}
+                    className="flex items-center gap-1 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors disabled:opacity-60">
+                    {executing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                    Accept
+                  </button>
+                  <button onClick={handleConfirmRefuse} disabled={executing}
+                    className="flex items-center gap-1 px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors">
+                    <X className="w-3.5 h-3.5" />Refuse
+                  </button>
                 </div>
               )}
+              {confirmStatus === 'accepted' && <p className="text-xs text-emerald-600 font-medium">✓ 执行成功</p>}
+              {confirmStatus === 'refused' && <p className="text-xs text-slate-400">✗ 已取消</p>}
             </div>
           </div>
         )}
