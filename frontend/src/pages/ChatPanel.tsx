@@ -198,20 +198,21 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   }
 
   async function handleConfirmAccept() {
-    if (!confirmData) return
+    if (!confirmData || !confirmData.items) return
     setExecuting(true)
     const results: string[] = []
     for (const item of confirmData.items) {
       try {
+        const body = item.body || {}
         const form = new URLSearchParams()
-        for (const [k, v] of Object.entries(item.body)) {
-          if (v !== undefined && v !== null && v !== '') form.append(k, String(v))
+        for (const [k, v] of Object.entries(body)) {
+          if (v != null && v !== '') form.append(k, String(v))
         }
         const res = await fetch(`${BASE}${item.endpoint}`, {
-          method: item.method,
+          method: item.method || 'POST',
           credentials: 'include',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: item.method === 'DELETE' ? undefined : form.toString(),
+          headers: item.method !== 'DELETE' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : undefined,
+          body: item.method !== 'DELETE' ? form.toString() : undefined,
         })
         if (!res.ok) {
           const err = await res.json().catch(() => ({}))
@@ -225,12 +226,13 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     }
     setConfirmStatus('accepted')
     setExecuting(false)
-    setMessages(prev => [...prev, { role: 'system', content: results.join('\n') }])
+    if (results.length > 0) {
+      setMessages(prev => [...prev, { role: 'system', content: results.join('\n') }])
+    }
   }
 
   function handleConfirmRefuse() {
     setConfirmStatus('refused')
-    setMessages(prev => [...prev, { role: 'system', content: '已取消操作' }])
   }
 
   function handleKeyDown(e: React.KeyboardEvent) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }

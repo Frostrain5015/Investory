@@ -167,6 +167,19 @@ MAX_PNL_ROWS = 500
 MAX_CORR_STOCKS = 10
 MAX_TOOL_CALLS = 5
 
+def tool_search_stocks(query: str) -> dict:
+    """Fuzzy search stocks by name or symbol, return id/symbol/name/market."""
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT id, symbol, name, market FROM stocks WHERE symbol LIKE %s OR name LIKE %s LIMIT 15",
+        (f"%{query}%", f"%{query}%")
+    )
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    results = [{"id": r[0], "symbol": r[1], "name": r[2], "market": r[3]} for r in rows]
+    return {"query": query, "count": len(results), "results": results}
+
 def tool_get_stock_price(symbol: str) -> dict:
     """获取个股最新行情"""
     conn = get_db_conn()
@@ -690,6 +703,10 @@ TOOLS = [
     }},
     # A: Data tools
     {"type": "function", "function": {
+        "name": "search_stocks", "description": "根据股票名称或代码模糊搜索，返回匹配的stockId、symbol、name、market。用户提到股票名但未给代码时必须先调用此工具获取stockId。",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "搜索关键词：股票名或代码"}}, "required": ["query"]}
+    }},
+    {"type": "function", "function": {
         "name": "get_stock_price", "description": "查询某只股票的当前价格和今日涨跌",
         "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}, "required": ["symbol"]}
     }},
@@ -828,6 +845,7 @@ TOOL_LABELS = {
     "list_strategies": "获取策略列表",
     "get_strategy": "读取策略详情",
     "generate_strategy": "生成策略",
+    "search_stocks": "搜索股票",
     "get_stock_price": "查询股价",
     "get_pnl_history": "获取组合走势",
     "get_transactions": "获取交易记录",
@@ -946,6 +964,8 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         result = {"name": args.get("name", ""), "description": args.get("description", ""), "code": code}
         print(f"[STRATEGY] {json.dumps(result, ensure_ascii=False)}", flush=True)
         return result
+    elif name == "search_stocks":
+        return tool_search_stocks(args.get("query", ""))
     elif name == "get_stock_price":
         return tool_get_stock_price(args.get("symbol", ""))
     elif name == "get_pnl_history":
@@ -992,9 +1012,32 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
 
 # ── Confirm tool implementations ──────────────────────────────────
 
+def _clean_body(body: dict) -> dict:
+    """Remove None/empty values so frontend doesn't send 'null' strings."""
+    return {k: v for k, v in body.items() if v is not None and v != ""}
+
+def _resolve_stock_id(value) -> int:
+    """Try to resolve a stock symbol to an ID, or return the integer as-is."""
+    if isinstance(value, int) and value > 0:
+        return value
+    if isinstance(value, str) and value.strip():
+        conn = get_db_conn()
+        try:
+            sym = resolve_symbol(conn, value.strip())
+            if sym:
+                cur = conn.cursor()
+                cur.execute("SELECT id FROM stocks WHERE symbol=%s", (sym,))
+                row = cur.fetchone()
+                cur.close()
+                if row: return row[0]
+        finally:
+            conn.close()
+    return 0
+
 def _confirm_create(args: dict) -> dict:
     """Build a single create-transaction confirmation."""
     t = args.get("type", "BUY")
+    sid = _resolve_stock_id(args.get("stockId", 0))
     label_parts = []
     if t == "DIV":
         label_parts.append(f"分红 {args.get('shares', 0)}/股")
@@ -1004,12 +1047,12 @@ def _confirm_create(args: dict) -> dict:
         label_parts.append(f"{'买入' if t == 'BUY' else '卖出'} {args.get('shares', 0)}股")
     if args.get("tradeDate"):
         label_parts.append(f"日期 {args['tradeDate']}")
-    body = {
-        "stockId": args.get("stockId"), "type": t, "shares": args.get("shares"),
+    body = _clean_body({
+        "stockId": sid, "type": t, "shares": args.get("shares"),
         "price": args.get("price", 0), "fee": args.get("fee", 0),
         "tradeDate": args.get("tradeDate", ""), "currency": args.get("currency", "CNY"),
         "note": args.get("note", ""),
-    }
+    })
     if t == "DIV":
         body["amountPerShare"] = args.get("shares", 0)
     endpoint = _build_tx_endpoint(body)
