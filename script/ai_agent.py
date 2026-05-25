@@ -90,22 +90,24 @@ def build_system_prompt(kb: dict) -> str:
 def resolve_symbol(conn, symbol: str):
     """将用户输入的 symbol 转换为 DB 格式"""
     cur = conn.cursor()
-    cur.execute("SELECT symbol FROM stocks WHERE symbol=%s", (symbol,))
-    row = cur.fetchone()
-    if row: cur.close(); return row[0]
-    if '.' in symbol:
-        parts = symbol.rsplit('.', 1)
-        code, market = parts[0], parts[1].upper()
-        if market in ('SH','SZ'):
-            prefix = '1' if market == 'SH' else '0'
-            db_sym = f"{prefix}.{code}"
-            cur.execute("SELECT symbol FROM stocks WHERE symbol=%s", (db_sym,))
-            row = cur.fetchone()
-            if row: cur.close(); return row[0]
-    cur.execute("SELECT symbol FROM stocks WHERE symbol LIKE %s", (f"%{symbol}%",))
-    row = cur.fetchone()
-    cur.close()
-    return row[0] if row else None
+    try:
+        cur.execute("SELECT symbol FROM stocks WHERE symbol=%s", (symbol,))
+        row = cur.fetchone()
+        if row: return row[0]
+        if '.' in symbol:
+            parts = symbol.rsplit('.', 1)
+            code, market = parts[0], parts[1].upper()
+            if market in ('SH','SZ'):
+                prefix = '1' if market == 'SH' else '0'
+                db_sym = f"{prefix}.{code}"
+                cur.execute("SELECT symbol FROM stocks WHERE symbol=%s", (db_sym,))
+                row = cur.fetchone()
+                if row: return row[0]
+        cur.execute("SELECT symbol FROM stocks WHERE symbol LIKE %s", (f"%{symbol}%",))
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        cur.close()
 
 
 # ── Database tools ──────────────────────────────────────────────────────
@@ -1171,17 +1173,12 @@ def _confirm_delete(args: dict) -> dict:
                              "stockName": name or sym or "?"},
                 })
             else:
-                items.append({
-                    "action": "delete", "label": f"删除交易 #{tid} (未找到)",
-                    "endpoint": f"/api/transactions/{tid}", "method": "DELETE", "body": {"id": tid},
-                })
+                # Not found in either table — skip, don't create a broken confirmation
+                pass
         except:
-            items.append({
-                "action": "delete", "label": f"删除交易 #{tid}",
-                "endpoint": f"/api/transactions/{tid}", "method": "DELETE", "body": {"id": tid},
-            })
+            pass  # Skip unresolvable IDs
     conn.close()
-    return _emit_confirm(items, f"删除 {len(items)} 笔交易")
+    return _emit_confirm(items, f"删除 {len(items)} 笔交易") if items else {"error": "未找到可删除的交易"}
 
 def _confirm_bulk_create(args: dict) -> dict:
     """Build a bulk create confirmation."""

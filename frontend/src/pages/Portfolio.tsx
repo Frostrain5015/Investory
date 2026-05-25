@@ -34,6 +34,7 @@ export default function Portfolio() {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: form.toString(),
     })
+    if (!res.ok) return
     const p = await res.json()
     setPortfolioId(p.id)
     setNewName('')

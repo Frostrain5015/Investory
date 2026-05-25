@@ -83,6 +83,7 @@ function RiskSection() {
   }, [])
 
   useEffect(() => { loadStyle() }, [loadStyle])
+  useEffect(() => () => { if (esRef.current) esRef.current.close() }, [])
 
   function refreshMetrics() {
     setRefreshingMetrics(true)
@@ -244,6 +245,7 @@ function BacktestSection() {
   }, [])
 
   useEffect(() => { loadHistory() }, [loadHistory])
+  useEffect(() => () => { if (esRef.current) esRef.current.close() }, [])
 
   // Reconnect on mount
   useEffect(() => {
@@ -279,7 +281,8 @@ function BacktestSection() {
     if (!runStrategyId) { toast(q.toastSelectStrategy, false); return }
     const savedStrat = strategies.find(s => s.id === runStrategyId)
     if (!savedStrat) { toast(q.toastStrategyNotFound, false); return }
-    const strategyData = JSON.parse(savedStrat.strategy_json)
+    let strategyData: any
+    try { strategyData = JSON.parse(savedStrat.strategy_json || '{}') } catch { console.error('Invalid strategy JSON'); return }
     const strategy = { ...strategyData, stocks }
     const config: any = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.0003, slippagePct: 0.001 }
     const effectiveStrategyType = optimize ? 'optimize' : wfEnabled ? 'walk_forward' : savedStrat.strategy_type

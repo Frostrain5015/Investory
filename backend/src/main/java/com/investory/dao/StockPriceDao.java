@@ -62,4 +62,16 @@ public class StockPriceDao extends BaseDao {
         StockPrice sp = findLatest(stockId);
         return sp != null ? sp.getClose() : null;
     }
+
+    /** Insert close-only price snapshot, never overwrite existing OHLC. */
+    public void upsertCloseOnly(long stockId, LocalDate date, BigDecimal close) {
+        update("""
+            INSERT INTO stock_prices (stock_id, trade_date, open, close, high, low, volume)
+            VALUES (?, ?, ?, ?, ?, ?, 0)
+            ON DUPLICATE KEY UPDATE
+              close = VALUES(close),
+              volume = IF(VALUES(volume) > volume, VALUES(volume), volume)
+            """,
+            stockId, Date.valueOf(date), close, close, close, close);
+    }
 }

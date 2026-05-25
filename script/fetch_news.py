@@ -250,12 +250,13 @@ def main():
         user=cfg["db_user"], password=cfg["db_password"],
         database=cfg["db_name"], charset="utf8mb4",
     )
-    cur = conn.cursor()
+    try:
+        cur = conn.cursor()
 
-    today = date.today()
-    entries: list[dict] = []
+        today = date.today()
+        entries: list[dict] = []
 
-    for source_name, url in RSS_FEEDS:
+        for source_name, url in RSS_FEEDS:
         try:
             raw = fetch_feed(url, proxies)
             kept = 0
@@ -316,8 +317,9 @@ def main():
 
     cur.execute("DELETE FROM world_news WHERE fetched_date < CURDATE() - INTERVAL 7 DAY")
     conn.commit()
-    cur.close()
-    conn.close()
+    finally:
+        cur.close()
+        conn.close()
 
     with_loc = sum(1 for e in top if e["country_code"])
     print(f"世界新闻完成: 写入 {inserted} 行，有地理位置 {with_loc} 条，无数据(低分/错误) {len(entries) - inserted} 只")

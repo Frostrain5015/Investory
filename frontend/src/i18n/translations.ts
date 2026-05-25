@@ -1847,6 +1847,9 @@ const hk = {
     resumeDone: "▶ 已繼續",
   },
 }
+// Note: hk cannot use `as const` because its array values (chat.suggestions)
+// become readonly tuples, which conflict with Widen<T> used in I18nContext.
+// zh and en use `as const` for literal type narrowing.
 
 export const LANGS = { zh, hk, en } as const
 export type Lang = keyof typeof LANGS

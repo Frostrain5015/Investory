@@ -126,14 +126,7 @@ public class EastMoneyCrawler {
                             String symbol = marketPrefix(market) + "." + code;
                             Stock stock = stockDao.findBySymbol(symbol);
                             if (stock == null) continue;
-                            StockPrice sp = new StockPrice();
-                            sp.setStockId(stock.getId());
-                            sp.setTradeDate(LocalDate.now());
-                            sp.setClose(price);
-                            sp.setOpen(price);
-                            sp.setHigh(price);
-                            sp.setLow(price);
-                            stockPriceDao.upsert(sp);
+                            stockPriceDao.upsertCloseOnly(stock.getId(), LocalDate.now(), price);
                             total++;
                         } catch (NumberFormatException ignored) {}
                     }

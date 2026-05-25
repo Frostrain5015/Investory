@@ -219,10 +219,13 @@ def fetch_yahoo_fundamentals(market: str, conn, cfg: dict, dry_run: bool, log: l
     if not stocks:
         log.info(f"No {market} stocks found"); return
 
-    # Set proxy if configured
+    # Save/restore proxy env vars to avoid leaking across markets
+    _old_http = os.environ.get("HTTP_PROXY")
+    _old_https = os.environ.get("HTTPS_PROXY")
     if cfg["proxy_url"]:
         os.environ["HTTP_PROXY"] = cfg["proxy_url"]
         os.environ["HTTPS_PROXY"] = cfg["proxy_url"]
+    try:
 
     total = len(stocks)
     for idx, (stock_id, symbol, name, _) in enumerate(stocks):
@@ -259,6 +262,11 @@ def fetch_yahoo_fundamentals(market: str, conn, cfg: dict, dry_run: bool, log: l
         except Exception as e:
             log.warning(f"  Failed: {e}")
         time.sleep(cfg["delay"])
+    finally:
+        if _old_http is not None: os.environ["HTTP_PROXY"] = _old_http
+        else: os.environ.pop("HTTP_PROXY", None)
+        if _old_https is not None: os.environ["HTTPS_PROXY"] = _old_https
+        else: os.environ.pop("HTTPS_PROXY", None)
 
 
 # ── Main ────────────────────────────────────────────────────────────────

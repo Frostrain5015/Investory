@@ -394,7 +394,7 @@ export default function StockDetail() {
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="font-medium text-slate-900">{stock?.name}</span>
-                        <span className="tabular-nums font-semibold text-slate-800">{(tran.shares * tran.price).toFixed(2)}</span>
+                        <span className="tabular-nums font-semibold text-slate-800">{((tran.shares ?? 0) * (tran.price ?? 0)).toFixed(2)}</span>
                       </div>
                       <details className="mt-1">
                         <summary className="text-xs text-slate-400 cursor-pointer select-none">{t.common.more}</summary>

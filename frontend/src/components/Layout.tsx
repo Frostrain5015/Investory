@@ -44,9 +44,11 @@ export default function Layout() {
   async function handleSearch(q: string) {
     setQuery(q)
     if (q.length < 1) { setResults([]); return }
-    const data = await searchStocks(q)
-    setResults(data || [])
-    setShowDropdown(true)
+    try {
+      const data = await searchStocks(q)
+      setResults(data || [])
+      setShowDropdown(true)
+    } catch { /* search API failed, silently ignore */ }
   }
 
   const sidebar = (

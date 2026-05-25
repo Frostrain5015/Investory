@@ -48,6 +48,8 @@ public class DividendController {
             @RequestParam String recordDate, HttpServletRequest req) {
         long pid = getPortfolioId(req);
         Holding h = holdingDao.findByPortfolioAndStock(pid, stockId);
+        if (h == null || h.getTotalShares().compareTo(BigDecimal.ZERO) <= 0)
+            return Map.of("error", "该股票不在当前组合持仓中");
         BigDecimal sh = h != null ? h.getTotalShares() : BigDecimal.ONE;
         Dividend d = new Dividend(); d.setPortfolioId(pid); d.setStockId(stockId);
         d.setAmountPerShare(amountPerShare); d.setSharesHeld(sh);

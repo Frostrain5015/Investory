@@ -21,6 +21,7 @@ export default function ClosedPositions({ open, onClose }: { open: boolean; onCl
     setLoading(true)
     fetch(`${BASE}/api/closed-positions`, { credentials: 'include' })
       .then(r => r.json()).then(setItems)
+      .catch(() => setItems([]))
       .finally(() => setLoading(false))
   }, [open])
 
