@@ -11,8 +11,8 @@ export const BASE = import.meta.env.VITE_API_BASE || '/investory'
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + url, { credentials: 'include', ...options })
   if (res.status === 401) {
-    window.location.href = import.meta.env.BASE_URL
-    throw new Error('Unauthorized')
+    window.dispatchEvent(new CustomEvent('investory:auth-expired'))
+    return {} as T
   }
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const text = await res.text()

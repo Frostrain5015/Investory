@@ -76,9 +76,10 @@ public class ChartDataController {
             to   = LocalDate.parse(endStr);
         } else if (days == 0) {
             to = LocalDate.now();
-            java.sql.Date earliest = jdbc.queryForObject(
+            List<java.sql.Date> dates = jdbc.queryForList(
                 "SELECT MIN(trade_date) FROM stock_prices WHERE stock_id = ?",
                 java.sql.Date.class, stock.getId());
+            java.sql.Date earliest = dates.isEmpty() ? null : dates.get(0);
             from = earliest != null ? earliest.toLocalDate() : to.minusYears(1);
         } else {
             to   = LocalDate.now();

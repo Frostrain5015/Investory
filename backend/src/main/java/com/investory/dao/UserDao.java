@@ -52,6 +52,12 @@ public class UserDao extends BaseDao {
         jdbc.update("DELETE FROM dividends WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
         jdbc.update("DELETE FROM transactions WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
         jdbc.update("DELETE FROM holdings WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM cash_balances WHERE portfolio_id IN (SELECT id FROM portfolios WHERE user_id = ?)", userId);
+        jdbc.update("DELETE FROM watchlist WHERE user_id = ?", userId);
+        jdbc.update("DELETE FROM ai_settings WHERE user_id = ?", userId);
+        jdbc.update("DELETE FROM backtest_results WHERE user_id = ?", userId);
+        jdbc.update("DELETE FROM backtest_strategies WHERE user_id = ?", userId);
+        jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ?", userId);
         jdbc.update("DELETE FROM portfolios WHERE user_id = ?", userId);
         jdbc.update("DELETE FROM users WHERE id = ?", userId);
     }

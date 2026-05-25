@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import type { StockSearchItem } from '@/types'
 import { Search, X } from 'lucide-react'
 
-interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number }
+interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number; changeToday?: number; changePctToday?: number }
 
 export default function Watchlist() {
   const { positiveClass, negativeClass } = useSettings()
@@ -75,7 +75,8 @@ export default function Watchlist() {
       ) : (
         <div className="space-y-1">
           {items.map(item => {
-            const up = Number(item.price) > 0 // We need yesterday's close to determine direction
+            const change = item.changeToday ?? 0
+            const up = change > 0
             return (
               <div key={item.id} className="flex items-center gap-4 px-4 py-3 rounded-xl hover:bg-slate-50 transition-colors">
                 <div className="flex-1 min-w-0">

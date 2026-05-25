@@ -51,7 +51,7 @@ def _is_complex_query(messages: list) -> bool:
 def load_knowledge_base() -> dict:
     if KB_FILE.exists():
         try: return json.loads(KB_FILE.read_text(encoding="utf-8"))
-        except: pass
+        except Exception: pass
     return {}
 
 

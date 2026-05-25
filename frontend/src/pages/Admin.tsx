@@ -119,6 +119,7 @@ export default function Admin() {
   }, [])
 
   useEffect(() => { fetchStatus(); fetchUsers(); fetchCrawlHistory() }, [fetchStatus, fetchUsers, fetchCrawlHistory])
+  useEffect(() => () => { if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null } }, [])
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })

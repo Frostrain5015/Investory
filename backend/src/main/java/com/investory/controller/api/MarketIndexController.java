@@ -25,36 +25,37 @@ public class MarketIndexController {
     // JVM SOCKS proxy configured via pom.xml spring-boot.run.jvmArguments
     private final HttpClient http = HttpClient.newHttpClient();
 
+    private final ExecutorService indexExecutor = Executors.newFixedThreadPool(25);
+
     @GetMapping("/indices")
     public Map<String, Object> getIndices() {
-        ExecutorService ex = Executors.newFixedThreadPool(25);
         List<Future<Map<String, Object>>> futures = new ArrayList<>();
         // ── Country indices ──────────────────────────────────────────
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 31.23, 121.47, "000001.SH")));
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 31.23, 121.47, "399001.SZ")));
-        futures.add(ex.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 31.23, 121.47, "399006.SZ")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 22.30, 114.17, "HSI.HK")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 22.30, 114.17, "HSCE.HK")));
-        futures.add(ex.submit(() -> fetchYahooIndex("HSTECH.HK",  "恒生科技",  "HK", 22.30, 114.17, "HSTECH.HK")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 40.71, -74.01, "GSPC.US")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 40.71, -74.01, "DJI.US")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 40.71, -74.01, "IXIC.US")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^N225",      "日经225",   "JP", 35.68, 139.76, "N225.JP")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^KS11",      "韩国KOSPI", "KR", 37.57, 126.98, "KS11.KR")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^FTSE",      "富时100",   "GB", 52.70, -1.80, "FTSE.GB")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^GDAXI",     "德国DAX",   "DE", 52.52, 13.40, "GDAXI.DE")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^FCHI",      "法国CAC40", "FR", 47.50, 4.00, "FCHI.FR")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^TWII",      "台湾加权",   "TW", 25.03, 121.57, "TWII.TW")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^STI",       "新加坡STI", "SG", 1.35, 103.82, "STI.SG")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^BSESN",     "印度SENSEX","IN", 28.61, 77.23, "BSESN.IN")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^AXJO",      "澳洲ASX200","AU", -35.28, 149.13, "AXJO.AU")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^GSPTSE",    "加拿大TSX", "CA", 49.28, -123.12, "GSPTSE.CA")));
-        futures.add(ex.submit(() -> fetchYahooIndex("^BVSP",      "巴西Bovespa","BR", -15.80, -47.86, "BVSP.BR")));
+        futures.add(indexExecutor.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 31.23, 121.47, "000001.SH")));
+        futures.add(indexExecutor.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 31.23, 121.47, "399001.SZ")));
+        futures.add(indexExecutor.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 31.23, 121.47, "399006.SZ")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 22.30, 114.17, "HSI.HK")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 22.30, 114.17, "HSCE.HK")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("HSTECH.HK",  "恒生科技",  "HK", 22.30, 114.17, "HSTECH.HK")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 40.71, -74.01, "GSPC.US")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 40.71, -74.01, "DJI.US")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 40.71, -74.01, "IXIC.US")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^N225",      "日经225",   "JP", 35.68, 139.76, "N225.JP")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^KS11",      "韩国KOSPI", "KR", 37.57, 126.98, "KS11.KR")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^FTSE",      "富时100",   "GB", 52.70, -1.80, "FTSE.GB")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^GDAXI",     "德国DAX",   "DE", 52.52, 13.40, "GDAXI.DE")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^FCHI",      "法国CAC40", "FR", 47.50, 4.00, "FCHI.FR")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^TWII",      "台湾加权",   "TW", 25.03, 121.57, "TWII.TW")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^STI",       "新加坡STI", "SG", 1.35, 103.82, "STI.SG")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^BSESN",     "印度SENSEX","IN", 28.61, 77.23, "BSESN.IN")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^AXJO",      "澳洲ASX200","AU", -35.28, 149.13, "AXJO.AU")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^GSPTSE",    "加拿大TSX", "CA", 49.28, -123.12, "GSPTSE.CA")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^BVSP",      "巴西Bovespa","BR", -15.80, -47.86, "BVSP.BR")));
         // ── Global indicators ───────────────────────────────────────
-        futures.add(ex.submit(() -> fetchYahooIndicator("DX-Y.NYB", "美元指数",  "DXY.IDX")));
-        futures.add(ex.submit(() -> fetchYahooIndicator("GC=F",     "黄金/美元", "XAU.CMD")));
-        futures.add(ex.submit(() -> fetchYahooIndicator("BTC-USD",  "比特币/美元","BTC.CCY")));
-        futures.add(ex.submit(() -> fetchYahooIndicator("CL=F",     "WTI 原油",  "CL.CMD")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndicator("DX-Y.NYB", "美元指数",  "DXY.IDX")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndicator("GC=F",     "黄金/美元", "XAU.CMD")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndicator("BTC-USD",  "比特币/美元","BTC.CCY")));
+        futures.add(indexExecutor.submit(() -> fetchYahooIndicator("CL=F",     "WTI 原油",  "CL.CMD")));
 
         List<Map<String, Object>> indices = new ArrayList<>();
         List<Map<String, Object>> indicators = new ArrayList<>();
@@ -66,7 +67,6 @@ public class MarketIndexController {
             } catch (Exception ignored) {}
             i++;
         }
-        ex.shutdownNow();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("indices", indices);
         result.put("indicators", indicators);
@@ -113,20 +113,23 @@ public class MarketIndexController {
             java.net.URL u = new java.net.URL(url);
             // HttpURLConnection respects JVM -DsocksProxyHost / -DsocksProxyPort
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-            conn.setConnectTimeout(8000);
-            conn.setReadTimeout(8000);
-            String body = new String(conn.getInputStream().readAllBytes());
-            conn.disconnect();
-            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-            JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
-                .get(0).getAsJsonObject().getAsJsonObject("meta");
-            BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
-            BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
-            m.put("price",     price);
-            m.put("change",    price.subtract(prev));
-            m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
-            m.put("fetchedAt", java.time.Instant.now().toString());
+            try {
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                String body = new String(conn.getInputStream().readAllBytes());
+                JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+                JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
+                    .get(0).getAsJsonObject().getAsJsonObject("meta");
+                BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
+                BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
+                m.put("price",     price);
+                m.put("change",    price.subtract(prev));
+                m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+                m.put("fetchedAt", java.time.Instant.now().toString());
+            } finally {
+                conn.disconnect();
+            }
         } catch (Exception ignored) {}
         if (!m.containsKey("price")) fillFromHistory(m, dbSymbol);
         return m;
@@ -140,20 +143,23 @@ public class MarketIndexController {
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + yfSymbol + "?range=1d&interval=5m";
             java.net.URL u = new java.net.URL(url);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-            conn.setConnectTimeout(8000);
-            conn.setReadTimeout(8000);
-            String body = new String(conn.getInputStream().readAllBytes());
-            conn.disconnect();
-            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-            JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
-                .get(0).getAsJsonObject().getAsJsonObject("meta");
-            BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
-            BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
-            m.put("price",     price);
-            m.put("change",    price.subtract(prev));
-            m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
-            m.put("fetchedAt", java.time.Instant.now().toString());
+            try {
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                String body = new String(conn.getInputStream().readAllBytes());
+                JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+                JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
+                    .get(0).getAsJsonObject().getAsJsonObject("meta");
+                BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
+                BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
+                m.put("price",     price);
+                m.put("change",    price.subtract(prev));
+                m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+                m.put("fetchedAt", java.time.Instant.now().toString());
+            } finally {
+                conn.disconnect();
+            }
         } catch (Exception ignored) {}
         if (!m.containsKey("price")) fillFromHistoryIndicators(m, dbSymbol);
         return m;
@@ -254,15 +260,18 @@ public class MarketIndexController {
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
             java.net.URL u = new java.net.URL(url);
             java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-            conn.setConnectTimeout(8000);
-            conn.setReadTimeout(8000);
-            String body = new String(conn.getInputStream().readAllBytes());
-            conn.disconnect();
-            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-            return root.getAsJsonObject("chart").getAsJsonArray("result")
-                .get(0).getAsJsonObject().getAsJsonObject("meta")
-                .get("regularMarketPrice").getAsBigDecimal();
+            try {
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+                conn.setConnectTimeout(8000);
+                conn.setReadTimeout(8000);
+                String body = new String(conn.getInputStream().readAllBytes());
+                JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+                return root.getAsJsonObject("chart").getAsJsonArray("result")
+                    .get(0).getAsJsonObject().getAsJsonObject("meta")
+                    .get("regularMarketPrice").getAsBigDecimal();
+            } finally {
+                conn.disconnect();
+            }
         } catch (Exception e) { return BigDecimal.ZERO; }
     }
 

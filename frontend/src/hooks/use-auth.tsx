@@ -43,6 +43,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false))
   }, [])
 
+  useEffect(() => {
+    const onExpired = () => { setUserId(null); setAuthenticated(false); window.location.href = import.meta.env.BASE_URL }
+    window.addEventListener('investory:auth-expired', onExpired)
+    return () => window.removeEventListener('investory:auth-expired', onExpired)
+  }, [])
+
   async function login(username: string, password: string) {
     try {
       const text = await apiLogin(username, password)
