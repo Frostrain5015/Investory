@@ -173,40 +173,45 @@ public class MarketIndexController {
     }
 
     private void fillFromHistory(Map<String, Object> m, String dbSymbol) {
-        String symbol = toStockSymbol(dbSymbol);
-        if (symbol == null) return;
+        String stockSymbol = toStockSymbol(dbSymbol);
         try {
-            Map<String, Object> row = jdbc.queryForMap("""
-                SELECT s.name, p1.close AS price, p1.close - p2.close AS change,
-                       ((p1.close - p2.close) / p2.close) * 100 AS change_pct
-                FROM stock_prices p1
-                JOIN stock_prices p2 ON p2.stock_id = p1.stock_id
-                JOIN stocks s ON s.id = p1.stock_id
-                WHERE s.symbol = ? AND p1.trade_date = (SELECT MAX(trade_date) FROM stock_prices WHERE stock_id = p1.stock_id)
-                  AND p2.trade_date = (SELECT MAX(trade_date) FROM stock_prices WHERE stock_id = p1.stock_id AND trade_date < p1.trade_date)
-                """, symbol);
-            m.put("price",     row.get("price"));
-            m.put("change",    row.get("change"));
-            m.put("changePct", row.get("change_pct"));
-            m.put("fetchedAt", "DB fallback");
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT sp.close FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id " +
+                "WHERE s.symbol = ? ORDER BY sp.trade_date DESC LIMIT 2", stockSymbol);
+            if (rows.size() >= 2) {
+                BigDecimal today  = (BigDecimal) rows.get(0).get("close");
+                BigDecimal yest   = (BigDecimal) rows.get(1).get("close");
+                if (today != null && yest != null && yest.compareTo(BigDecimal.ZERO) != 0) {
+                    m.put("price",     today);
+                    m.put("change",    today.subtract(yest));
+                    m.put("changePct", today.subtract(yest).divide(yest, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+                    m.put("fetchedAt", "close");
+                    return;
+                }
+            }
         } catch (Exception ignored) {}
+        m.put("price", BigDecimal.ZERO);
     }
 
     private void fillFromHistoryIndicators(Map<String, Object> m, String dbSymbol) {
-        String symbol = toStockSymbol(dbSymbol);
-        if (symbol == null) return;
         try {
-            Map<String, Object> row = jdbc.queryForMap("""
-                SELECT p1.close AS price, p1.close - p2.close AS change
-                FROM stock_prices p1
-                JOIN stock_prices p2 ON p2.stock_id = p1.stock_id
-                JOIN stocks s ON s.id = p1.stock_id
-                WHERE s.symbol = ? AND p1.trade_date = (SELECT MAX(trade_date) FROM stock_prices WHERE stock_id = p1.stock_id)
-                  AND p2.trade_date = (SELECT MAX(trade_date) FROM stock_prices WHERE stock_id = p1.stock_id AND trade_date < p1.trade_date)
-                """, symbol);
-            m.put("price",  row.get("price"));
-            m.put("change", row.get("change"));
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT sp.close FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id " +
+                "WHERE s.symbol LIKE ? ORDER BY sp.trade_date DESC LIMIT 2",
+                "%" + dbSymbol.substring(dbSymbol.lastIndexOf('.') + 1));
+            if (rows.size() >= 2) {
+                BigDecimal today  = (BigDecimal) rows.get(0).get("close");
+                BigDecimal yest   = (BigDecimal) rows.get(1).get("close");
+                if (today != null && yest != null && yest.compareTo(BigDecimal.ZERO) != 0) {
+                    m.put("price",     today);
+                    m.put("change",    today.subtract(yest));
+                    m.put("changePct", today.subtract(yest).divide(yest, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+                    m.put("fetchedAt", "close");
+                    return;
+                }
+            }
         } catch (Exception ignored) {}
+        m.put("price", BigDecimal.ZERO);
     }
 
     // remaining fillFromHistory, fetchYahooPrice, news, world.json methods unchanged
