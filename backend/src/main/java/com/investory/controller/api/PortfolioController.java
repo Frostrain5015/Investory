@@ -75,15 +75,20 @@ public class PortfolioController {
         for (HoldingSnapshot s : snaps) if (s.getChangeToday() != null) todayPnl = todayPnl.add(s.getChangeToday());
 
         Map<String, Object> r = new LinkedHashMap<>();
+        BigDecimal totalMV = analysisService.totalMarketValue(snaps);
+        BigDecimal totalInvested = analysisService.totalInvested(snaps);
+        BigDecimal totalDiv = analysisService.totalDividends(snaps);
+        BigDecimal cumulativePnl = holdingPnl.add(realized);
         r.put("snapshots", snaps);
-        r.put("totalMarketValue", analysisService.totalMarketValue(snaps));
-        r.put("totalInvested", analysisService.totalInvested(snaps));
+        r.put("totalMarketValue", totalMV);
+        r.put("totalInvested", totalInvested);
         r.put("totalPnl", holdingPnl);
         r.put("realizedPnl", realized);
-        r.put("cumulativePnl", holdingPnl.add(realized));
+        r.put("cumulativePnl", cumulativePnl);
         r.put("cashBalance", cash);
         r.put("cashByCurrency", jdbc.queryForList("SELECT currency, amount FROM cash_balances WHERE portfolio_id=?", pid));
-        r.put("totalReturnPct", analysisService.cashWeightedReturn(pid, analysisService.totalMarketValue(snaps), analysisService.totalInvested(snaps), cash, analysisService.totalDividends(snaps)));
+        r.put("totalReturnPct", analysisService.holdingReturnRate(totalMV, totalInvested, totalDiv));
+        r.put("cumulativeReturnPct", analysisService.cumulativeReturnRate(pid, totalMV, totalInvested, cash, totalDiv, realized));
         r.put("todayPnl", todayPnl);
         BigDecimal prev = analysisService.totalMarketValue(snaps).subtract(todayPnl);
         r.put("todayPnlPct", prev.compareTo(BigDecimal.ZERO) != 0 ? todayPnl.divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO);

@@ -44,7 +44,7 @@ export default function Dashboard() {
   const toast = useToast()
   const { t, lang } = useT()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
-  const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
+  const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, cumulativeReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
   const [allocation, setAllocation] = useState<AllocationItem[]>([])
   type Period = '1M' | '6M' | '1Y' | 'all' | 'custom'
   interface ChartParams { days: number; start?: string; end?: string }
@@ -68,7 +68,7 @@ export default function Dashboard() {
     setSnapshots([])
     setAllocation([])
     setCumulative([])
-    setTotals({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
+    setTotals({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, cumulativeReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
     setLoading(true)
   }, [portfolioId])
 
@@ -86,6 +86,7 @@ export default function Dashboard() {
         realizedPnl: dash.realizedPnl || 0,
         cumulativePnl: dash.cumulativePnl || 0,
         totalReturnPct: dash.totalReturnPct || 0,
+        cumulativeReturnPct: dash.cumulativeReturnPct || 0,
         todayPnl: dash.todayPnl || 0,
         todayPnlPct: dash.todayPnlPct || 0,
         cashBalance: dash.cashBalance || 0,
@@ -240,8 +241,8 @@ export default function Dashboard() {
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.cumulativePnl >= 0 ? positiveClass : negativeClass}`}>
               {animCumulativePnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(animCumulativePnl))}
             </p>
-            <p className={`text-xs font-medium mt-0.5 ${totals.totalReturnPct >= 0 ? positiveClass : negativeClass}`}>
-              {totals.totalReturnPct >= 0 ? '+' : '-'}{Math.abs(totals.totalReturnPct).toFixed(2)}%
+            <p className={`text-xs font-medium mt-0.5 ${totals.cumulativeReturnPct >= 0 ? positiveClass : negativeClass}`}>
+              {totals.cumulativeReturnPct >= 0 ? '+' : '-'}{Math.abs(totals.cumulativeReturnPct).toFixed(2)}%
             </p>
           </CardContent>
         </Card>

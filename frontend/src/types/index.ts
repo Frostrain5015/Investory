@@ -124,6 +124,7 @@ export interface DashboardResponse {
   realizedPnl: number
   cumulativePnl: number
   totalReturnPct: number
+  cumulativeReturnPct: number
   todayPnl: number
   todayPnlPct: number
   cashBalance: number

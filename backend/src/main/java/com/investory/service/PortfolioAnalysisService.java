@@ -64,12 +64,20 @@ public class PortfolioAnalysisService {
     }
 
     /**
-     * Simple return since inception.
-     * Return = (totalMarketValue + cashBalance - totalInvested - netExternalCash) / (totalInvested + netExternalCash) * 100
+     * Cumulative return rate (includes realized P&L).
+     * Return = (MV + Cash + Div + Realized - Invested) / Invested * 100
      */
-    public BigDecimal cashWeightedReturn(long portfolioId, BigDecimal totalMarketValue, BigDecimal totalInvested, BigDecimal cashBalance, BigDecimal totalDividends) {
+    public BigDecimal cumulativeReturnRate(long portfolioId, BigDecimal totalMarketValue, BigDecimal totalInvested, BigDecimal cashBalance, BigDecimal totalDividends, BigDecimal realizedPnl) {
         if (totalInvested.compareTo(BigDecimal.ZERO) == 0) return BigDecimal.ZERO;
-        // Simple return: (MV + Div - Invested) / Invested (cash doesn't dilute)
+        BigDecimal totalReturn = totalMarketValue.add(cashBalance).add(totalDividends).add(realizedPnl).subtract(totalInvested);
+        return totalReturn.divide(totalInvested, 6, RoundingMode.HALF_UP)
+                .multiply(new BigDecimal("100"))
+                .setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /** Holding-only return rate. Return = (MV + Div - Invested) / Invested * 100 */
+    public BigDecimal holdingReturnRate(BigDecimal totalMarketValue, BigDecimal totalInvested, BigDecimal totalDividends) {
+        if (totalInvested.compareTo(BigDecimal.ZERO) == 0) return BigDecimal.ZERO;
         BigDecimal totalReturn = totalMarketValue.add(totalDividends).subtract(totalInvested);
         return totalReturn.divide(totalInvested, 6, RoundingMode.HALF_UP)
                 .multiply(new BigDecimal("100"))
