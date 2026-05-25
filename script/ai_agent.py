@@ -785,6 +785,25 @@ TOOLS = [
             "limit": {"type": "integer", "description": "返回条数，默认10，最多20"}
         }}
     }},
+    # D: Watchlist tools
+    {"type": "function", "function": {
+        "name": "get_watchlist", "description": "获取用户的股票自选列表，含最新价格和近一周涨跌",
+        "parameters": {"type": "object", "properties": {}}
+    }},
+    {"type": "function", "function": {
+        "name": "confirm_add_watchlist", "description": "【必须调用】添加股票到自选列表并弹出确认按钮。用户说'加自选''关注''添加自选'时调用。先调用search_stocks获取stockId。调用后弹出 Accept/Refuse 按钮。",
+        "parameters": {"type": "object", "properties": {
+            "stockId": {"type": "integer", "description": "股票ID（从search_stocks获取）"},
+            "symbol": {"type": "string", "description": "股票代码，用于展示"},
+            "name": {"type": "string", "description": "股票名称，用于展示"}
+        }, "required": ["stockId"]}
+    }},
+    {"type": "function", "function": {
+        "name": "confirm_remove_watchlist", "description": "【必须调用】从自选列表移除股票并弹出确认按钮。用户说'删自选''取消关注''移除自选'时调用。先调用get_watchlist获取列表。",
+        "parameters": {"type": "object", "properties": {
+            "ids": {"type": "array", "items": {"type": "integer"}, "description": "要移除的watchlist项ID列表"}
+        }, "required": ["ids"]}
+    }},
     # C: Transaction write tools — confirmation required
     {"type": "function", "function": {
         "name": "confirm_create_transaction", "description": "【必须调用】创建交易记录并弹出用户确认按钮。当用户要求买入/卖出/添加分红/转入转出资金时必须调用此工具。调用后会弹出 Accept/Refuse 按钮让用户在 UI 上点击确认。不要在文字中询问'确认吗'——直接用此工具。type: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT。所有参数必须从对话中完整提取，缺失先反问。",
@@ -868,6 +887,9 @@ TOOL_LABELS = {
     "confirm_bulk_create": "生成批量创建确认",
     "confirm_bulk_update": "生成批量编辑确认",
     "confirm_bulk_delete": "生成批量删除确认",
+    "get_watchlist": "读取自选列表",
+    "confirm_add_watchlist": "添加自选确认",
+    "confirm_remove_watchlist": "移除自选确认",
 }
 
 def _trim_result(name: str, result: object) -> object:
@@ -996,6 +1018,12 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_get_global_indices()
     elif name == "get_world_news":
         return tool_get_world_news(args.get("limit", 10))
+    elif name == "get_watchlist":
+        return tool_get_watchlist(user_id)
+    elif name == "confirm_add_watchlist":
+        return _confirm_add_watchlist(args)
+    elif name == "confirm_remove_watchlist":
+        return _confirm_remove_watchlist(args)
     elif name == "confirm_create_transaction":
         return _confirm_create(args)
     elif name == "confirm_update_transaction":
@@ -1199,6 +1227,70 @@ def _confirm_bulk_delete(args: dict) -> dict:
         "endpoint": f"/api/transactions/{tid}", "method": "DELETE", "body": {},
     } for tid in ids]
     return _emit_confirm(items, f"批量删除 {len(items)} 笔交易")
+
+# ── Watchlist tools ────────────────────────────────────────────────
+
+def tool_get_watchlist(user_id: int) -> dict:
+    """Get user's watchlist with latest prices."""
+    if not user_id:
+        return {"error": "未登录"}
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT w.id, w.stock_id, s.symbol, s.name, s.market, s.currency
+        FROM watchlist w JOIN stocks s ON w.stock_id = s.id
+        WHERE w.user_id = %s ORDER BY w.sort_order, w.created_at DESC
+    """, (user_id,))
+    rows = cur.fetchall()
+    items = []
+    for r in rows:
+        wl_id, sid, sym, name, mkt, curr = r[0], r[1], r[2], r[3], r[4], r[5]
+        item = {"id": wl_id, "stockId": sid, "symbol": sym, "name": name, "market": mkt, "currency": curr}
+        # Latest price
+        cur2 = conn.cursor()
+        cur2.execute("SELECT close FROM stock_prices WHERE stock_id=%s ORDER BY trade_date DESC LIMIT 1", (sid,))
+        pr = cur2.fetchone()
+        cur2.close()
+        item["price"] = float(pr[0]) if pr else 0
+        items.append(item)
+    cur.close()
+    conn.close()
+    return {"count": len(items), "items": items}
+
+def _confirm_add_watchlist(args: dict) -> dict:
+    """Build add-to-watchlist confirmation."""
+    sid = _resolve_stock_id(args.get("stockId", 0))
+    name = args.get("name", "") or args.get("symbol", "") or "?"
+    return _emit_confirm([{
+        "action": "add_watchlist", "label": f"添加 {name} 到自选",
+        "endpoint": "/api/watchlist", "method": "POST",
+        "body": {"stockId": sid, "name": name},
+    }], f"添加 {name} 到自选列表")
+
+def _confirm_remove_watchlist(args: dict) -> dict:
+    """Build remove-from-watchlist confirmation. Looks up item details for display."""
+    ids = args.get("ids", [])
+    if not ids:
+        return {"error": "no ids provided"}
+    conn = get_db_conn()
+    items = []
+    for wid in ids:
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT w.id, w.stock_id, s.symbol, s.name FROM watchlist w JOIN stocks s ON w.stock_id=s.id WHERE w.id=%s", (wid,))
+            row = cur.fetchone()
+            cur.close()
+            if row:
+                stock_id = row[1]
+                items.append({
+                    "action": "remove_watchlist", "label": f"移除自选: {row[3]} ({row[2]})",
+                    "endpoint": f"/api/watchlist/{stock_id}", "method": "DELETE",
+                    "body": {"id": wid, "stockId": stock_id, "symbol": row[2], "name": row[3]},
+                })
+        except:
+            pass
+    conn.close()
+    return _emit_confirm(items, f"从自选移除 {len(items)} 项") if items else {"error": "no items found"}
 
 
 def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> str:
