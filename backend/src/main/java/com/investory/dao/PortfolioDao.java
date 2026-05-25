@@ -41,4 +41,11 @@ public class PortfolioDao extends BaseDao {
     public void delete(long id) {
         update("DELETE FROM portfolios WHERE id = ?", id);
     }
+
+    public boolean isOwner(long portfolioId, Long userId) {
+        if (userId == null) return false;
+        Long count = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM portfolios WHERE id = ? AND user_id = ?", Long.class, portfolioId, userId);
+        return count != null && count > 0;
+    }
 }

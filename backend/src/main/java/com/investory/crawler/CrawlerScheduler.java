@@ -154,6 +154,7 @@ public class CrawlerScheduler {
     // ── Exchange Rate Refresh ─────────────────────────────────────────
 
     @Scheduled(cron = "0 30 9 * * *", zone = "Asia/Shanghai")
+    @org.springframework.transaction.annotation.Transactional
     public void refreshExchangeRates() {
         BigDecimal usdCny = fetchYahooRate("USDCNY=X");
         BigDecimal usdHkd = fetchYahooRate("USDHKD=X");

@@ -271,10 +271,15 @@ public class ChartDataController {
         Map<LocalDate, BigDecimal> cashWithTransfers = computeCashMap(portfolioId, from, to, toCny, true);
         Map<LocalDate, BigDecimal> cashNoTransfers = computeCashMap(portfolioId, from, to, toCny, false);
 
-        // Dividend schedule
+        // Dividend schedule (convert to CNY)
         Map<LocalDate, BigDecimal> divByDate = new HashMap<>();
         for (Dividend d : dividendDao.findByPortfolio(portfolioId)) {
-            divByDate.merge(d.getRecordDate(), d.getTotalAmount(), BigDecimal::add);
+            BigDecimal rate = toCny.getOrDefault(
+                stockCurrency.computeIfAbsent(d.getStockId(), sid -> {
+                    Stock s = stockDao.findById(sid);
+                    return s != null ? s.getCurrency() : "CNY";
+                }), BigDecimal.ONE);
+            divByDate.merge(d.getRecordDate(), d.getTotalAmount().multiply(rate), BigDecimal::add);
         }
 
         // Pre-load all prices for every stock in the portfolio over [from, to] — one query per stock

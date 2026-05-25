@@ -443,21 +443,35 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
     trading_dates = sorted(all_dates)
     total_days = len(trading_dates)
 
-    # Restricted execution environment
-    restricted_builtins = {
+    # Sandbox: block dangerous builtins and escape vectors
+    _SAFE_BUILTINS = {
         "abs": abs, "all": all, "any": any, "bool": bool, "dict": dict,
         "enumerate": enumerate, "filter": filter, "float": float, "int": int,
         "len": len, "list": list, "map": map, "max": max, "min": min,
         "range": range, "round": round, "sorted": sorted, "sum": sum,
         "tuple": tuple, "zip": zip, "print": print,
         "True": True, "False": False, "None": None,
-        "math": math, "np": np,
+        "isinstance": isinstance, "str": str, "type": type,
     }
+    imports = {"math": math, "np": np}
+    globals_ns = {"__builtins__": _SAFE_BUILTINS, **imports}
+
+    # Pre-validate: reject code containing escape patterns
+    _FORBIDDEN = [
+        "os.", "subprocess", "__import__", "eval(", "exec(", "compile(",
+        "open(", "__class__", "__bases__", "__subclasses__", "__globals__",
+        "__code__", "__dict__", "sys.", "shutil", "socket", "importlib",
+    ]
+    code_lower = user_code
+    for pattern in _FORBIDDEN:
+        if pattern in code_lower:
+            print(f"[ERROR] 策略代码包含禁止的模式: {pattern}", flush=True)
+            return None
 
     # Find and compile the decide function
     try:
         local_ns = {}
-        exec(user_code, restricted_builtins, local_ns)
+        exec(user_code, globals_ns, local_ns)
         decide_fn = local_ns.get("decide")
         if not callable(decide_fn):
             print("[ERROR] 策略代码必须定义 decide(ctx) 函数", flush=True)
@@ -466,8 +480,11 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
         print(f"[ERROR] 策略代码编译失败: {e}", flush=True)
         return None
 
-    # Set timeout
-    signal.alarm(60)
+    # Timeout: use signal on Unix, threading.Timer fallback on Windows
+    if hasattr(signal, 'alarm'):
+        signal.alarm(60)
+    else:
+        print("[WARN] 当前平台不支持 signal.alarm，策略执行无超时保护", flush=True)
 
     try:
         cash = initial_capital

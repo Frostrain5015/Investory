@@ -79,6 +79,8 @@ public class RealtimeQuoteService {
         };
     }
 
+    private final ExecutorService quoteExecutor = Executors.newFixedThreadPool(3);
+
     /** Get the best available real-time price with fetch timestamp. Returns null if all sources fail. */
     public Quote getQuote(Stock stock) {
         if (!isMarketOpen(stock)) return null;
@@ -87,14 +89,11 @@ public class RealtimeQuoteService {
             () -> new Quote(fetchFromTencent(stock), Instant.now()),
             () -> new Quote(fetchFromYahoo(stock), Instant.now())
         );
-        ExecutorService executor = Executors.newFixedThreadPool(3);
         try {
-            return executor.invokeAny(tasks, 3, TimeUnit.SECONDS);
+            return quoteExecutor.invokeAny(tasks, 3, TimeUnit.SECONDS);
         } catch (Exception e) {
             log.fine("All real-time sources failed for " + stock.getSymbol() + ": " + e.getMessage());
             return null;
-        } finally {
-            executor.shutdownNow();
         }
     }
 

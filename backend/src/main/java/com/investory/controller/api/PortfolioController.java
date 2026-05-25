@@ -45,16 +45,20 @@ public class PortfolioController {
     @PutMapping("/portfolios/{id}")
     public Map<String, String> update(@PathVariable long id, @RequestParam(required = false) String name,
                                        HttpServletRequest req) {
+        HttpSession s = req.getSession();
+        Long userId = (Long) s.getAttribute("userId");
+        if (!portfolioDao.isOwner(id, userId)) return Map.of("error", "not your portfolio");
         if (name != null && !name.isBlank()) portfolioDao.updateName(id, name.trim());
-        else req.getSession().setAttribute("portfolioId", id);
+        else s.setAttribute("portfolioId", id);
         return Map.of("status", "ok");
     }
 
     @DeleteMapping("/portfolios/{id}")
     public Map<String, String> delete(@PathVariable long id, HttpServletRequest req) {
-        portfolioDao.delete(id);
         HttpSession s = req.getSession();
         Long userId = (Long) s.getAttribute("userId");
+        if (!portfolioDao.isOwner(id, userId)) return Map.of("error", "not your portfolio");
+        portfolioDao.delete(id);
         List<Portfolio> remaining = portfolioDao.findByUser(userId);
         s.setAttribute("portfolioId", remaining.isEmpty() ? null : remaining.get(0).getId());
         return Map.of("status", "ok");

@@ -1592,6 +1592,9 @@ def generate_suggestions(api_key: str, model: str, api_base: str):
 
 
 def main():
+    # Ensure UTF-8 output on Windows (other scripts do this, ai_agent was missing it)
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description="Investory 观澜 AI Agent")
     parser.add_argument("--mode", default="chat", choices=["chat", "suggestions"])
     parser.add_argument("--provider", default="openai", choices=["openai", "anthropic", "openai_compat"])

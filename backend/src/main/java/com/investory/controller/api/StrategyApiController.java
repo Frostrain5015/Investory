@@ -68,8 +68,13 @@ public class StrategyApiController {
 
     @GetMapping("/{id}")
     public Map<String, Object> get(@PathVariable long id, HttpServletRequest req) {
+        long userId = getUserId(req);
+        if (userId == 0) return Map.of("error", "unauthorized");
         Map<String, Object> row = strategyDao.findById(id);
-        return row != null ? row : Map.of("error", "not found");
+        if (row == null) return Map.of("error", "not found");
+        Long ownerId = row.get("user_id") instanceof Number ? ((Number) row.get("user_id")).longValue() : null;
+        if (ownerId == null || ownerId != userId) return Map.of("error", "not found");
+        return row;
     }
 
     @DeleteMapping("/{id}")

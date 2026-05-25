@@ -192,7 +192,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function clearChat() { setMessages([]); setStreamText(''); fetch(`${BASE}/api/ai/clear`, { method: 'POST', credentials: 'include' }).catch(() => {}) }
+  function clearChat() { gMessages = []; gActiveConfirm = null; setMessages([]); setStreamText(''); fetch(`${BASE}/api/ai/clear`, { method: 'POST', credentials: 'include' }).catch(() => {}) }
 
   function regenerate() {
     if (messages.length < 2) return

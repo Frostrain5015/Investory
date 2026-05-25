@@ -75,6 +75,13 @@ public class PortfolioValueCalculator {
 
         // Track last known price per stock for non-trading days
         Map<Long, BigDecimal> lastPriceByStock = new HashMap<>();
+        // Pre-load dividends by record date — avoid N+1 and convert to CNY
+        Map<LocalDate, BigDecimal> divByRecordDate = new HashMap<>();
+        for (Dividend d : dividendDao.findByPortfolio(portfolioId)) {
+            Stock ds = stockDao.findById(d.getStockId());
+            BigDecimal divRate = toCny.getOrDefault(ds != null ? ds.getCurrency() : "CNY", BigDecimal.ONE);
+            divByRecordDate.merge(d.getRecordDate(), d.getTotalAmount().multiply(divRate), BigDecimal::add);
+        }
         LocalDate cursor = fromDate;
         while (!cursor.isAfter(toDate)) {
             BigDecimal stockValue = BigDecimal.ZERO;
@@ -111,11 +118,7 @@ public class PortfolioValueCalculator {
                 prevStockValue = stockValue;
                 prevTotalValue = totalValue;
 
-                List<Dividend> divs = dividendDao.findByPortfolio(portfolioId);
-                BigDecimal divIncome = BigDecimal.ZERO;
-                for (Dividend d : divs) {
-                    if (cursor.equals(d.getRecordDate())) divIncome = divIncome.add(d.getTotalAmount());
-                }
+                BigDecimal divIncome = divByRecordDate.getOrDefault(cursor, BigDecimal.ZERO);
                 dailyPnl = dailyPnl.add(divIncome);
 
                 DailyValue dv = new DailyValue();
