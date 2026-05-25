@@ -17,7 +17,6 @@ type ConfirmStatus = 'pending' | 'accepted' | 'refused'
 // Module-level state survives page navigation
 let gMessages: Message[] = []
 let gListeners: (() => void)[] = []
-let gActiveConfirm: ConfirmData | null = null
 
 function notify() { gListeners.forEach(fn => fn()) }
 
@@ -104,7 +103,6 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     setAskData(null)
     setConfirmData(null)
     setConfirmStatus(null)
-    gActiveConfirm = null
 
     try {
       const resp = await fetch(`${BASE}/api/ai/chat`, {
@@ -132,7 +130,6 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
           const d = raw.data || raw
           const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d
           if (parsed && parsed.items && parsed.items.length > 0) {
-            gActiveConfirm = parsed
             setConfirmData(parsed)
             setConfirmStatus('pending')
           }
@@ -192,7 +189,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function clearChat() { gMessages = []; gActiveConfirm = null; setMessages([]); setStreamText(''); fetch(`${BASE}/api/ai/clear`, { method: 'POST', credentials: 'include' }).catch(() => {}) }
+  function clearChat() { gMessages = []; setMessages([]); setStreamText(''); fetch(`${BASE}/api/ai/clear`, { method: 'POST', credentials: 'include' }).catch(() => {}) }
 
   function regenerate() {
     if (messages.length < 2) return
@@ -232,7 +229,7 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
     setConfirmStatus('accepted')
     setExecuting(false)
     if (results.length > 0) {
-      setMessages(prev => [...prev, { role: 'system', content: results.join('\n') }])
+      setMessages([...messages, { role: 'system', content: results.join('\n') }])
     }
   }
 

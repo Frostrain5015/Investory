@@ -1,7 +1,5 @@
 package com.investory.controller.api;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,138 +18,181 @@ import java.util.logging.Logger;
 public class MarketIndexController {
 
     private static final Logger log = Logger.getLogger(MarketIndexController.class.getName());
+
+    // Yahoo fetches are serialized through a fair, bounded semaphore: too much
+    // concurrency overwhelms the local SOCKS proxy, too little blows the collector
+    // budget. 7 keeps 21 Yahoo calls to ~3 waves while staying well under the proxy
+    // ceiling that 17-wide concurrency used to hit.
     private final ExecutorService indexExecutor = Executors.newFixedThreadPool(25);
-    private final java.util.concurrent.Semaphore yahooSemaphore = new java.util.concurrent.Semaphore(4);
+    private final Semaphore yahooSemaphore = new Semaphore(7, true);
+
+    // Page is visited rarely and briefly, so fetch on demand (no 24/7 background
+    // poller) but cache the result so the 5-min auto-refresh and rapid re-opens
+    // hit memory instead of re-running the whole fan-out.
+    private static final long TTL_MS = 90_000;
+    private static final int TOTAL_BUDGET_SEC = 18;
+    private static final int CURL_MAX_TIME_SEC = 6;
+
+    private volatile Snapshot cache;
+    private final Object refreshLock = new Object();
 
     @Autowired private JdbcTemplate jdbc;
 
+    private enum Source { SINA, YAHOO }
+
+    private record IndexSpec(Source source, String fetchSymbol, String name, String flag,
+                             double lat, double lng, String dbSymbol, boolean indicator) {}
+
+    private record Snapshot(List<Map<String, Object>> indices,
+                            List<Map<String, Object>> indicators, long builtAt) {
+        boolean isStale() { return System.currentTimeMillis() - builtAt > TTL_MS; }
+    }
+
+    private static final List<IndexSpec> SPECS = List.of(
+        // ── Country indices ──────────────────────────────────────────
+        new IndexSpec(Source.SINA,  "s_sh000001", "上证指数",   "CN", 31.23, 121.47, "000001.SH", false),
+        new IndexSpec(Source.SINA,  "s_sz399001", "深证成指",   "CN", 31.23, 121.47, "399001.SZ", false),
+        new IndexSpec(Source.SINA,  "s_sz399006", "创业板指",   "CN", 31.23, 121.47, "399006.SZ", false),
+        new IndexSpec(Source.YAHOO, "^HSI",       "恒生指数",   "HK", 22.30, 114.17, "HSI.HK",    false),
+        new IndexSpec(Source.YAHOO, "^HSCE",      "国企指数",   "HK", 22.30, 114.17, "HSCE.HK",   false),
+        new IndexSpec(Source.YAHOO, "HSTECH.HK",  "恒生科技",   "HK", 22.30, 114.17, "HSTECH.HK", false),
+        new IndexSpec(Source.YAHOO, "^GSPC",      "标普500",    "US", 40.71, -74.01, "GSPC.US",   false),
+        new IndexSpec(Source.YAHOO, "^DJI",       "道琼斯",     "US", 40.71, -74.01, "DJI.US",    false),
+        new IndexSpec(Source.YAHOO, "^IXIC",      "纳斯达克",   "US", 40.71, -74.01, "IXIC.US",   false),
+        new IndexSpec(Source.YAHOO, "^N225",      "日经225",    "JP", 35.68, 139.76, "N225.JP",   false),
+        new IndexSpec(Source.YAHOO, "^KS11",      "韩国KOSPI",  "KR", 37.57, 126.98, "KS11.KR",   false),
+        new IndexSpec(Source.YAHOO, "^FTSE",      "富时100",    "GB", 52.70, -1.80,  "FTSE.GB",   false),
+        new IndexSpec(Source.YAHOO, "^GDAXI",     "德国DAX",    "DE", 52.52, 13.40,  "GDAXI.DE",  false),
+        new IndexSpec(Source.YAHOO, "^FCHI",      "法国CAC40",  "FR", 47.50, 4.00,   "FCHI.FR",   false),
+        new IndexSpec(Source.YAHOO, "^TWII",      "台湾加权",   "TW", 25.03, 121.57, "TWII.TW",   false),
+        new IndexSpec(Source.YAHOO, "^STI",       "新加坡STI",  "SG", 1.35,  103.82, "STI.SG",    false),
+        new IndexSpec(Source.YAHOO, "^BSESN",     "印度SENSEX", "IN", 28.61, 77.23,  "BSESN.IN",  false),
+        new IndexSpec(Source.YAHOO, "^AXJO",      "澳洲ASX200", "AU", -35.28, 149.13, "AXJO.AU",  false),
+        new IndexSpec(Source.YAHOO, "^GSPTSE",    "加拿大TSX",  "CA", 49.28, -123.12, "GSPTSE.CA", false),
+        new IndexSpec(Source.YAHOO, "^BVSP",      "巴西Bovespa", "BR", -15.80, -47.86, "BVSP.BR",  false),
+        // ── Global indicators ───────────────────────────────────────
+        new IndexSpec(Source.YAHOO, "DX-Y.NYB",   "美元指数",    null, 0, 0, "DXY.IDX", true),
+        new IndexSpec(Source.YAHOO, "GC=F",       "黄金/美元",   null, 0, 0, "XAU.CMD", true),
+        new IndexSpec(Source.YAHOO, "BTC-USD",    "比特币/美元", null, 0, 0, "BTC.CCY", true),
+        new IndexSpec(Source.YAHOO, "CL=F",       "WTI 原油",    null, 0, 0, "CL.CMD",  true)
+    );
+
     @GetMapping("/indices")
     public Map<String, Object> getIndices() {
-        List<Future<Map<String, Object>>> futures = new ArrayList<>();
-        // ── Country indices ──────────────────────────────────────────
-        futures.add(indexExecutor.submit(() -> fetchSinaIndex("s_sh000001", "上证指数",   "CN", 31.23, 121.47, "000001.SH")));
-        futures.add(indexExecutor.submit(() -> fetchSinaIndex("s_sz399001", "深证成指",   "CN", 31.23, 121.47, "399001.SZ")));
-        futures.add(indexExecutor.submit(() -> fetchSinaIndex("s_sz399006", "创业板指",   "CN", 31.23, 121.47, "399006.SZ")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^HSI",       "恒生指数",  "HK", 22.30, 114.17, "HSI.HK")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^HSCE",      "国企指数",  "HK", 22.30, 114.17, "HSCE.HK")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("HSTECH.HK",  "恒生科技",  "HK", 22.30, 114.17, "HSTECH.HK")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^GSPC",      "标普500",   "US", 40.71, -74.01, "GSPC.US")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^DJI",       "道琼斯",    "US", 40.71, -74.01, "DJI.US")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^IXIC",      "纳斯达克",  "US", 40.71, -74.01, "IXIC.US")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^N225",      "日经225",   "JP", 35.68, 139.76, "N225.JP")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^KS11",      "韩国KOSPI", "KR", 37.57, 126.98, "KS11.KR")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^FTSE",      "富时100",   "GB", 52.70, -1.80, "FTSE.GB")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^GDAXI",     "德国DAX",   "DE", 52.52, 13.40, "GDAXI.DE")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^FCHI",      "法国CAC40", "FR", 47.50, 4.00, "FCHI.FR")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^TWII",      "台湾加权",   "TW", 25.03, 121.57, "TWII.TW")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^STI",       "新加坡STI", "SG", 1.35, 103.82, "STI.SG")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^BSESN",     "印度SENSEX","IN", 28.61, 77.23, "BSESN.IN")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^AXJO",      "澳洲ASX200","AU", -35.28, 149.13, "AXJO.AU")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^GSPTSE",    "加拿大TSX", "CA", 49.28, -123.12, "GSPTSE.CA")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndex("^BVSP",      "巴西Bovespa","BR", -15.80, -47.86, "BVSP.BR")));
-        // ── Global indicators ───────────────────────────────────────
-        futures.add(indexExecutor.submit(() -> fetchYahooIndicator("DX-Y.NYB", "美元指数",  "DXY.IDX")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndicator("GC=F",     "黄金/美元", "XAU.CMD")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndicator("BTC-USD",  "比特币/美元","BTC.CCY")));
-        futures.add(indexExecutor.submit(() -> fetchYahooIndicator("CL=F",     "WTI 原油",  "CL.CMD")));
+        Snapshot snap = cache;
+        if (snap == null || snap.isStale()) {
+            synchronized (refreshLock) {
+                if (cache == null || cache.isStale()) cache = buildSnapshot();
+                snap = cache;
+            }
+        }
+        return Map.of("indices", snap.indices(), "indicators", snap.indicators());
+    }
+
+    private Snapshot buildSnapshot() {
+        List<Future<Map<String, Object>>> futures = new ArrayList<>(SPECS.size());
+        for (IndexSpec s : SPECS) futures.add(indexExecutor.submit(() -> fetchLive(s)));
 
         List<Map<String, Object>> indices = new ArrayList<>();
         List<Map<String, Object>> indicators = new ArrayList<>();
-        int i = 0;
-        for (Future<Map<String, Object>> f : futures) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TOTAL_BUDGET_SEC);
+        for (int i = 0; i < SPECS.size(); i++) {
+            IndexSpec s = SPECS.get(i);
+            Map<String, Object> result;
             try {
-                if (i < 20) indices.add(f.get(4, TimeUnit.SECONDS));
-                else indicators.add(f.get(4, TimeUnit.SECONDS));
-            } catch (Exception ignored) {}
-            i++;
-        }
-        return Map.of("indices", indices, "indicators", indicators);
-    }
-
-    // ── Sina (A-share, direct) ──────────────────────────────────────
-
-    private Map<String, Object> fetchSinaIndex(String sinaSymbol, String name, String flag, double lat, double lng, String dbSymbol) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("name", name); m.put("flag", flag); m.put("lat", lat); m.put("lng", lng);
-        m.put("symbol", dbSymbol);
-        try {
-            String url = "https://hq.sinajs.cn/list=" + sinaSymbol;
-            java.net.URL u = new java.net.URL(url);
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
-            conn.setRequestProperty("Referer", "https://finance.sina.com.cn");
-            conn.setConnectTimeout(5000); conn.setReadTimeout(5000);
-            String body = new String(conn.getInputStream().readAllBytes());
-            conn.disconnect();
-            int eq = body.indexOf('"');
-            if (eq >= 0) {
-                String[] fields = body.substring(eq + 1, body.lastIndexOf('"')).split(",");
-                if (fields.length >= 4) {
-                    m.put("price",     new BigDecimal(fields[1]));
-                    m.put("change",    new BigDecimal(fields[2]));
-                    m.put("changePct", new BigDecimal(fields[3]));
-                    m.put("fetchedAt", java.time.Instant.now().toString());
-                }
+                long remain = deadline - System.nanoTime();
+                result = futures.get(i).get(Math.max(0, remain), TimeUnit.NANOSECONDS);
+            } catch (Exception e) {
+                // Collector ran out of budget: drop the live attempt and serve the
+                // last close from the DB so the entry is never simply missing.
+                futures.get(i).cancel(true);
+                result = baseMap(s);
+                fillback(result, s);
             }
-        } catch (Exception ignored) {}
-        if (!m.containsKey("price")) fillFromHistory(m, dbSymbol);
+            if (s.indicator()) indicators.add(result); else indices.add(result);
+        }
+        return new Snapshot(List.copyOf(indices), List.copyOf(indicators), System.currentTimeMillis());
+    }
+
+    // ── Per-symbol fetch (live, with per-symbol DB fallback on failure) ──
+
+    private Map<String, Object> baseMap(IndexSpec s) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", s.name());
+        if (!s.indicator()) { m.put("flag", s.flag()); m.put("lat", s.lat()); m.put("lng", s.lng()); }
+        m.put("symbol", s.dbSymbol());
         return m;
     }
 
-    private Map<String, Object> fetchYahooIndex(String symbol, String name, String flag, double lat, double lng, String dbSymbol) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("name", name); m.put("flag", flag); m.put("lat", lat); m.put("lng", lng);
-        m.put("symbol", dbSymbol);
+    private Map<String, Object> fetchLive(IndexSpec s) {
+        Map<String, Object> m = baseMap(s);
         try {
-            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
-            String body = yahooGet(url);
-            JsonObject meta = JsonParser.parseString(body).getAsJsonObject()
-                    .getAsJsonObject("chart").getAsJsonArray("result")
-                    .get(0).getAsJsonObject().getAsJsonObject("meta");
-            BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
-            BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
-            m.put("price",     price);
-            m.put("change",    price.subtract(prev));
-            m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
-            m.put("fetchedAt", java.time.Instant.now().toString());
-        } catch (Exception e) { log.warning("Yahoo index " + dbSymbol + " failed: " + e.getMessage()); }
-        if (!m.containsKey("price")) fillFromHistory(m, dbSymbol);
+            if (s.source() == Source.SINA) {
+                String body = sinaGet("https://hq.sinajs.cn/list=" + s.fetchSymbol());
+                int eq = body.indexOf('"');
+                if (eq >= 0) {
+                    String[] f = body.substring(eq + 1, body.lastIndexOf('"')).split(",");
+                    if (f.length >= 4) {
+                        m.put("price",     new BigDecimal(f[1]));
+                        m.put("change",    new BigDecimal(f[2]));
+                        m.put("changePct", new BigDecimal(f[3]));
+                        m.put("fetchedAt", java.time.Instant.now().toString());
+                    }
+                }
+            } else {
+                String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + s.fetchSymbol() + "?range=1d&interval=5m";
+                String body = yahooGet(url);
+                JsonObject meta = JsonParser.parseString(body).getAsJsonObject()
+                        .getAsJsonObject("chart").getAsJsonArray("result")
+                        .get(0).getAsJsonObject().getAsJsonObject("meta");
+                BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
+                BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
+                m.put("price",     price);
+                m.put("change",    price.subtract(prev));
+                m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+                m.put("fetchedAt", java.time.Instant.now().toString());
+            }
+        } catch (Exception e) {
+            log.warning("live fetch " + s.dbSymbol() + " failed: " + e.getMessage());
+        }
+        if (!m.containsKey("price")) fillback(m, s);
         return m;
     }
 
-    private Map<String, Object> fetchYahooIndicator(String yfSymbol, String name, String dbSymbol) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("name", name); m.put("symbol", dbSymbol);
+    private void fillback(Map<String, Object> m, IndexSpec s) {
+        if (s.indicator()) fillFromHistoryIndicators(m, s.dbSymbol());
+        else fillFromHistory(m, s.dbSymbol());
+    }
+
+    private String sinaGet(String url) throws Exception {
+        java.net.URL u = new java.net.URL(url);
+        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
+        conn.setRequestProperty("Referer", "https://finance.sina.com.cn");
+        conn.setConnectTimeout(5000); conn.setReadTimeout(5000);
         try {
-            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + yfSymbol + "?range=1d&interval=5m";
-            String body = yahooGet(url);
-            JsonObject meta = JsonParser.parseString(body).getAsJsonObject()
-                    .getAsJsonObject("chart").getAsJsonArray("result")
-                    .get(0).getAsJsonObject().getAsJsonObject("meta");
-            BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
-            BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
-            m.put("price",     price);
-            m.put("change",    price.subtract(prev));
-            m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
-            m.put("fetchedAt", java.time.Instant.now().toString());
-        } catch (Exception e) { log.warning("Yahoo indicator " + dbSymbol + " failed: " + e.getMessage()); }
-        if (!m.containsKey("price")) fillFromHistoryIndicators(m, dbSymbol);
-        return m;
+            return new String(conn.getInputStream().readAllBytes());
+        } finally {
+            conn.disconnect();
+        }
     }
 
     private String yahooGet(String url) throws Exception {
         yahooSemaphore.acquire();
+        Process p = null;
         try {
             String proxy = "socks5h://" + System.getProperty("socksProxyHost", "127.0.0.1")
                     + ":" + System.getProperty("socksProxyPort", "7897");
-            ProcessBuilder pb = new ProcessBuilder("curl", "-x", proxy, "-s", "--max-time", "12",
+            ProcessBuilder pb = new ProcessBuilder("curl", "-x", proxy, "-s",
+                    "--max-time", String.valueOf(CURL_MAX_TIME_SEC),
                     "-H", "User-Agent: Mozilla/5.0", url);
             pb.redirectErrorStream(true);
-            Process p = pb.start();
+            p = pb.start();
             String body = new String(p.getInputStream().readAllBytes());
             int exit = p.waitFor();
             if (exit != 0 || body.isEmpty()) throw new Exception("curl exit " + exit);
             return body;
         } finally {
+            if (p != null && p.isAlive()) p.destroyForcibly();
             yahooSemaphore.release();
         }
     }
@@ -212,19 +253,6 @@ public class MarketIndexController {
             }
         } catch (Exception ignored) {}
         m.put("price", BigDecimal.ZERO);
-    }
-
-    // remaining fillFromHistory, fetchYahooPrice, news, world.json methods unchanged
-    // (same as original)
-    private BigDecimal fetchYahooPrice(String symbol) {
-        try {
-            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
-            String body = yahooGet(url);
-            return JsonParser.parseString(body).getAsJsonObject()
-                    .getAsJsonObject("chart").getAsJsonArray("result")
-                    .get(0).getAsJsonObject().getAsJsonObject("meta")
-                    .get("regularMarketPrice").getAsBigDecimal();
-        } catch (Exception e) { log.warning("Yahoo price " + symbol + " failed: " + e.getMessage()); return BigDecimal.ZERO; }
     }
 
     @GetMapping("/news")
