@@ -120,29 +120,14 @@ public class CrawlerScheduler {
         runQuantScript("metrics");
     }
 
-    // ── Auto-retry failed crawls at 23:00 ──────────────────────────────
+    // ── 19:00 二次抓取 — BaoStock/Yahoo 收盘数据通常已就绪 ──────────
 
-    @Scheduled(cron = "0 0 23 * * MON-FRI", zone = "Asia/Shanghai")
-    public void autoRetryFailedCrawls() {
+    @Scheduled(cron = "0 0 19 * * MON-FRI", zone = "Asia/Shanghai")
+    public void eveningRefetch() {
         if (isWeekend()) return;
-        LocalDate today = LocalDate.now(SHANGHAI);
-        try {
-            List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT id, market FROM crawl_history WHERE DATE(started_at) = ? AND status != 'ok'",
-                today);
-            for (Map<String, Object> row : rows) {
-                String market = (String) row.get("market");
-                log.info("Retrying failed crawl: market=" + market);
-                switch (market) {
-                    case "a"  -> syncAShares();
-                    case "hk" -> syncHKStocks();
-                    case "us" -> syncUSStocks();
-                    default   -> log.info("Unknown market, skipping: " + market);
-                }
-            }
-        } catch (Exception e) {
-            log.warning("Auto-retry check failed: " + e.getMessage());
-        }
+        log.info("晚间二次抓取 A股 + 港股");
+        runScript("fetch_stocks.py", "a", "A股(二次)");
+        runScript("fetch_stocks.py", "hk", "港股(二次)");
     }
 
     private void runQuantScript(String mode) {
