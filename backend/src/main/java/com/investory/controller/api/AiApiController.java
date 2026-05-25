@@ -16,13 +16,14 @@ import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/api/ai")
 public class AiApiController {
 
     private static final ObjectMapper json = new ObjectMapper();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor = Executors.newFixedThreadPool(4);
     private final AiSessionManager session;
     private final JdbcTemplate jdbc;
 
@@ -160,7 +161,8 @@ public class AiApiController {
                         }
                     }
                 }
-                p.waitFor();
+                boolean finished = p.waitFor(10, TimeUnit.MINUTES);
+                if (!finished) { p.destroyForcibly(); session.emitError("AI 对话超时"); }
                 Files.deleteIfExists(tmpInput);
             } catch (Exception e) {
                 session.emitError(e.getMessage());
@@ -221,7 +223,8 @@ public class AiApiController {
 
             Process p = pb.start();
             String out = new String(p.getInputStream().readAllBytes(), "UTF-8").trim();
-            p.waitFor();
+            boolean finished = p.waitFor(5, TimeUnit.MINUTES);
+            if (!finished) { p.destroyForcibly(); }
 
             if (out.startsWith("[")) {
                 @SuppressWarnings("unchecked")

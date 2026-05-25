@@ -17,6 +17,7 @@ import java.io.InputStreamReader;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,7 +26,7 @@ import java.util.regex.Pattern;
 public class AdminController {
 
     private static final ObjectMapper json = new ObjectMapper();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor = Executors.newFixedThreadPool(4);
     private final JdbcTemplate jdbc;
     private final CrawlSessionManager session;
 
@@ -289,7 +290,9 @@ public class AdminController {
                         }
                     }
 
-                    int exitCode = p.waitFor();
+                    boolean finished = p.waitFor(30, TimeUnit.MINUTES);
+                    if (!finished) { p.destroyForcibly(); session.emitError(label + " 抓取超时（30分钟），已终止"); }
+                    int exitCode = finished ? p.exitValue() : -1;
                     currentProcess = null;
 
                     if (stopRequested) {

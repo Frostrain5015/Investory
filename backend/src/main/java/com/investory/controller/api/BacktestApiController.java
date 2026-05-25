@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -27,7 +28,7 @@ import java.util.regex.Pattern;
 public class BacktestApiController {
 
     private static final ObjectMapper json = new ObjectMapper();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor = Executors.newFixedThreadPool(4);
     private static final Pattern PROGRESS_RE = Pattern.compile(
         "\\[(\\d+)/(\\d+)\\s+(\\d+(?:\\.\\d+)?)%\\]\\s+(.+)");
 
@@ -146,7 +147,9 @@ public class BacktestApiController {
                     }
                 }
 
-                int exitCode = p.waitFor();
+                boolean finished = p.waitFor(15, TimeUnit.MINUTES);
+                if (!finished) { p.destroyForcibly(); session.emitError("回测超时（15分钟）"); }
+                int exitCode = finished ? p.exitValue() : -1;
                 Files.deleteIfExists(tmpInput);
 
                 // Read output JSON — Python writes to its working dir (script/)

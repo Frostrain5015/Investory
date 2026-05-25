@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
@@ -38,7 +39,9 @@ public class CrawlerScheduler {
     private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
     private static final String SCRIPT_DIR = "script";
 
-    // Parse summary lines like "港股完成: 写入 962 行，无数据(停牌/错误) 0 只"
+    // Structured JSON summary (new format) — parsed with higher priority
+    private static final Pattern RESULT_JSON_RE = Pattern.compile("RESULT: (\\{.+\\})");
+    // Legacy summary lines like "港股完成: 写入 962 行，无数据(停牌/错误) 0 只" (fallback)
     private static final Pattern SUMMARY_RE = Pattern.compile(
         "写入\\s+(\\d+)\\s+行.*?(\\d+)\\s+只");
 
@@ -151,7 +154,9 @@ public class CrawlerScheduler {
                     log.info("[quant] " + line);
                 }
             }
-            int exit = p.waitFor();
+            boolean finished = p.waitFor(15, TimeUnit.MINUTES);
+            if (!finished) { p.destroyForcibly(); log.warning("Quant analysis " + mode + " timed out after 15min"); }
+            int exit = finished ? p.exitValue() : -1;
             log.info("Quant analysis " + mode + " finished, exit=" + exit);
         } catch (Exception e) {
             log.warning("Quant analysis error: " + e.getMessage());
@@ -228,14 +233,22 @@ public class CrawlerScheduler {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     logTail.append(line).append("\n");
+                    Matcher rjm = RESULT_JSON_RE.matcher(line);
+                    if (rjm.find()) {
+                        JsonObject r = JsonParser.parseString(rjm.group(1)).getAsJsonObject();
+                        rowsWritten = r.get("rows_written").getAsInt();
+                        stocksFailed = r.get("stocks_failed").getAsInt();
+                    }
                     Matcher m = SUMMARY_RE.matcher(line);
                     if (m.find()) {
-                        rowsWritten = Integer.parseInt(m.group(1));
-                        stocksFailed = Integer.parseInt(m.group(2));
+                        if (rowsWritten == 0) rowsWritten = Integer.parseInt(m.group(1));
+                        if (stocksFailed == 0) stocksFailed = Integer.parseInt(m.group(2));
                     }
                 }
             }
-            status = p.waitFor() == 0 ? "ok" : "error";
+            boolean finished = p.waitFor(10, TimeUnit.MINUTES);
+            if (!finished) { p.destroyForcibly(); logTail.append("Error: process timed out after 10min\n"); }
+            status = (finished && p.exitValue() == 0) ? "ok" : "error";
         } catch (Exception e) {
             logTail.append("Error: ").append(e.getMessage());
             log.warning(label + " sync error: " + e.getMessage());
@@ -332,16 +345,29 @@ public class CrawlerScheduler {
                     } else if (!line.contains("===") && !line.contains("完成")) {
                         sessionManager.addLog(line.trim());
                     }
-                    // Parse summary
+                    // Parse summary — try structured JSON first, fall back to regex
+                    Matcher rjm = RESULT_JSON_RE.matcher(line);
+                    if (rjm.find()) {
+                        JsonObject r = JsonParser.parseString(rjm.group(1)).getAsJsonObject();
+                        rowsWritten[0] = r.get("rows_written").getAsInt();
+                        stocksFailed[0] = r.get("stocks_failed").getAsInt();
+                    }
                     Matcher m = SUMMARY_RE.matcher(line);
                     if (m.find()) {
-                        rowsWritten[0] = Integer.parseInt(m.group(1));
-                        stocksFailed[0] = Integer.parseInt(m.group(2));
+                        if (rowsWritten[0] == 0) rowsWritten[0] = Integer.parseInt(m.group(1));
+                        if (stocksFailed[0] == 0) stocksFailed[0] = Integer.parseInt(m.group(2));
                     }
                 }
             }
-            int exitCode = p.waitFor();
-            status[0] = exitCode == 0 ? "ok" : "error";
+            boolean finished = p.waitFor(30, TimeUnit.MINUTES);
+            if (!finished) {
+                p.destroyForcibly();
+                logTail.append("Error: process timed out after 30min\n");
+                log.warning(label + " process timed out after 30min, killed");
+                sessionManager.emitError(label + " 抓取超时（30分钟），已终止");
+            }
+            int exitCode = finished ? p.exitValue() : -1;
+            status[0] = (finished && exitCode == 0) ? "ok" : "error";
             log.info(String.format("%s sync completed, exit=%d, rows=%d, failed=%d",
                 label, exitCode, rowsWritten[0], stocksFailed[0]));
         } catch (Exception e) {

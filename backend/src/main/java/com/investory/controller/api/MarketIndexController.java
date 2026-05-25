@@ -188,7 +188,9 @@ public class MarketIndexController {
             pb.redirectErrorStream(true);
             p = pb.start();
             String body = new String(p.getInputStream().readAllBytes());
-            int exit = p.waitFor();
+            boolean finished = p.waitFor(30, TimeUnit.SECONDS);
+            if (!finished) { p.destroyForcibly(); throw new Exception("curl timed out after 30s"); }
+            int exit = p.exitValue();
             if (exit != 0 || body.isEmpty()) throw new Exception("curl exit " + exit);
             return body;
         } finally {

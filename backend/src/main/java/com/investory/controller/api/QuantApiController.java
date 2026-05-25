@@ -19,6 +19,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @RestController
@@ -26,7 +27,7 @@ import java.util.stream.Collectors;
 public class QuantApiController {
 
     private static final ObjectMapper json = new ObjectMapper();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor = Executors.newFixedThreadPool(4);
 
     // 与 AdminController 完全相同的进度行正则
     private static final Pattern PROGRESS_RE = Pattern.compile(
@@ -110,7 +111,9 @@ public class QuantApiController {
             pb.redirectErrorStream(true);
             Process p = pb.start();
             String output = new String(p.getInputStream().readAllBytes(), "UTF-8");
-            int exitCode = p.waitFor();
+            boolean finished = p.waitFor(5, TimeUnit.MINUTES);
+            if (!finished) { p.destroyForcibly(); return Map.of("error", "分析超时"); }
+            int exitCode = p.exitValue();
             if (exitCode == 0 && !output.isBlank()) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> result = json.readValue(output, Map.class);
@@ -183,11 +186,14 @@ public class QuantApiController {
                         }
                     }
                 }
-                int exitCode = p.waitFor();
-                if (exitCode == 0) {
+                boolean finished = p.waitFor(15, TimeUnit.MINUTES);
+                if (!finished) {
+                    p.destroyForcibly();
+                    emit(emitter, "error", Map.of("msg", "量化分析超时（15分钟），已终止"));
+                } else if (p.exitValue() == 0) {
                     emit(emitter, "done", Map.of("msg", "量化分析完成"));
                 } else {
-                    emit(emitter, "error", Map.of("msg", "脚本退出码: " + exitCode));
+                    emit(emitter, "error", Map.of("msg", "脚本退出码: " + p.exitValue()));
                 }
             } catch (Exception e) {
                 emit(emitter, "error", Map.of("msg", e.getMessage()));
@@ -231,7 +237,8 @@ public class QuantApiController {
                 String line;
                 while ((line = r.readLine()) != null) out.append(line);
             }
-            p.waitFor();
+            boolean finished = p.waitFor(5, TimeUnit.MINUTES);
+            if (!finished) { p.destroyForcibly(); return Map.of("error", "优化超时"); }
             return json.readValue(out.toString(), Map.class);
         } catch (Exception e) {
             return Map.of("error", e.getMessage());

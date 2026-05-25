@@ -73,16 +73,29 @@ def load_config() -> dict:
 def load_checkpoint(market: str):
     cf = CHECKPOINT_DIR / f"{market}.txt"
     if cf.exists():
-        return cf.read_text().strip() or None
+        content = cf.read_text().strip()
+        if content:
+            return content
+    # 崩溃恢复：如果 .txt 为空或不存在，尝试从 .tmp 恢复
+    tf = CHECKPOINT_DIR / f"{market}.tmp"
+    if tf.exists():
+        content = tf.read_text().strip()
+        if content:
+            return content
     return None
 
 def save_checkpoint(market: str, symbol: str):
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    (CHECKPOINT_DIR / f"{market}.txt").write_text(symbol)
+    target = CHECKPOINT_DIR / f"{market}.txt"
+    tmp = CHECKPOINT_DIR / f"{market}.tmp"
+    tmp.write_text(symbol)
+    os.replace(tmp, target)  # 原子替换，避免写入中途崩溃导致断点文件为空
 
 def clear_checkpoint(market: str):
-    cf = CHECKPOINT_DIR / f"{market}.txt"
-    if cf.exists(): cf.unlink()
+    for ext in (".txt", ".tmp"):
+        cf = CHECKPOINT_DIR / f"{market}{ext}"
+        if cf.exists():
+            cf.unlink()
 
 # ─── 日志 ─────────────────────────────────────────────────────────────────────
 
@@ -287,6 +300,7 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
 
         clear_checkpoint(checkpoint_key)
         log.info(f"A股/{label}完成: 写入 {total_rows} 行，失败 {len(errors)} 只")
+        log.info(f"RESULT: {json.dumps({'market': checkpoint_key, 'rows_written': total_rows, 'stocks_failed': len(errors)}, ensure_ascii=False)}")
         for sym, nm, msg in errors[:10]:
             log.warning(f"  ✗ {sym} {nm}: {msg}")
         if len(errors) > 10:
@@ -370,6 +384,20 @@ def _kline_eastmoney(secid: str, start: str, end: str) -> list:
                 return []
             time.sleep(0.3)
     return []
+
+
+# ── 连续失败退避 ─────────────────────────────────────────────────────────────
+# 全局计数器：连续多只股票全部源返回空时，源可能整体故障（代理断开、限流），退避等待。
+
+_FAIL_STREAK = 0
+
+def _backoff_on_empty(log: logging.Logger):
+    global _FAIL_STREAK
+    _FAIL_STREAK += 1
+    if _FAIL_STREAK >= 10:
+        wait = min(5 * (2 ** min(_FAIL_STREAK - 10, 5)), 300)
+        log.warning(f"连续 {_FAIL_STREAK} 只无数据，退避 {wait:.0f}s ...")
+        time.sleep(wait)
 
 
 def _kline_multi(providers, log: logging.Logger, label: str):
@@ -514,6 +542,15 @@ def fetch_hk_stocks(
     cur.close()
     log.info(f"DB 中港股: {len(stocks)} 只")
 
+    # 启动前信源健康检查
+    log.info("信源探测 (00700.HK)...")
+    for src_name, src_fn in _hk_providers("00700", "0700.HK", fetch_kline, start, end):
+        try:
+            rows = src_fn()
+            log.info(f"  {src_name}: {'✓' if rows else '?'} ({len(rows)} 行)")
+        except Exception as e:
+            log.warning(f"  {src_name}: ✗ {str(e)[:80]}")
+
     skip_ids = build_skip_set(conn, [s[0] for s in stocks], start, end)
     if skip_ids:
         log.info(f"已有完整数据，跳过 {len(skip_ids)} 只，剩余 {len(stocks) - len(skip_ids)} 只")
@@ -550,10 +587,12 @@ def fetch_hk_stocks(
         krows, src = _kline_multi(providers, log, f"{name}({symbol})")
 
         if krows:
+            _FAIL_STREAK = 0
             db_rows = [(stock_id, r[0], r[1], r[2], r[3], r[4], r[5]) for r in krows]
             n = upsert_prices(conn, db_rows)
             total_rows += n
         else:
+            _backoff_on_empty(log)
             no_data += 1
 
         save_checkpoint("hk", code5d)
@@ -565,6 +604,7 @@ def fetch_hk_stocks(
     if conn:
         conn.close()
     log.info(f"港股完成: 写入 {total_rows} 行，无数据(停牌/错误) {no_data} 只")
+    log.info(f"RESULT: {json.dumps({'market': 'hk', 'rows_written': total_rows, 'stocks_failed': no_data}, ensure_ascii=False)}")
 
 
 # ─── 美股 (Yahoo Finance + 代理) ─────────────────────────────────────────────
@@ -709,6 +749,16 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
                 continue
         return rows
 
+    # 启动前信源健康检查
+    if not dry_run:
+        log.info("信源探测 (AAPL)...")
+        for src_name, src_fn in _us_providers("AAPL", fetch_kline, start, end):
+            try:
+                rows = src_fn()
+                log.info(f"  {src_name}: {'✓' if rows else '?'} ({len(rows)} 行)")
+            except Exception as e:
+                log.warning(f"  {src_name}: ✗ {str(e)[:80]}")
+
     total      = len(tickers)
     total_rows = 0
     errors     = []
@@ -736,6 +786,7 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
             krows, src = _kline_multi(providers, log, ticker)
             n = len(krows)
             if krows and not dry_run:
+                _FAIL_STREAK = 0
                 db_rows = [(stock_id, r[0], r[1], r[2], r[3], r[4], r[5]) for r in krows]
                 n = upsert_prices(conn, db_rows)
                 total_rows += n
@@ -745,6 +796,9 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
             msg = str(e)[:100]
             errors.append((ticker, msg))
             log.warning(f"  ✗ {ticker}: {msg}")
+
+        if not krows and not dry_run:
+            _backoff_on_empty(log)
 
         save_checkpoint("us", ticker)
         pct = seq / total * 100
@@ -756,6 +810,7 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
         conn.close()
 
     log.info(f"美股完成: 写入 {total_rows} 行，失败 {len(errors)} 只")
+    log.info(f"RESULT: {json.dumps({'market': 'us', 'rows_written': total_rows, 'stocks_failed': len(errors)}, ensure_ascii=False)}")
     for t, msg in errors[:10]:
         log.warning(f"  ✗ {t}: {msg}")
 
@@ -986,6 +1041,7 @@ def fetch_indices(cfg: dict, start: str, end: str, dry_run: bool, log: logging.L
     if conn:
         conn.close()
     log.info(f"指数完成: 写入 {total_rows} 行，错误 {errors} 只")
+    log.info(f"RESULT: {json.dumps({'market': 'idx', 'rows_written': total_rows, 'stocks_failed': errors}, ensure_ascii=False)}")
 
 
 # ─── 入口 ─────────────────────────────────────────────────────────────────────
