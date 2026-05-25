@@ -11,8 +11,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
-import java.net.InetSocketAddress;
-import java.net.Proxy;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
@@ -24,17 +22,6 @@ public class MarketIndexController {
     private static final Logger log = Logger.getLogger(MarketIndexController.class.getName());
     private final ExecutorService indexExecutor = Executors.newFixedThreadPool(25);
     private final java.util.concurrent.Semaphore yahooSemaphore = new java.util.concurrent.Semaphore(4);
-    private final Proxy socksProxy;
-
-    public MarketIndexController() {
-        String host = System.getProperty("socksProxyHost");
-        String port = System.getProperty("socksProxyPort", "1080");
-        if (host != null && !host.isBlank()) {
-            socksProxy = new Proxy(Proxy.Type.SOCKS, new InetSocketAddress(host, Integer.parseInt(port)));
-        } else {
-            socksProxy = Proxy.NO_PROXY;
-        }
-    }
 
     @Autowired private JdbcTemplate jdbc;
 
@@ -73,8 +60,8 @@ public class MarketIndexController {
         int i = 0;
         for (Future<Map<String, Object>> f : futures) {
             try {
-                if (i < 20) indices.add(f.get(4, TimeUnit.SECONDS));
-                else indicators.add(f.get(4, TimeUnit.SECONDS));
+                if (i < 20) indices.add(f.get(30, TimeUnit.SECONDS));
+                else indicators.add(f.get(30, TimeUnit.SECONDS));
             } catch (Exception ignored) {}
             i++;
         }
@@ -154,14 +141,15 @@ public class MarketIndexController {
     private String yahooGet(String url) throws Exception {
         yahooSemaphore.acquire();
         try {
-            java.net.URL u = new java.net.URL(url);
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection(socksProxy);
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-            conn.setConnectTimeout(10000);
-            conn.setReadTimeout(10000);
-            String body = new String(conn.getInputStream().readAllBytes());
-            conn.disconnect();
-            if (conn.getResponseCode() != 200) throw new Exception("HTTP " + conn.getResponseCode());
+            String proxy = "socks5h://" + System.getProperty("socksProxyHost", "127.0.0.1")
+                    + ":" + System.getProperty("socksProxyPort", "7897");
+            ProcessBuilder pb = new ProcessBuilder("curl", "-x", proxy, "-s", "--max-time", "15",
+                    "-H", "User-Agent: Mozilla/5.0", url);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String body = new String(p.getInputStream().readAllBytes());
+            int exit = p.waitFor();
+            if (exit != 0 || body.isEmpty()) throw new Exception("curl exit " + exit);
             return body;
         } finally {
             yahooSemaphore.release();
