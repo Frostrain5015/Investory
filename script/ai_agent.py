@@ -1023,7 +1023,7 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
     elif name == "confirm_add_watchlist":
         return _confirm_add_watchlist(args)
     elif name == "confirm_remove_watchlist":
-        return _confirm_remove_watchlist(args)
+        return _confirm_remove_watchlist({**args, "_user_id": user_id})
     elif name == "confirm_create_transaction":
         return _confirm_create(args)
     elif name == "confirm_update_transaction":
@@ -1046,8 +1046,8 @@ def _clean_body(body: dict) -> dict:
 
 def _resolve_stock_id(value) -> int:
     """Try to resolve a stock symbol to an ID, or return the integer as-is."""
-    if isinstance(value, int) and value > 0:
-        return value
+    if isinstance(value, (int, float)) and value > 0:
+        return int(value)
     if isinstance(value, str) and value.strip():
         conn = get_db_conn()
         try:
@@ -1242,24 +1242,25 @@ def tool_get_watchlist(user_id: int) -> dict:
         WHERE w.user_id = %s ORDER BY w.sort_order, w.created_at DESC
     """, (user_id,))
     rows = cur.fetchall()
+    cur.close()
     items = []
+    cur2 = conn.cursor()
     for r in rows:
         wl_id, sid, sym, name, mkt, curr = r[0], r[1], r[2], r[3], r[4], r[5]
         item = {"id": wl_id, "stockId": sid, "symbol": sym, "name": name, "market": mkt, "currency": curr}
-        # Latest price
-        cur2 = conn.cursor()
         cur2.execute("SELECT close FROM stock_prices WHERE stock_id=%s ORDER BY trade_date DESC LIMIT 1", (sid,))
         pr = cur2.fetchone()
-        cur2.close()
         item["price"] = float(pr[0]) if pr else 0
         items.append(item)
-    cur.close()
+    cur2.close()
     conn.close()
     return {"count": len(items), "items": items}
 
 def _confirm_add_watchlist(args: dict) -> dict:
     """Build add-to-watchlist confirmation."""
     sid = _resolve_stock_id(args.get("stockId", 0))
+    if sid <= 0:
+        return {"error": f"未找到股票: {args.get('symbol', args.get('stockId', '?'))}，请先用 search_stocks 查询"}
     name = args.get("name", "") or args.get("symbol", "") or "?"
     return _emit_confirm([{
         "action": "add_watchlist", "label": f"添加 {name} 到自选",
@@ -1270,6 +1271,7 @@ def _confirm_add_watchlist(args: dict) -> dict:
 def _confirm_remove_watchlist(args: dict) -> dict:
     """Build remove-from-watchlist confirmation. Looks up item details for display."""
     ids = args.get("ids", [])
+    user_id = args.get("_user_id", 0)
     if not ids:
         return {"error": "no ids provided"}
     conn = get_db_conn()
@@ -1277,7 +1279,7 @@ def _confirm_remove_watchlist(args: dict) -> dict:
     for wid in ids:
         try:
             cur = conn.cursor()
-            cur.execute("SELECT w.id, w.stock_id, s.symbol, s.name FROM watchlist w JOIN stocks s ON w.stock_id=s.id WHERE w.id=%s", (wid,))
+            cur.execute("SELECT w.id, w.stock_id, s.symbol, s.name FROM watchlist w JOIN stocks s ON w.stock_id=s.id WHERE w.id=%s AND w.user_id=%s", (wid, user_id))
             row = cur.fetchone()
             cur.close()
             if row:
@@ -1290,7 +1292,7 @@ def _confirm_remove_watchlist(args: dict) -> dict:
         except:
             pass
     conn.close()
-    return _emit_confirm(items, f"从自选移除 {len(items)} 项") if items else {"error": "no items found"}
+    return _emit_confirm(items, f"从自选移除 {len(items)} 项") if items else {"error": "未找到要移除的自选项"}
 
 
 def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> str:
