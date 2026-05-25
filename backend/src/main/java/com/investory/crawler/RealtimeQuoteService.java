@@ -10,6 +10,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.time.DayOfWeek;
 import java.time.Instant;
@@ -18,7 +20,6 @@ import java.time.ZonedDateTime;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.LocalDate;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
@@ -28,7 +29,7 @@ import java.util.logging.Logger;
 
 /**
  * Real-time stock price service using a race pattern:
- * fires requests to EastMoney, Sina, Yahoo, and BaoStock simultaneously,
+ * fires requests to EastMoney, Tencent (A-shares), and Yahoo (global),
  * returns the first successful response, and cancels the rest.
  * Never writes to the database.
  */
@@ -36,7 +37,21 @@ import java.util.logging.Logger;
 public class RealtimeQuoteService {
 
     private static final Logger log = Logger.getLogger(RealtimeQuoteService.class.getName());
+    // Direct connection for Chinese APIs (EastMoney, Tencent)
     private final HttpClient http = HttpClient.newHttpClient();
+    // SOCKS proxy for international APIs (Yahoo)
+    private final HttpClient httpWithProxy = buildProxiedClient();
+
+    private static HttpClient buildProxiedClient() {
+        String host = System.getProperty("socksProxyHost");
+        String port = System.getProperty("socksProxyPort", "1080");
+        if (host != null && !host.isBlank()) {
+            return HttpClient.newBuilder()
+                    .proxy(ProxySelector.of(new InetSocketAddress(host, Integer.parseInt(port))))
+                    .build();
+        }
+        return HttpClient.newHttpClient();
+    }
 
     @Autowired private StockDao stockDao;
 
@@ -68,8 +83,8 @@ public class RealtimeQuoteService {
     public Quote getQuote(Stock stock) {
         if (!isMarketOpen(stock)) return null;
         List<Callable<Quote>> tasks = List.of(
-            () -> new Quote(fetchFromEastMoney(stock), Instant.now()),
             () -> new Quote(fetchFromSina(stock), Instant.now()),
+            () -> new Quote(fetchFromTencent(stock), Instant.now()),
             () -> new Quote(fetchFromYahoo(stock), Instant.now())
         );
         ExecutorService executor = Executors.newFixedThreadPool(3);
@@ -89,15 +104,28 @@ public class RealtimeQuoteService {
         return q != null ? q.price() : null;
     }
 
-    // ── EastMoney ───────────────────────────────────────────────────────
+    // ── Sina (real-time) ────────────────────────────────────────────────
 
-    private BigDecimal fetchFromEastMoney(Stock stock) throws Exception {
-        String url = "https://push2.eastmoney.com/api/qt/stock/get?secid=" + stock.getSymbol() + "&fields=f2";
-        String body = httpGet(url);
-        JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-        JsonObject data = root.getAsJsonObject("data");
-        if (data == null) throw new Exception("no data");
-        return safeDecimal(data, "f2");
+    private BigDecimal fetchFromSina(Stock stock) throws Exception {
+        if (!"SH".equals(stock.getMarket()) && !"SZ".equals(stock.getMarket())) {
+            throw new Exception("Sina only supports A-shares");
+        }
+        String code = getTicker(stock);
+        String prefix = "SH".equals(stock.getMarket()) ? "sh" : "sz";
+        String url = "https://hq.sinajs.cn/list=" + prefix + code;
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Referer", "https://finance.sina.com.cn")
+                .build();
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 200) throw new Exception("HTTP " + resp.statusCode());
+        String body = resp.body();
+        int q = body.indexOf('"');
+        if (q < 0) throw new Exception("no quote");
+        // var hq_str_sh600519="name,open,prevClose,price,high,low,..."
+        String[] fields = body.substring(q + 1, body.lastIndexOf('"')).split(",");
+        if (fields.length < 4) throw new Exception("not enough fields");
+        return new BigDecimal(fields[3]);
     }
 
     // ── Symbol helpers ───────────────────────────────────────────────────
@@ -116,23 +144,25 @@ public class RealtimeQuoteService {
         return symbol.substring(0, dot);
     }
 
-    // ── Sina ────────────────────────────────────────────────────────────
+    // ── Tencent ──────────────────────────────────────────────────────────
 
-    private BigDecimal fetchFromSina(Stock stock) throws Exception {
-        // Sina only supports Chinese A-shares
+    private BigDecimal fetchFromTencent(Stock stock) throws Exception {
+        // Tencent real-time quote API (China-local, A-shares only)
         if (!"SH".equals(stock.getMarket()) && !"SZ".equals(stock.getMarket())) {
-            throw new Exception("Sina does not support non-A-share stocks");
+            throw new Exception("Tencent does not support non-A-share stocks");
         }
         String code = getTicker(stock);
         String prefix = "SH".equals(stock.getMarket()) ? "sh" : "sz";
-        String url = "https://money.finance.sina.com.cn/quotes_service/api/json_v2.php/"
-                + "CN_MarketData.getKLineData?symbol=" + prefix + code
-                + "&scale=240&ma=no&datalen=1";
+        String url = "https://qt.gtimg.cn/q=" + prefix + code;
         String body = httpGet(url);
-        JsonArray arr = JsonParser.parseString(body).getAsJsonArray();
-        if (arr.isEmpty()) throw new Exception("no data");
-        JsonObject latest = arr.get(arr.size() - 1).getAsJsonObject();
-        return new BigDecimal(latest.get("close").getAsString());
+        // Response format: v_sh600519="1~name~code~price~prevClose~open~..."
+        int quoteIdx = body.indexOf('"');
+        if (quoteIdx < 0) throw new Exception("no quote");
+        String content = body.substring(quoteIdx + 1, body.lastIndexOf('"'));
+        String[] fields = content.split("~");
+        if (fields.length < 4) throw new Exception("not enough fields");
+        // fields[3]=currentPrice, fields[4]=prevClose
+        return new BigDecimal(fields[3]);
     }
 
     // ── Yahoo Finance ────────────────────────────────────────────────────
@@ -151,7 +181,7 @@ public class RealtimeQuoteService {
         String yfSymbol = toYahooSymbol(stock);
         String url = "https://query1.finance.yahoo.com/v8/finance/chart/"
                 + yfSymbol + "?range=1d&interval=5m";
-        String body = httpGet(url);
+        String body = httpGetViaProxy(url);
         JsonObject root = JsonParser.parseString(body).getAsJsonObject();
         JsonObject chart = root.getAsJsonObject("chart");
         if (chart == null) throw new Exception("no chart");
@@ -173,9 +203,13 @@ public class RealtimeQuoteService {
         return resp.body();
     }
 
-    private BigDecimal safeDecimal(JsonObject obj, String key) throws Exception {
-        var el = obj.get(key);
-        if (el == null || el.isJsonNull()) throw new Exception(key + " is null");
-        return new BigDecimal(el.getAsString());
+    private String httpGetViaProxy(String url) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .header("User-Agent", "Mozilla/5.0")
+                .build();
+        HttpResponse<String> resp = httpWithProxy.send(req, HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 200) throw new Exception("HTTP " + resp.statusCode());
+        return resp.body();
     }
+
 }
