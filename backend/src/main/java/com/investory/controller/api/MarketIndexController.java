@@ -21,7 +21,6 @@ public class MarketIndexController {
 
     private static final Logger log = Logger.getLogger(MarketIndexController.class.getName());
     private final ExecutorService indexExecutor = Executors.newFixedThreadPool(25);
-    private final java.util.concurrent.Semaphore yahooSemaphore = new java.util.concurrent.Semaphore(4);
 
     @Autowired private JdbcTemplate jdbc;
 
@@ -60,8 +59,8 @@ public class MarketIndexController {
         int i = 0;
         for (Future<Map<String, Object>> f : futures) {
             try {
-                if (i < 20) indices.add(f.get(30, TimeUnit.SECONDS));
-                else indicators.add(f.get(30, TimeUnit.SECONDS));
+                if (i < 20) indices.add(f.get(4, TimeUnit.SECONDS));
+                else indicators.add(f.get(4, TimeUnit.SECONDS));
             } catch (Exception ignored) {}
             i++;
         }
@@ -139,21 +138,16 @@ public class MarketIndexController {
     }
 
     private String yahooGet(String url) throws Exception {
-        yahooSemaphore.acquire();
-        try {
-            String proxy = "socks5h://" + System.getProperty("socksProxyHost", "127.0.0.1")
-                    + ":" + System.getProperty("socksProxyPort", "7897");
-            ProcessBuilder pb = new ProcessBuilder("curl", "-x", proxy, "-s", "--max-time", "15",
-                    "-H", "User-Agent: Mozilla/5.0", url);
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            String body = new String(p.getInputStream().readAllBytes());
-            int exit = p.waitFor();
-            if (exit != 0 || body.isEmpty()) throw new Exception("curl exit " + exit);
-            return body;
-        } finally {
-            yahooSemaphore.release();
-        }
+        String proxy = "socks5h://" + System.getProperty("socksProxyHost", "127.0.0.1")
+                + ":" + System.getProperty("socksProxyPort", "7897");
+        ProcessBuilder pb = new ProcessBuilder("curl", "-x", proxy, "-s", "--max-time", "12",
+                "-H", "User-Agent: Mozilla/5.0", url);
+        pb.redirectErrorStream(true);
+        Process p = pb.start();
+        String body = new String(p.getInputStream().readAllBytes());
+        int exit = p.waitFor();
+        if (exit != 0 || body.isEmpty()) throw new Exception("curl exit " + exit);
+        return body;
     }
 
     // ── DB fallback: compute change from last 2 closes in stock_prices ──
@@ -198,7 +192,7 @@ public class MarketIndexController {
             List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT sp.close FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id " +
                 "WHERE s.symbol LIKE ? ORDER BY sp.trade_date DESC LIMIT 2",
-                "%" + dbSymbol.substring(dbSymbol.lastIndexOf('.') + 1));
+                "%." + dbSymbol);
             if (rows.size() >= 2) {
                 BigDecimal today  = (BigDecimal) rows.get(0).get("close");
                 BigDecimal yest   = (BigDecimal) rows.get(1).get("close");
