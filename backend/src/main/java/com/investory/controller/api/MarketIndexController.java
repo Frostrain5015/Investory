@@ -21,6 +21,7 @@ public class MarketIndexController {
 
     private static final Logger log = Logger.getLogger(MarketIndexController.class.getName());
     private final ExecutorService indexExecutor = Executors.newFixedThreadPool(25);
+    private final java.util.concurrent.Semaphore yahooSemaphore = new java.util.concurrent.Semaphore(4);
 
     @Autowired private JdbcTemplate jdbc;
 
@@ -138,16 +139,21 @@ public class MarketIndexController {
     }
 
     private String yahooGet(String url) throws Exception {
-        String proxy = "socks5h://" + System.getProperty("socksProxyHost", "127.0.0.1")
-                + ":" + System.getProperty("socksProxyPort", "7897");
-        ProcessBuilder pb = new ProcessBuilder("curl", "-x", proxy, "-s", "--max-time", "12",
-                "-H", "User-Agent: Mozilla/5.0", url);
-        pb.redirectErrorStream(true);
-        Process p = pb.start();
-        String body = new String(p.getInputStream().readAllBytes());
-        int exit = p.waitFor();
-        if (exit != 0 || body.isEmpty()) throw new Exception("curl exit " + exit);
-        return body;
+        yahooSemaphore.acquire();
+        try {
+            String proxy = "socks5h://" + System.getProperty("socksProxyHost", "127.0.0.1")
+                    + ":" + System.getProperty("socksProxyPort", "7897");
+            ProcessBuilder pb = new ProcessBuilder("curl", "-x", proxy, "-s", "--max-time", "12",
+                    "-H", "User-Agent: Mozilla/5.0", url);
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String body = new String(p.getInputStream().readAllBytes());
+            int exit = p.waitFor();
+            if (exit != 0 || body.isEmpty()) throw new Exception("curl exit " + exit);
+            return body;
+        } finally {
+            yahooSemaphore.release();
+        }
     }
 
     // ── DB fallback: compute change from last 2 closes in stock_prices ──
