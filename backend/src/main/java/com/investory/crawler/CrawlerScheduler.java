@@ -17,11 +17,6 @@ import java.time.ZoneId;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.InetSocketAddress;
-import java.net.ProxySelector;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -49,32 +44,33 @@ public class CrawlerScheduler {
 
     private final JdbcTemplate jdbc;
     private final CrawlSessionManager sessionManager;
+    private final java.net.Proxy socksProxy;
 
-    public CrawlerScheduler(JdbcTemplate jdbc, @org.springframework.beans.factory.annotation.Autowired CrawlSessionManager sessionManager) {
+    public CrawlerScheduler(JdbcTemplate jdbc, @org.springframework.beans.factory.annotation.Autowired(required = false) CrawlSessionManager sessionManager) {
         this.jdbc = jdbc;
         this.sessionManager = sessionManager;
+        this.socksProxy = buildSocksProxy();
     }
 
-    private final HttpClient httpWithProxy = buildProxiedClient();
-
-    private static HttpClient buildProxiedClient() {
+    private static java.net.Proxy buildSocksProxy() {
         String host = System.getProperty("socksProxyHost");
         String port = System.getProperty("socksProxyPort", "1080");
         if (host != null && !host.isBlank()) {
-            return HttpClient.newBuilder()
-                    .proxy(ProxySelector.of(new InetSocketAddress(host, Integer.parseInt(port))))
-                    .build();
+            return new java.net.Proxy(java.net.Proxy.Type.SOCKS, new InetSocketAddress(host, Integer.parseInt(port)));
         }
-        return HttpClient.newHttpClient();
+        return java.net.Proxy.NO_PROXY;
     }
 
     private String yahooGet(String url) throws Exception {
-        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                .header("User-Agent", "Mozilla/5.0")
-                .build();
-        HttpResponse<String> resp = httpWithProxy.send(req, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() != 200) throw new Exception("HTTP " + resp.statusCode());
-        return resp.body();
+        java.net.URL u = new java.net.URL(url);
+        java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection(socksProxy);
+        conn.setRequestProperty("User-Agent", "Mozilla/5.0");
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(10000);
+        String body = new String(conn.getInputStream().readAllBytes());
+        conn.disconnect();
+        if (conn.getResponseCode() != 200) throw new Exception("HTTP " + conn.getResponseCode());
+        return body;
     }
 
     @Value("${python.executable:python3}")
