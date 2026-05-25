@@ -16,6 +16,12 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -47,6 +53,28 @@ public class CrawlerScheduler {
     public CrawlerScheduler(JdbcTemplate jdbc, @org.springframework.beans.factory.annotation.Autowired CrawlSessionManager sessionManager) {
         this.jdbc = jdbc;
         this.sessionManager = sessionManager;
+    }
+
+    private final HttpClient httpWithProxy = buildProxiedClient();
+
+    private static HttpClient buildProxiedClient() {
+        String host = System.getProperty("socksProxyHost");
+        String port = System.getProperty("socksProxyPort", "1080");
+        if (host != null && !host.isBlank()) {
+            return HttpClient.newBuilder()
+                    .proxy(ProxySelector.of(new InetSocketAddress(host, Integer.parseInt(port))))
+                    .build();
+        }
+        return HttpClient.newHttpClient();
+    }
+
+    private String yahooGet(String url) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .header("User-Agent", "Mozilla/5.0")
+                .build();
+        HttpResponse<String> resp = httpWithProxy.send(req, HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 200) throw new Exception("HTTP " + resp.statusCode());
+        return resp.body();
     }
 
     @Value("${python.executable:python3}")
@@ -174,13 +202,7 @@ public class CrawlerScheduler {
     private BigDecimal fetchYahooRate(String symbol) {
         try {
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
-            java.net.URL u = new java.net.URL(url);
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-            conn.setConnectTimeout(8000);
-            conn.setReadTimeout(8000);
-            String body = new String(conn.getInputStream().readAllBytes());
-            conn.disconnect();
+            String body = yahooGet(url);
             JsonObject meta = JsonParser.parseString(body).getAsJsonObject()
                     .getAsJsonObject("chart").getAsJsonArray("result")
                     .get(0).getAsJsonObject().getAsJsonObject("meta");

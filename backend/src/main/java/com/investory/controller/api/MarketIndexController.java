@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.math.BigDecimal;
+import java.net.InetSocketAddress;
+import java.net.ProxySelector;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -22,10 +24,20 @@ import java.util.concurrent.*;
 @RequestMapping("/api/market")
 public class MarketIndexController {
 
-    // JVM SOCKS proxy configured via pom.xml spring-boot.run.jvmArguments
     private final HttpClient http = HttpClient.newHttpClient();
-
+    private final HttpClient httpWithProxy = buildProxiedClient();
     private final ExecutorService indexExecutor = Executors.newFixedThreadPool(25);
+
+    private static HttpClient buildProxiedClient() {
+        String host = System.getProperty("socksProxyHost");
+        String port = System.getProperty("socksProxyPort", "1080");
+        if (host != null && !host.isBlank()) {
+            return HttpClient.newBuilder()
+                    .proxy(ProxySelector.of(new InetSocketAddress(host, Integer.parseInt(port))))
+                    .build();
+        }
+        return HttpClient.newHttpClient();
+    }
 
     @GetMapping("/indices")
     public Map<String, Object> getIndices() {
@@ -110,14 +122,7 @@ public class MarketIndexController {
         m.put("symbol", dbSymbol);
         try {
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
-            java.net.URL u = new java.net.URL(url);
-            // HttpURLConnection respects JVM -DsocksProxyHost / -DsocksProxyPort
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
-            try {
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                String body = new String(conn.getInputStream().readAllBytes());
+            String body = yahooGet(url);
                 JsonObject root = JsonParser.parseString(body).getAsJsonObject();
                 JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
                     .get(0).getAsJsonObject().getAsJsonObject("meta");
@@ -127,9 +132,6 @@ public class MarketIndexController {
                 m.put("change",    price.subtract(prev));
                 m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
                 m.put("fetchedAt", java.time.Instant.now().toString());
-            } finally {
-                conn.disconnect();
-            }
         } catch (Exception ignored) {}
         if (!m.containsKey("price")) fillFromHistory(m, dbSymbol);
         return m;
@@ -141,28 +143,28 @@ public class MarketIndexController {
         m.put("symbol", dbSymbol);
         try {
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + yfSymbol + "?range=1d&interval=5m";
-            java.net.URL u = new java.net.URL(url);
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
-            try {
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                String body = new String(conn.getInputStream().readAllBytes());
-                JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-                JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
-                    .get(0).getAsJsonObject().getAsJsonObject("meta");
-                BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
-                BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
-                m.put("price",     price);
-                m.put("change",    price.subtract(prev));
-                m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
-                m.put("fetchedAt", java.time.Instant.now().toString());
-            } finally {
-                conn.disconnect();
-            }
+            String body = yahooGet(url);
+            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+            JsonObject meta = root.getAsJsonObject("chart").getAsJsonArray("result")
+                .get(0).getAsJsonObject().getAsJsonObject("meta");
+            BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
+            BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
+            m.put("price",     price);
+            m.put("change",    price.subtract(prev));
+            m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+            m.put("fetchedAt", java.time.Instant.now().toString());
         } catch (Exception ignored) {}
         if (!m.containsKey("price")) fillFromHistoryIndicators(m, dbSymbol);
         return m;
+    }
+
+    private String yahooGet(String url) throws Exception {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
+                .header("User-Agent", "Mozilla/5.0")
+                .build();
+        HttpResponse<String> resp = httpWithProxy.send(req, HttpResponse.BodyHandlers.ofString());
+        if (resp.statusCode() != 200) throw new Exception("HTTP " + resp.statusCode());
+        return resp.body();
     }
 
     // ── DB fallback: compute change from last 2 closes in stock_prices ──
@@ -258,20 +260,11 @@ public class MarketIndexController {
     private BigDecimal fetchYahooPrice(String symbol) {
         try {
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
-            java.net.URL u = new java.net.URL(url);
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
-            try {
-                conn.setRequestProperty("User-Agent", "Mozilla/5.0");
-                conn.setConnectTimeout(8000);
-                conn.setReadTimeout(8000);
-                String body = new String(conn.getInputStream().readAllBytes());
-                JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-                return root.getAsJsonObject("chart").getAsJsonArray("result")
-                    .get(0).getAsJsonObject().getAsJsonObject("meta")
-                    .get("regularMarketPrice").getAsBigDecimal();
-            } finally {
-                conn.disconnect();
-            }
+            String body = yahooGet(url);
+            JsonObject root = JsonParser.parseString(body).getAsJsonObject();
+            return root.getAsJsonObject("chart").getAsJsonArray("result")
+                .get(0).getAsJsonObject().getAsJsonObject("meta")
+                .get("regularMarketPrice").getAsBigDecimal();
         } catch (Exception e) { return BigDecimal.ZERO; }
     }
 
