@@ -88,7 +88,7 @@ public class PortfolioController {
         r.put("cashBalance", cash);
         r.put("cashByCurrency", jdbc.queryForList("SELECT currency, amount FROM cash_balances WHERE portfolio_id=?", pid));
         r.put("totalReturnPct", analysisService.holdingReturnRate(totalMV, totalInvested, totalDiv));
-        r.put("cumulativeReturnPct", analysisService.cumulativeReturnRate(pid, totalMV, totalInvested, cash, totalDiv, realized));
+        r.put("cumulativeReturnPct", analysisService.cumulativeReturnRate(cumulativePnl, totalInvested));
         r.put("todayPnl", todayPnl);
         BigDecimal prev = analysisService.totalMarketValue(snaps).subtract(todayPnl);
         r.put("todayPnlPct", prev.compareTo(BigDecimal.ZERO) != 0 ? todayPnl.divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO);

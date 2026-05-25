@@ -63,14 +63,10 @@ public class PortfolioAnalysisService {
         return dailyPortfolioValueDao.findLatest(portfolioId);
     }
 
-    /**
-     * Cumulative return rate (includes realized P&L).
-     * Return = (MV + Cash + Div + Realized - Invested) / Invested * 100
-     */
-    public BigDecimal cumulativeReturnRate(long portfolioId, BigDecimal totalMarketValue, BigDecimal totalInvested, BigDecimal cashBalance, BigDecimal totalDividends, BigDecimal realizedPnl) {
+    /** Cumulative return rate = cumulativePnl / totalInvested * 100 */
+    public BigDecimal cumulativeReturnRate(BigDecimal cumulativePnl, BigDecimal totalInvested) {
         if (totalInvested.compareTo(BigDecimal.ZERO) == 0) return BigDecimal.ZERO;
-        BigDecimal totalReturn = totalMarketValue.add(cashBalance).add(totalDividends).add(realizedPnl).subtract(totalInvested);
-        return totalReturn.divide(totalInvested, 6, RoundingMode.HALF_UP)
+        return cumulativePnl.divide(totalInvested, 6, RoundingMode.HALF_UP)
                 .multiply(new BigDecimal("100"))
                 .setScale(2, RoundingMode.HALF_UP);
     }
