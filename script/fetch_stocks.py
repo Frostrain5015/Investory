@@ -300,41 +300,122 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
 
 # ─── 港股 (腾讯财经) ──────────────────────────────────────────────────────────
 
-def _tencent_kline(code5d: str, start: str, end: str) -> list:
-    """
-    腾讯财经前复权日K线。
-    返回 [(date, open, close, high, low, volume), ...] 失败返回 []。
-    腾讯格式: [date, open, high, low, close, volume]（注意 close 在 index 4）
-    """
-    import requests
-    tc = f"hk{code5d}"
-    url = (
-        f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
-        f"?_var=kline_dayqfq&param={tc},day,{start},{end},730,qfq"
-    )
+# ─── 多源 K 线引擎 (腾讯 / 东方财富 / Yahoo) ──────────────────────────────────
+#
+# 移植后端 RealtimeQuoteService 的多源思路。后端实时单价用 invokeAny 并发赛马取
+# 最快成功源；批量抓取数千只股票时改为「优先级兜底」：CN 直连源(腾讯/东财)在前、
+# Yahoo 在最后，命中即停 —— 既尽量用一切可达源补全 K 线，又避免对已被限流的
+# Yahoo 持续打请求引发雪崩。所有源统一返回 [(date, open, close, high, low, volume), ...]
+# 与 upsert_prices 对齐；腾讯/东财日K 字段顺序均为 [date, open, close, high, low, volume(, amount)]。
+
+_CN_SESSION = None
+def _cn_session():
+    """China-direct session that IGNORES HTTP(S)_PROXY env. yfinance needs the proxy
+    (set via env for Yahoo); 腾讯/东财 are domestic and must go direct from the server."""
+    global _CN_SESSION
+    if _CN_SESSION is None:
+        import requests
+        s = requests.Session()
+        s.trust_env = False
+        s.headers.update({"User-Agent": "Mozilla/5.0"})
+        _CN_SESSION = s
+    return _CN_SESSION
+
+
+def _parse_ohlcv(seq) -> Optional[tuple]:
+    """[date, open, close, high, low, volume, ...] → canonical tuple, or None on bad row."""
     try:
-        r = requests.get(url, timeout=10)
-        m = re.search(r"=(\{.+})", r.text)
-        if not m:
-            return []
-        data   = json.loads(m.group(1))
-        klines = data.get("data", {}).get(tc, {}).get("day", [])
-        rows = []
-        for k in klines:
-            try:
-                rows.append((
-                    k[0],                    # date
-                    round(float(k[1]), 4),   # open
-                    round(float(k[4]), 4),   # close  （index 4！）
-                    round(float(k[2]), 4),   # high
-                    round(float(k[3]), 4),   # low
-                    int(float(k[5])),        # volume
-                ))
-            except (ValueError, IndexError):
-                continue
-        return rows
-    except Exception:
-        return []
+        return (
+            seq[0],
+            round(float(seq[1]), 4),   # open
+            round(float(seq[2]), 4),   # close
+            round(float(seq[3]), 4),   # high
+            round(float(seq[4]), 4),   # low
+            int(float(seq[5])),        # volume
+        )
+    except (ValueError, IndexError, TypeError):
+        return None
+
+
+def _kline_tencent(tc: str, start: str, end: str, us: bool = False) -> list:
+    """腾讯财经前复权日K（港股 tc='hk00700'，美股 tc='usAAPL.OQ'）。
+    必须带 _var= 才会返回 `k={...}` 包裹格式；否则是裸 JSON，下面两种都兼容。"""
+    api = "usfqkline" if us else "fqkline"
+    url = (f"https://web.ifzq.gtimg.cn/appstock/app/{api}/get"
+           f"?_var=k&param={tc},day,{start},{end},640,qfq")
+    txt = _cn_session().get(url, timeout=10).text
+    m = re.search(r"=(\{.+\})", txt)
+    data = json.loads(m.group(1) if m else txt)
+    node = (data.get("data") or {}).get(tc) or {}
+    days = node.get("qfqday") or node.get("day") or []
+    rows = [x for x in (_parse_ohlcv(k) for k in days) if x]
+    # 腾讯美股接口忽略 start/end、按 count 返回近 N 日，统一裁剪到请求窗口
+    return [r for r in rows if start <= r[0] <= end]
+
+
+def _kline_eastmoney(secid: str, start: str, end: str) -> list:
+    """东方财富前复权日K（fqt=1）。secid 如 '116.00700'(港股) / '105.AAPL'(美股NASDAQ)。
+    push2his 偶发 RemoteDisconnected，重试一次；作为腾讯之后的次级源。"""
+    url = ("https://push2his.eastmoney.com/api/qt/stock/kline/get"
+           f"?secid={secid}&fields1=f1&fields2=f51,f52,f53,f54,f55,f56,f57"
+           f"&klt=101&fqt=1&beg={start.replace('-','')}&end={end.replace('-','')}")
+    for attempt in range(2):
+        try:
+            txt = _cn_session().get(url, timeout=10).text
+            kl = ((json.loads(txt).get("data") or {}).get("klines")) or []
+            rows = [x for x in (_parse_ohlcv(line.split(",")) for line in kl) if x]
+            return [r for r in rows if start <= r[0] <= end]
+        except Exception:
+            if attempt:
+                return []
+            time.sleep(0.3)
+    return []
+
+
+def _kline_multi(providers, log: logging.Logger, label: str):
+    """优先级兜底：依次尝试各源，第一个返回非空 K 线的即胜出，返回 (rows, source)。"""
+    for name, fn in providers:
+        try:
+            rows = fn()
+            if rows:
+                return rows, name
+        except Exception as e:
+            log.debug(f"    [{label}] 源 {name} 失败: {str(e)[:80]}")
+    return [], None
+
+
+def _hk_providers(code5d: str, yahoo_ticker: str, yf_fetch, start: str, end: str):
+    """港股多源（CN 直连优先，Yahoo 兜底）。"""
+    code = f"{int(code5d):05d}"
+    return [
+        ("tencent",   lambda: _kline_tencent(f"hk{code}", start, end)),
+        ("eastmoney", lambda: _kline_eastmoney(f"116.{code}", start, end)),
+        ("yahoo",     lambda: yf_fetch(yahoo_ticker)),
+    ]
+
+
+def _us_providers(ticker: str, yf_fetch, start: str, end: str):
+    """美股多源；腾讯/东财需交易所后缀/前缀，逐个尝试自动判定（.OQ=纳斯达克 .N=纽交所；105/106/107）。"""
+    def tencent():
+        # 错误交易所后缀腾讯会返回 1 条脏数据，故取「行数最多」的后缀而非「第一个非空」。
+        best = []
+        for sfx in (".OQ", ".N"):
+            rows = _kline_tencent(f"us{ticker}{sfx}", start, end, us=True)
+            if len(rows) > len(best):
+                best = rows
+        return best
+    def eastmoney():
+        best = []
+        for pfx in ("105", "106", "107"):
+            rows = _kline_eastmoney(f"{pfx}.{ticker}", start, end)
+            if len(rows) > len(best):
+                best = rows
+        return best
+    return [
+        ("tencent",   tencent),
+        ("eastmoney", eastmoney),
+        ("yahoo",     lambda: yf_fetch(ticker)),
+    ]
 
 
 def _discover_hk(conn, log: logging.Logger) -> int:
@@ -442,7 +523,11 @@ def fetch_hk_stocks(
     skipped    = checkpoint is not None
 
     for seq, (stock_id, symbol, name) in enumerate(stocks, 1):
-        code5d = symbol.replace(".HK", "").replace("hk", "")
+        # Normalize symbol to 5-digit code: handles both "116.00700" and "00700.HK"
+        code5d = symbol.removesuffix(".HK")
+        if "." in code5d:
+            code5d = code5d.split(".")[-1]
+        code5d = f"{int(code5d):05d}"
 
         if skipped:
             if code5d != checkpoint:
@@ -461,7 +546,8 @@ def fetch_hk_stocks(
             no_data += 1
             continue
 
-        krows = fetch_kline(yahoo_ticker)
+        providers = _hk_providers(code5d, yahoo_ticker, fetch_kline, start, end)
+        krows, src = _kline_multi(providers, log, f"{name}({symbol})")
 
         if krows:
             db_rows = [(stock_id, r[0], r[1], r[2], r[3], r[4], r[5]) for r in krows]
@@ -472,7 +558,7 @@ def fetch_hk_stocks(
 
         save_checkpoint("hk", code5d)
         pct = seq / len(stocks) * 100
-        log.info(f"  [{seq}/{len(stocks)} {pct:.1f}%] {name}({symbol}) → {n if krows else 0}行")
+        log.info(f"  [{seq}/{len(stocks)} {pct:.1f}%] {name}({symbol}) → {n if krows else 0}行 [{src or '-'}]")
         time.sleep(cfg["delay_hk"])
 
     clear_checkpoint("hk")
@@ -569,28 +655,33 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
         log.info(f"[dry-run] 只处理 {tickers}")
 
     def ensure_stock(ticker: str) -> Optional[int]:
-        sym = f"{ticker}.US"
-        if sym in id_map:
-            return id_map[sym]
+        # DB has two symbol formats: old "105.AAPL" (EastMoney) or new "AAPL.US"
+        new_sym = f"{ticker}.US"
+        if new_sym in id_map:
+            return id_map[new_sym]
+        # Try old format match
+        for sym_key, sid in id_map.items():
+            if sym_key.endswith(f".{ticker}") and not sym_key.endswith(f".US"):
+                return sid
         if dry_run:
-            return -1  # 哑 id
+            return -1
         name = ticker
         try:
-            info = yf.Ticker(ticker).fast_info  # fast_info 不需要额外请求
+            info = yf.Ticker(ticker).fast_info
             name = getattr(info, "company_officers", None) or ticker
         except Exception:
             pass
         cur = conn.cursor()
         cur.execute(
             "INSERT IGNORE INTO stocks (symbol, name, market, currency) VALUES (%s,%s,'US','USD')",
-            (sym, name),
+            (new_sym, name),
         )
         conn.commit()
-        cur.execute("SELECT id FROM stocks WHERE symbol=%s", (sym,))
+        cur.execute("SELECT id FROM stocks WHERE symbol=%s", (new_sym,))
         row = cur.fetchone()
         cur.close()
         if row:
-            id_map[sym] = row[0]
+            id_map[new_sym] = row[0]
             return row[0]
         return None
 
@@ -639,15 +730,17 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
         if not dry_run and stock_id in skip_ids:
             continue
 
+        krows, src, n = [], None, 0
         try:
-            krows = fetch_kline(ticker)
+            providers = _us_providers(ticker, fetch_kline, start, end)
+            krows, src = _kline_multi(providers, log, ticker)
             n = len(krows)
             if krows and not dry_run:
                 db_rows = [(stock_id, r[0], r[1], r[2], r[3], r[4], r[5]) for r in krows]
                 n = upsert_prices(conn, db_rows)
                 total_rows += n
             elif dry_run and krows:
-                log.info(f"  [dry] {ticker}: {len(krows)} 行，最新 {krows[-1][0]} close={krows[-1][2]}")
+                log.info(f"  [dry] {ticker}: {len(krows)} 行 (源={src})，最新 {krows[-1][0]} close={krows[-1][2]}")
         except Exception as e:
             msg = str(e)[:100]
             errors.append((ticker, msg))
@@ -655,7 +748,7 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
 
         save_checkpoint("us", ticker)
         pct = seq / total * 100
-        log.info(f"  [{seq}/{total} {pct:.1f}%] {ticker}.US → {n if krows else 0}行")
+        log.info(f"  [{seq}/{total} {pct:.1f}%] {ticker}.US → {n if krows else 0}行 [{src or '-'}]")
         time.sleep(cfg["delay_us"])
 
     clear_checkpoint("us")
