@@ -9,7 +9,8 @@ import { useSettings } from '@/hooks/use-settings'
 import { chartAPI } from '@/services/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { AllocationItem, CumulativeReturnItem } from '@/types'
-import { ArrowLeftRight } from 'lucide-react'
+import { ArrowLeftRight, Sparkles } from 'lucide-react'
+import { useChatContext } from '@/components/Layout'
 import {
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
   AreaChart, Area, Tooltip, ResponsiveContainer
@@ -40,6 +41,7 @@ const COLORS = [
 export default function Dashboard() {
   const { portfolioId, portfolioName, setPortfolioName } = useAuth()
   const { positiveClass, negativeClass, positiveHex, negativeHex, formatCurrency, convertCurrency } = useSettings()
+  const { openChatWith } = useChatContext()
   const { isDark } = useTheme()
   const toast = useToast()
   const { t, lang } = useT()
@@ -216,7 +218,15 @@ export default function Dashboard() {
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <p className="text-xs text-slate-500 font-medium">{pnlCardMode === 'today' ? t.dashboard.todayPnl : t.dashboard.holdingPnl}</p>
-              <ArrowLeftRight className="w-3 h-3 text-slate-300" />
+              <div className="flex items-center gap-1">
+                <button onClick={e => { e.stopPropagation(); openChatWith(pnlCardMode === 'today'
+                  ? `我今日${totals.todayPnl >= 0 ? '盈利' : '亏损'} ${formatCurrency(Math.abs(totals.todayPnl))}（${totals.todayPnlPct >= 0 ? '+' : ''}${totals.todayPnlPct}%），请分析可能的原因并给出建议。`
+                  : `我的持仓浮盈亏为 ${formatCurrency(totals.totalPnl)}（${totals.totalReturnPct >= 0 ? '+' : ''}${totals.totalReturnPct.toFixed(2)}%），请分析持仓表现并给出优化建议。`)
+                }} className="p-1 rounded-lg hover:bg-slate-100 text-slate-300 hover:text-slate-600 transition-colors">
+                  <Sparkles className="w-3.5 h-3.5" />
+                </button>
+                <ArrowLeftRight className="w-3 h-3 text-slate-300" />
+              </div>
             </div>
             {pnlCardMode === 'today' ? (<>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.todayPnl >= 0 ? positiveClass : negativeClass}`}>
@@ -237,7 +247,13 @@ export default function Dashboard() {
         </Card>
         <Card>
           <CardContent className="pt-6">
-            <p className="text-xs text-slate-500 font-medium">{t.pnl.cumulativePnl}</p>
+            <div className="flex items-center justify-between mb-0.5">
+              <p className="text-xs text-slate-500 font-medium">{t.pnl.cumulativePnl}</p>
+              <button onClick={() => openChatWith(`我的组合累计盈亏为 ${formatCurrency(totals.cumulativePnl)}（${totals.cumulativeReturnPct >= 0 ? '+' : ''}${totals.cumulativeReturnPct.toFixed(2)}%），请从持仓结构、市场环境等角度给出分析和投资建议。`)}
+                className="p-1 rounded-lg hover:bg-slate-100 text-slate-300 hover:text-slate-600 transition-colors">
+                <Sparkles className="w-3.5 h-3.5" />
+              </button>
+            </div>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.cumulativePnl >= 0 ? positiveClass : negativeClass}`}>
               {animCumulativePnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(animCumulativePnl))}
             </p>

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, nativeImage } = require('electron')
+const { app, BrowserWindow, shell, ipcMain, nativeImage, dialog } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const http = require('http')
 const fs = require('fs')
@@ -7,6 +7,8 @@ const path = require('path')
 autoUpdater.logger = require('electron').app.isPackaged ? null : console
 autoUpdater.autoDownload = true
 autoUpdater.autoInstallOnAppQuit = true
+
+let win = null
 
 const PORT = 18256
 const DIST = path.join(__dirname, 'dist')
@@ -57,7 +59,7 @@ function startServer() {
 // ── Window ─────────────────────────────────────────────────────────
 
 function createWindow() {
-  const win = new BrowserWindow({
+  win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 800,
@@ -96,16 +98,31 @@ function createWindow() {
 
 // ── Auto-update ────────────────────────────────────────────────────
 
-autoUpdater.on('update-available', () => {
+autoUpdater.on('update-available', (info) => {
   console.log('Update available — downloading...')
+  win?.webContents.send('update:status', { type: 'available', version: info.version })
 })
 
 autoUpdater.on('update-not-available', () => {
   console.log('App is up to date')
 })
 
-autoUpdater.on('update-downloaded', () => {
+autoUpdater.on('download-progress', (progress) => {
+  win?.webContents.send('update:status', {
+    type: 'downloading',
+    version: autoUpdater.currentVersion?.version ?? '',
+    percent: progress.percent,
+    bytesPerSecond: progress.bytesPerSecond,
+  })
+})
+
+autoUpdater.on('update-downloaded', (info) => {
   console.log('Update downloaded — will install on quit')
+  win?.webContents.send('update:status', { type: 'ready', version: info.version })
+})
+
+ipcMain.on('app:restart-and-install', () => {
+  autoUpdater.quitAndInstall()
 })
 
 // ── App lifecycle ──────────────────────────────────────────────────

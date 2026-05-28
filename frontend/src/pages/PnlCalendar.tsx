@@ -7,6 +7,7 @@ import { BASE, chartAPI } from '@/services/api'
 import type { PnlCalendarItem } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
+import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
 const WEEKDAYS_ZH = ['日', '一', '二', '三', '四', '五', '六'] as const
 const WEEKDAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
@@ -16,7 +17,7 @@ const MONTHS_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','
 type ViewMode = 'yearly' | 'monthly'
 type PnlDisplay = 'amount' | 'pct'
 
-interface HoldingRow { stockName: string; symbol: string; pnl: number; priceChange: number }
+interface HoldingRow { stockName: string; symbol: string; pnl: number; priceChange: number; marketValue?: number; weightPct?: number }
 interface TxRow { type: string; stockName?: string; shares?: number; price?: number }
 interface Detail { title: string; totalPnl: number; holdings: HoldingRow[]; transactions: TxRow[] }
 type Selected =
@@ -25,7 +26,7 @@ type Selected =
 
 export default function PnlCalendar() {
   const { portfolioId } = useAuth()
-  const { convertCurrency, positiveClass, negativeClass } = useSettings()
+  const { convertCurrency, positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
   const { t, lang } = useT()
 
   const WEEKDAYS = lang === 'zh' ? WEEKDAYS_ZH : WEEKDAYS_EN
@@ -304,6 +305,24 @@ export default function PnlCalendar() {
                     {detail.holdings.length > 0 && (
                       <div>
                         <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-2">{t.pnl.holdingContribution}</p>
+                        {/* Attribution bar chart — desktop only */}
+                        <div className="hidden sm:block mb-3 -mx-1">
+                          <ResponsiveContainer width="100%" height={Math.min(detail.holdings.length * 28 + 20, 200)}>
+                            <BarChart
+                              layout="vertical"
+                              data={[...detail.holdings].sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))}
+                              margin={{ left: 76, right: 36, top: 2, bottom: 2 }}>
+                              <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v: number) => fmtNum(v)} />
+                              <YAxis type="category" dataKey="stockName" tick={{ fontSize: 11 }} width={72} />
+                              <Tooltip formatter={(v) => [fmtNum(Number(v)), '盈亏']} contentStyle={{ fontSize: 11 }} />
+                              <Bar dataKey="pnl" radius={[0, 3, 3, 0]}>
+                                {[...detail.holdings]
+                                  .sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))
+                                  .map((h, i) => <Cell key={i} fill={Number(h.pnl) >= 0 ? positiveHex : negativeHex} />)}
+                              </Bar>
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
                         <div className="space-y-1.5">
                           {[...detail.holdings].sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl)).map((h, i) => (
                             <div key={i} className="flex items-center justify-between py-1.5 px-3 rounded-xl bg-slate-50">

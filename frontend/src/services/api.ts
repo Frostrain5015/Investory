@@ -4,6 +4,7 @@ import type {
   AllocationItem, PnlCalendarItem, CumulativeReturnItem,
   StockSearchItem, PriceData, Portfolio,
   HoldingsMetricsResponse, QuantData, BacktestResult,
+  HoldingCorrelation, CompareResult,
 } from '@/types'
 
 export const BASE = import.meta.env.VITE_API_BASE || '/investory'
@@ -261,6 +262,16 @@ export function aiSaveSettings(data: any): Promise<any> {
 export function getMarketIndices(): Promise<any> { return request('/api/market/indices') }
 export function getExchangeRates(): Promise<any> { return request('/api/market/exchange-rates') }
 export function getMarketNews(): Promise<any[]> { return request('/api/market/news') }
+
+// ── Quant extras ─────────────────────────────────────────────────────────
+
+export function getHoldingsCorrelation(symbol: string): Promise<HoldingCorrelation[]> {
+  return request<HoldingCorrelation[]>(`/api/quant/holdings-correlation?symbol=${encodeURIComponent(symbol)}`)
+}
+
+export function getBacktestCompare(ids: number[]): Promise<CompareResult[]> {
+  return request<CompareResult[]>(`/api/backtest/compare?ids=${ids.join(',')}`)
+}
 
 // ── Account ───────────────────────────────────────────────────────────────
 

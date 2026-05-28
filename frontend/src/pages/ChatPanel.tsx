@@ -45,7 +45,7 @@ function useChatMessages(): [Message[], (msgs: Message[]) => void] {
   return [gMessages, (msgs: Message[]) => { gMessages = msgs; notify() }]
 }
 
-export default function ChatPanel({ onClose }: { onClose: () => void }) {
+export default function ChatPanel({ onClose, initialMessage }: { onClose: () => void; initialMessage?: string }) {
   const { t } = useT()
   const toast = useToast()
   const [messages, setMessages] = useChatMessages()
@@ -63,6 +63,11 @@ export default function ChatPanel({ onClose }: { onClose: () => void }) {
   const [suggestions, setSuggestions] = useState<string[]>([])
   const esRef = useRef<EventSource | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Pre-fill input when opened from a metric card
+  useEffect(() => {
+    if (initialMessage) setInput(initialMessage)
+  }, [initialMessage])
 
   useEffect(() => {
     // Use preloaded cache if available; otherwise fall back to fetching now

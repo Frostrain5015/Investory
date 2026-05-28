@@ -89,8 +89,23 @@ public class AiApiController {
         final long uid = userId;
 
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> messages = (List<Map<String, Object>>) body.get("messages");
-        if (messages == null || messages.isEmpty()) return Map.of("error", "messages required");
+        List<Map<String, Object>> rawMessages = (List<Map<String, Object>>) body.get("messages");
+        if (rawMessages == null || rawMessages.isEmpty()) return Map.of("error", "messages required");
+
+        // Inject portfolio context on fresh conversation (single user message, no system message)
+        final List<Map<String, Object>> messages;
+        boolean hasSystem = rawMessages.stream().anyMatch(m -> "system".equals(m.get("role")));
+        long userCount = rawMessages.stream().filter(m -> "user".equals(m.get("role"))).count();
+        if (!hasSystem && userCount == 1 && portfolioId > 0) {
+            String ctx = buildPortfolioHint(portfolioId);
+            if (!ctx.isEmpty()) {
+                List<Map<String, Object>> withCtx = new ArrayList<>(rawMessages.size() + 1);
+                Map<String, Object> sysMsg = new LinkedHashMap<>();
+                sysMsg.put("role", "system"); sysMsg.put("content", ctx);
+                withCtx.add(sysMsg); withCtx.addAll(rawMessages);
+                messages = withCtx;
+            } else { messages = rawMessages; }
+        } else { messages = rawMessages; }
 
         session.startSession();
 
@@ -258,5 +273,32 @@ public class AiApiController {
     public Map<String, Object> clear() {
         session.clearSession();
         return Map.of("status", "cleared");
+    }
+
+    private String buildPortfolioHint(long portfolioId) {
+        try {
+            List<Map<String, Object>> rows = jdbc.queryForList(
+                "SELECT s.name, s.market, h.total_shares, h.avg_cost, " +
+                "  (SELECT sp.close FROM stock_prices sp WHERE sp.stock_id = h.stock_id ORDER BY sp.trade_date DESC LIMIT 1) AS price " +
+                "FROM holdings h JOIN stocks s ON s.id = h.stock_id " +
+                "WHERE h.portfolio_id = ? AND h.total_shares > 0 ORDER BY (h.total_shares * h.avg_cost) DESC LIMIT 5",
+                portfolioId);
+            if (rows.isEmpty()) return "";
+            StringBuilder sb = new StringBuilder("用户持有以下股票（前5大持仓）：");
+            for (Map<String, Object> r : rows) {
+                Number price = (Number) r.get("price");
+                Number avgCost = (Number) r.get("avg_cost");
+                Number shares = (Number) r.get("total_shares");
+                if (price == null || avgCost == null || shares == null) continue;
+                double pnlPct = avgCost.doubleValue() > 0
+                    ? (price.doubleValue() - avgCost.doubleValue()) / avgCost.doubleValue() * 100 : 0;
+                sb.append(r.get("name")).append("(").append(r.get("market")).append(")")
+                  .append(pnlPct >= 0 ? " +" : " ").append(String.format("%.1f%%", pnlPct)).append("；");
+            }
+            sb.append("如需完整持仓数据或量化分析，请调用 get_portfolio 等工具。");
+            return sb.toString();
+        } catch (Exception e) {
+            return "";
+        }
     }
 }

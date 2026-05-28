@@ -66,7 +66,8 @@ public class PnlDetailController {
 
     private Map<String, Object> buildDetail(long pid, String label, Map<Long, BigDecimal> shares, Map<String, BigDecimal> toCny, LocalDate endDay, LocalDate prevDay) {
         Map<String, Object> result = new LinkedHashMap<>(); result.put("date", label);
-        List<Map<String, Object>> holdings = new ArrayList<>(); BigDecimal totalPnl = BigDecimal.ZERO;
+        List<Map<String, Object>> holdings = new ArrayList<>();
+        BigDecimal totalPnl = BigDecimal.ZERO, totalMv = BigDecimal.ZERO;
         for (Map.Entry<Long, BigDecimal> e : shares.entrySet()) {
             if (e.getValue().compareTo(BigDecimal.ZERO) <= 0) continue;
             Stock st = stockDao.findById(e.getKey()); if (st == null) continue;
@@ -78,8 +79,18 @@ public class PnlDetailController {
             if (ct == null || cp == null) continue;
             BigDecimal pnl = ct.subtract(cp).multiply(e.getValue()).multiply(rate).setScale(2, java.math.RoundingMode.HALF_UP);
             BigDecimal pct = cp.compareTo(BigDecimal.ZERO) > 0 ? ct.subtract(cp).divide(cp, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO;
-            holdings.add(Map.of("stockName", st.getName(), "symbol", st.getSymbol(), "pnl", pnl, "priceChange", pct));
-            totalPnl = totalPnl.add(pnl);
+            BigDecimal mv = ct.multiply(e.getValue()).multiply(rate).setScale(2, java.math.RoundingMode.HALF_UP);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("stockName", st.getName()); row.put("symbol", st.getSymbol());
+            row.put("pnl", pnl); row.put("priceChange", pct); row.put("marketValue", mv);
+            holdings.add(row);
+            totalPnl = totalPnl.add(pnl); totalMv = totalMv.add(mv);
+        }
+        if (totalMv.compareTo(BigDecimal.ZERO) > 0) {
+            for (Map<String, Object> row : holdings) {
+                BigDecimal mv = (BigDecimal) row.get("marketValue");
+                row.put("weightPct", mv.divide(totalMv, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(1, java.math.RoundingMode.HALF_UP));
+            }
         }
         result.put("totalPnl", totalPnl.setScale(2, java.math.RoundingMode.HALF_UP)); result.put("holdings", holdings);
         result.put("transactions", jdbc.queryForList("SELECT t.type, s.name AS stockName, t.shares, t.price FROM transactions t LEFT JOIN stocks s ON t.stock_id=s.id WHERE t.portfolio_id=? AND t.trade_date=?", pid, java.sql.Date.valueOf(endDay)));

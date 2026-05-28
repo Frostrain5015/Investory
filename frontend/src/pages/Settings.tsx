@@ -5,48 +5,115 @@ import { useConfirm } from '@/hooks/use-confirm'
 import { useSettings, type BaseCurrency } from '@/hooks/use-settings'
 import { useTheme } from '@/hooks/use-theme'
 import { useT } from '@/i18n/I18nContext'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Sun, Moon, Camera, Sparkles } from 'lucide-react'
+import { Sun, Moon, Monitor, Camera } from 'lucide-react'
 import { BASE } from '@/services/api'
+
+// ── Primitives ────────────────────────────────────────────────────
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400 dark:text-slate-500 mb-1 pt-6 pb-1">
+      {children}
+    </p>
+  )
+}
+
+/** Responsive row: side-by-side on sm+, stacked on mobile */
+function Row({ label, desc, children }: { label: string; desc?: string; children: React.ReactNode }) {
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between
+                    py-3.5 border-b border-slate-100 dark:border-slate-800 last:border-0 gap-2 sm:gap-8">
+      <div className="min-w-0 shrink">
+        <p className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-snug">{label}</p>
+        {desc && <p className="text-xs text-slate-400 dark:text-slate-500 mt-0.5 leading-relaxed">{desc}</p>}
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  )
+}
+
+function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <button onClick={onToggle} aria-checked={on} role="switch"
+      className={`relative w-11 h-6 rounded-full transition-colors shrink-0
+        ${on ? 'bg-slate-800 dark:bg-slate-300' : 'bg-slate-200 dark:bg-slate-700'}`}>
+      <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow-sm transition-all duration-200
+        ${on ? 'left-[22px]' : 'left-0.5'}`} />
+    </button>
+  )
+}
+
+function Segments<T extends string>({
+  value, options, onChange, fullWidthMobile = false,
+}: {
+  value: T
+  options: { value: T; label: string; icon?: React.ReactNode }[]
+  onChange: (v: T) => void
+  fullWidthMobile?: boolean
+}) {
+  return (
+    <div className={`flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl
+      ${fullWidthMobile ? 'w-full sm:w-auto' : ''}`}>
+      {options.map(o => (
+        <button key={o.value} onClick={() => onChange(o.value)}
+          className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
+            ${fullWidthMobile ? 'flex-1 sm:flex-none' : ''}
+            ${value === o.value
+              ? 'bg-white dark:bg-slate-600 text-slate-900 dark:text-white shadow-sm'
+              : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'}`}>
+          {o.icon}{o.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+const inputCls = 'w-full h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 transition placeholder:text-slate-400'
+
+// ── Page ──────────────────────────────────────────────────────────
 
 export default function Settings() {
   const { username, logout } = useAuth()
   const confirm = useConfirm()
   const toast = useToast()
-  const { colorScheme, toggleColorScheme, positiveClass, negativeClass, baseCurrency, setBaseCurrency, showRiskMetrics, toggleRiskMetrics } = useSettings()
+  const {
+    colorScheme, toggleColorScheme, positiveClass, negativeClass,
+    baseCurrency, setBaseCurrency, showRiskMetrics, toggleRiskMetrics,
+  } = useSettings()
   const { pref, setPref } = useTheme()
   const { t } = useT()
+
   const fileRef = useRef<HTMLInputElement>(null)
   const [avatar, setAvatar] = useState(() => localStorage.getItem('investory_avatar') || '')
   const [oldPw, setOldPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [pwMsg, setPwMsg] = useState('')
   const [deleting, setDeleting] = useState(false)
+
   const [aiProvider, setAiProvider] = useState('bailian')
   const [aiKey, setAiKey] = useState('')
   const [aiBaseUrl, setAiBaseUrl] = useState('')
   const [aiModel, setAiModel] = useState('')
   const [aiHasKey, setAiHasKey] = useState(false)
 
-  // Load AI settings from server on mount
   useEffect(() => {
     fetch(`${BASE}/api/ai/settings`, { credentials: 'include' })
       .then(r => r.json()).then(d => {
         if (d.provider) setAiProvider(d.provider)
-        if (d.model) setAiModel(d.model)
-        if (d.baseUrl) setAiBaseUrl(d.baseUrl)
-        if (d.hasKey) setAiHasKey(true)
+        if (d.model)    setAiModel(d.model)
+        if (d.baseUrl)  setAiBaseUrl(d.baseUrl)
+        if (d.hasKey)   setAiHasKey(true)
       }).catch(() => {})
   }, [])
 
   const AI_PRESETS: Record<string, { label: string; baseUrl: string; model: string }> = {
-    bailian:    { label: t.settings.presetBailian, baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-    openai:     { label: 'OpenAI',                   baseUrl: '',                                           model: 'gpt-4o-mini' },
-    deepseek:   { label: 'DeepSeek',                 baseUrl: 'https://api.deepseek.com/v1',                model: 'deepseek-chat' },
-    moonshot:   { label: 'Moonshot',                 baseUrl: 'https://api.moonshot.cn/v1',                 model: 'moonshot-v1-8k' },
-    zhipu:      { label: t.settings.presetZhipu,     baseUrl: 'https://open.bigmodel.cn/api/paas/v4',       model: 'glm-4-flash' },
-    anthropic:  { label: 'Anthropic',                baseUrl: '',                                           model: 'claude-haiku-4-5' },
-    custom:     { label: t.settings.presetCustom,     baseUrl: '',                                           model: '' },
+    bailian:   { label: t.settings.presetBailian, baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+    openai:    { label: 'OpenAI',                  baseUrl: '',                                                  model: 'gpt-4o-mini' },
+    deepseek:  { label: 'DeepSeek',                baseUrl: 'https://api.deepseek.com/v1',                       model: 'deepseek-chat' },
+    moonshot:  { label: 'Moonshot',                baseUrl: 'https://api.moonshot.cn/v1',                        model: 'moonshot-v1-8k' },
+    zhipu:     { label: t.settings.presetZhipu,    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',              model: 'glm-4-flash' },
+    anthropic: { label: 'Anthropic',               baseUrl: '',                                                  model: 'claude-haiku-4-5' },
+    custom:    { label: t.settings.presetCustom,    baseUrl: '',                                                  model: '' },
   }
 
   const CURRENCY_LABELS: Record<BaseCurrency, string> = {
@@ -55,20 +122,13 @@ export default function Settings() {
     USD: t.settings.currencyUsd,
   }
 
-  const THEME_LABELS: Record<string, string> = {
-    system: t.settings.themeSystem,
-    light: t.settings.themeLight,
-    dark: t.settings.themeDark,
-  }
-
   function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const file = e.target.files?.[0]; if (!file) return
     const reader = new FileReader()
     reader.onload = () => {
-      const dataUrl = reader.result as string
-      setAvatar(dataUrl)
-      localStorage.setItem('investory_avatar', dataUrl)
+      const d = reader.result as string
+      setAvatar(d)
+      localStorage.setItem('investory_avatar', d)
     }
     reader.readAsDataURL(file)
   }
@@ -77,7 +137,11 @@ export default function Settings() {
     if (!oldPw || !newPw) { setPwMsg(t.settings.pwFillBoth); return }
     if (newPw.length < 6) { setPwMsg(t.settings.pwTooShort); return }
     const form = new URLSearchParams({ oldPassword: oldPw, newPassword: newPw })
-    const res = await fetch(`${BASE}/api/password`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() })
+    const res = await fetch(`${BASE}/api/password`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString(),
+    })
     const data = await res.json()
     if (data.error) {
       setPwMsg(data.error)
@@ -98,189 +162,171 @@ export default function Settings() {
     setDeleting(false)
   }
 
-  const modelPlaceholder = aiProvider === 'openai'
-    ? 'e.g. gpt-4o-mini / gpt-4o'
-    : aiProvider === 'anthropic'
-      ? 'e.g. claude-haiku-4-5 / claude-sonnet-4-20250514'
-      : aiProvider === 'deepseek'
-        ? 'e.g. deepseek-chat'
-        : t.settings.aiModel
+  const modelPlaceholder = aiProvider === 'openai'    ? 'e.g. gpt-4o-mini / gpt-4o'
+    : aiProvider === 'anthropic' ? 'e.g. claude-haiku-4-5'
+    : aiProvider === 'deepseek'  ? 'e.g. deepseek-chat'
+    : t.settings.aiModel
 
   return (
-    <div className="p-6 max-w-2xl mx-auto space-y-6">
-      <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">{t.settings.title}</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <div className="overflow-auto h-full bg-white dark:bg-slate-950">
+      <div className="max-w-2xl mx-auto px-4 sm:px-8 pb-16">
 
-      {/* Avatar */}
-      <Card>
-        <CardContent className="pt-6 flex items-center gap-4">
-          <div className="relative cursor-pointer" onClick={() => fileRef.current?.click()}>
-            {avatar ? (
-              <img src={avatar} className="w-16 h-16 rounded-full object-cover border-2 border-slate-200" />
-            ) : (
-              <div className="w-16 h-16 rounded-full bg-slate-200 flex items-center justify-center">
-                <span className="text-2xl font-bold text-slate-500">{username?.charAt(0)?.toUpperCase() || '?'}</span>
-              </div>
-            )}
-            <div className="absolute bottom-0 right-0 w-5 h-5 rounded-full bg-slate-800 flex items-center justify-center">
-              <Camera className="w-3 h-3 text-white" />
-            </div>
-          </div>
-          <div>
-            <p className="font-semibold text-slate-900 dark:text-slate-100">{username}</p>
-            <p className="text-xs text-slate-400 mt-0.5">{t.settings.avatarHint}</p>
-          </div>
-          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
-        </CardContent>
-      </Card>
+        {/* ── Page title ──────────────────────────────────────── */}
+        <div className="pt-6 pb-2">
+          <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+            {t.settings.title}
+          </h2>
+        </div>
 
-      {/* Theme */}
-      <Card>
-        <CardHeader><CardTitle className="text-base">{t.settings.theme}</CardTitle></CardHeader>
-        <CardContent>
-          <div className="flex gap-2">
-            {(['system', 'light', 'dark'] as const).map(val => (
-              <button key={val} onClick={() => setPref(val)}
-                className={`flex-1 h-10 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-1.5
-                  ${pref === val ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-                {val === 'light' && <Sun className="w-3.5 h-3.5" />}
-                {val === 'dark' && <Moon className="w-3.5 h-3.5" />}
-                {THEME_LABELS[val]}
-              </button>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+        {/* ── 外观 ─────────────────────────────────────────────── */}
+        <SectionLabel>外观</SectionLabel>
 
-      {/* Color scheme */}
-      <Card>
-        <CardHeader><CardTitle className="text-base">{t.settings.colorScheme}</CardTitle></CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">{colorScheme === 'cn' ? t.settings.cnColorScheme : t.settings.enColorScheme}</p>
-              <div className="flex items-center gap-3 text-sm">
-                <span className={positiveClass}>+5.20%</span><span className="text-slate-300">/</span><span className={negativeClass}>-3.10%</span>
-              </div>
-            </div>
-            <button onClick={toggleColorScheme} className="relative w-12 h-7 rounded-full bg-slate-200 hover:bg-slate-300 transition-colors">
-              <span className="absolute top-0.5 w-6 h-6 rounded-full bg-white shadow-sm transition-all duration-200" style={{ left: colorScheme === 'cn' ? '2px' : '22px' }} />
-            </button>
-          </div>
-        </CardContent>
-      </Card>
+        <Row label={t.settings.theme}>
+          <Segments value={pref} onChange={setPref} fullWidthMobile options={[
+            { value: 'system', label: t.settings.themeSystem, icon: <Monitor className="w-3.5 h-3.5" /> },
+            { value: 'light',  label: t.settings.themeLight,  icon: <Sun className="w-3.5 h-3.5" /> },
+            { value: 'dark',   label: t.settings.themeDark,   icon: <Moon className="w-3.5 h-3.5" /> },
+          ]} />
+        </Row>
 
-      {/* Base currency */}
-      <Card>
-        <CardHeader><CardTitle className="text-base">{t.settings.currency}</CardTitle></CardHeader>
-        <CardContent>
-          <div className="flex gap-2">
-            {(Object.keys(CURRENCY_LABELS) as BaseCurrency[]).map(c => (
-              <button key={c} onClick={() => setBaseCurrency(c)}
-                className={`flex-1 h-10 rounded-xl text-sm font-medium transition-colors ${baseCurrency === c ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300'}`}>{CURRENCY_LABELS[c]}</button>
-            ))}
+        <Row label={t.settings.colorScheme}
+          desc={colorScheme === 'cn' ? '红涨绿跌（A 股习惯）' : '绿涨红跌（国际习惯）'}>
+          <div className="flex items-center gap-3">
+            <span className="text-xs tabular-nums text-slate-500">
+              <span className={positiveClass}>+5.20%</span>
+              <span className="text-slate-300 mx-1">/</span>
+              <span className={negativeClass}>-3.10%</span>
+            </span>
+            <Toggle on={colorScheme === 'cn'} onToggle={toggleColorScheme} />
           </div>
-        </CardContent>
-      </Card>
+        </Row>
 
-      {/* Quant metrics toggle */}
-      <Card>
-        <CardHeader><CardTitle className="text-base">{t.settings.quantColumns}</CardTitle></CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-between">
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                {showRiskMetrics ? t.settings.quantColumnsOn : t.settings.quantColumnsOff}
-              </p>
-              <p className="text-xs text-slate-400">{t.settings.quantColumnsDesc}</p>
-            </div>
-            <button onClick={toggleRiskMetrics}
-              className="relative w-12 h-7 rounded-full bg-slate-200 hover:bg-slate-300 transition-colors">
-              <span className="absolute top-0.5 w-6 h-6 rounded-full bg-white shadow-sm transition-all duration-200"
-                style={{ left: showRiskMetrics ? '22px' : '2px' }} />
-            </button>
-          </div>
-        </CardContent>
-      </Card>
+        {/* ── 显示 ─────────────────────────────────────────────── */}
+        <SectionLabel>显示</SectionLabel>
 
-      {/* AI Assistant */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base flex items-center gap-2"><Sparkles className="w-4 h-4" />{t.settings.aiSettings}</CardTitle>
-            <span className="text-[10px] text-slate-400">{t.settings.aiDefaultNote}</span>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
+        <Row label={t.settings.currency} desc="影响所有持仓、盈亏金额的显示单位">
+          <Segments value={baseCurrency} onChange={setBaseCurrency} fullWidthMobile options={
+            (Object.keys(CURRENCY_LABELS) as BaseCurrency[]).map(c => ({ value: c, label: CURRENCY_LABELS[c] }))
+          } />
+        </Row>
+
+        <Row label={t.settings.quantColumns} desc={t.settings.quantColumnsDesc}>
+          <Toggle on={showRiskMetrics} onToggle={toggleRiskMetrics} />
+        </Row>
+
+        {/* ── AI 助手 ───────────────────────────────────────────── */}
+        <SectionLabel>AI 助手</SectionLabel>
+
+        <Row label={t.settings.aiProvider}>
           <select value={aiProvider} onChange={e => {
             const p = e.target.value; setAiProvider(p)
             const preset = AI_PRESETS[p]
             if (preset && p !== 'custom') { setAiBaseUrl(preset.baseUrl); setAiModel(preset.model) }
-          }} className="w-full h-10 rounded-xl border border-slate-200 px-3 text-sm">
+          }} className={`${inputCls} sm:w-52`}>
             {Object.entries(AI_PRESETS).map(([key, p]) => (
               <option key={key} value={key}>{p.label}</option>
             ))}
           </select>
+        </Row>
+
+        <Row label={t.settings.aiApiKey}>
           <input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)}
             placeholder={aiHasKey ? t.settings.aiKeyPlaceholder : t.settings.aiApiKey}
-            className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
-          {aiProvider === 'custom' && (
+            className={`${inputCls} sm:w-64`} />
+        </Row>
+
+        {aiProvider === 'custom' && (
+          <Row label={t.settings.aiBaseUrl}>
             <input type="text" value={aiBaseUrl} onChange={e => setAiBaseUrl(e.target.value)}
               placeholder={t.settings.aiBaseUrl}
-              className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
-          )}
+              className={`${inputCls} sm:w-64`} />
+          </Row>
+        )}
+
+        <Row label={t.settings.aiModel}>
           <input type="text" value={aiModel} onChange={e => setAiModel(e.target.value)}
             placeholder={modelPlaceholder}
-            className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm" />
-          <div className="flex gap-2">
-            <button onClick={async () => {
-              const body: Record<string, string> = { provider: aiProvider, model: aiModel, baseUrl: aiBaseUrl }
-              if (aiKey) body.apiKey = aiKey
-              const res = await fetch(`${BASE}/api/ai/settings`, {
-                method: 'POST', credentials: 'include',
-                headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-              })
-              const data = await res.json()
-              if (data.error) { toast(data.error, false); return }
-              if (aiKey) setAiHasKey(true)
-              toast(t.settings.aiSaveSuccess, true)
-            }} className="flex-1 h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">
-              {t.settings.aiSaveBtn}
-            </button>
-            <button onClick={async () => {
-              const res = await fetch(`${BASE}/api/ai/settings`, { method: 'DELETE', credentials: 'include' })
-              const data = await res.json()
-              if (data.error) { toast(data.error, false); return }
-              setAiProvider('bailian'); setAiKey(''); setAiBaseUrl(''); setAiModel('qwen-plus'); setAiHasKey(false)
-              toast(t.settings.aiResetSuccess, true)
-            }} className="h-10 px-3 rounded-xl border border-slate-200 text-slate-500 text-sm hover:bg-slate-50 transition-colors whitespace-nowrap">
-              {t.settings.aiResetBtn}
-            </button>
+            className={`${inputCls} sm:w-64`} />
+        </Row>
+
+        <div className="flex gap-2 pt-3 pb-1">
+          <button onClick={async () => {
+            const body: Record<string, string> = { provider: aiProvider, model: aiModel, baseUrl: aiBaseUrl }
+            if (aiKey) body.apiKey = aiKey
+            const res = await fetch(`${BASE}/api/ai/settings`, {
+              method: 'POST', credentials: 'include',
+              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+            })
+            const data = await res.json()
+            if (data.error) { toast(data.error, false); return }
+            if (aiKey) setAiHasKey(true)
+            toast(t.settings.aiSaveSuccess, true)
+          }} className="px-4 h-9 rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-sm font-medium hover:bg-slate-700 dark:hover:bg-white transition-colors">
+            {t.settings.aiSaveBtn}
+          </button>
+          <button onClick={async () => {
+            const res = await fetch(`${BASE}/api/ai/settings`, { method: 'DELETE', credentials: 'include' })
+            const data = await res.json()
+            if (data.error) { toast(data.error, false); return }
+            setAiProvider('bailian'); setAiKey(''); setAiBaseUrl(''); setAiModel('qwen-plus'); setAiHasKey(false)
+            toast(t.settings.aiResetSuccess, true)
+          }} className="px-4 h-9 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-sm hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
+            {t.settings.aiResetBtn}
+          </button>
+        </div>
+
+        {/* ── 账户安全 ──────────────────────────────────────────── */}
+        <SectionLabel>账户安全</SectionLabel>
+
+        <Row label="头像与用户名" desc={t.settings.avatarHint}>
+          <button className="flex items-center gap-3" onClick={() => fileRef.current?.click()}>
+            <div className="relative">
+              {avatar
+                ? <img src={avatar} className="w-10 h-10 rounded-full object-cover border border-slate-200 dark:border-slate-700" />
+                : <div className="w-10 h-10 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center">
+                    <span className="text-base font-bold text-slate-400">{username?.charAt(0)?.toUpperCase() || '?'}</span>
+                  </div>
+              }
+              <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-slate-700 border-2 border-white dark:border-slate-950 flex items-center justify-center">
+                <Camera className="w-2 h-2 text-white" />
+              </div>
+            </div>
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{username}</span>
+          </button>
+          <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={handleAvatarUpload} />
+        </Row>
+
+        {/* Password */}
+        <div className="py-3.5 border-b border-slate-100 dark:border-slate-800">
+          <p className="text-sm font-medium text-slate-800 dark:text-slate-200 mb-3">{t.settings.changePassword}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:max-w-md">
+            <input type="password" placeholder={t.settings.oldPassword} value={oldPw}
+              onChange={e => setOldPw(e.target.value)} className={inputCls} />
+            <input type="password"
+              placeholder={`${t.settings.newPassword}（${t.settings.newPasswordHint}）`}
+              value={newPw} onChange={e => setNewPw(e.target.value)} className={inputCls} />
           </div>
-        </CardContent>
-      </Card>
+          {pwMsg && (
+            <p className={`text-xs mt-2 ${
+              pwMsg === t.settings.pwChanged || pwMsg === t.settings.passwordSuccess
+                ? 'text-emerald-600' : 'text-red-500'
+            }`}>{pwMsg}</p>
+          )}
+          <button onClick={handleChangePassword}
+            className="mt-3 px-4 h-9 rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-sm font-medium hover:bg-slate-700 transition-colors">
+            {t.settings.passwordBtn}
+          </button>
+        </div>
 
-      {/* Password */}
-      <Card>
-        <CardHeader><CardTitle className="text-base">{t.common.warn}</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <input type="password" placeholder={t.settings.oldPassword} value={oldPw} onChange={e => setOldPw(e.target.value)}
-            className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200" />
-          <input type="password" placeholder={`${t.settings.newPassword}（${t.settings.newPasswordHint}）`} value={newPw} onChange={e => setNewPw(e.target.value)}
-            className="w-full h-10 rounded-xl border border-slate-200 px-3.5 text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200" />
-          {pwMsg && <p className={`text-xs ${pwMsg === t.settings.pwChanged || pwMsg === t.settings.passwordSuccess ? 'text-emerald-600' : 'text-red-500'}`}>{pwMsg}</p>}
-          <button onClick={handleChangePassword} className="w-full h-10 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 transition-colors">{t.settings.passwordBtn}</button>
-        </CardContent>
-      </Card>
-
-      {/* Danger zone */}
-      <Card className="border-red-200">
-        <CardHeader><CardTitle className="text-base text-red-600">{t.settings.dangerZone}</CardTitle></CardHeader>
-        <CardContent>
+        {/* Danger zone */}
+        <div className="pt-4">
+          <p className="text-xs font-semibold uppercase tracking-widest text-red-400 mb-3">{t.settings.dangerZone}</p>
           <button onClick={handleDeleteAccount} disabled={deleting}
-            className="w-full h-10 rounded-xl border border-red-200 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50">{deleting ? t.settings.deleting : t.settings.deleteAccount}</button>
-        </CardContent>
-      </Card>
+            className="px-4 h-9 rounded-lg border border-red-200 dark:border-red-900 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50">
+            {deleting ? t.settings.deleting : t.settings.deleteAccount}
+          </button>
+        </div>
+
       </div>
     </div>
   )

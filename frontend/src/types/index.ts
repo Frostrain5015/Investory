@@ -315,3 +315,19 @@ export interface IndicatorDef {
   params: { name: string; label: string; type: 'number'; default: number; min?: number; max?: number }[]
   conditions?: { value: string; label: string }[]
 }
+
+export interface HoldingCorrelation {
+  symbol: string
+  name: string
+  correlation_30d: number
+}
+
+export interface CompareResult {
+  id: number
+  name: string
+  strategyType: string
+  startDate: string
+  endDate: string
+  metrics: BacktestMetrics
+  equityCurveNormalized: { date: string; value: number }[]
+}

@@ -47,4 +47,17 @@ public class BacktestDao extends BaseDao {
     public int delete(long id, long userId) {
         return update("DELETE FROM backtest_results WHERE id = ? AND user_id = ?", id, userId);
     }
+
+    public List<Map<String, Object>> findByIds(long userId, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        String placeholders = String.join(",", Collections.nCopies(ids.size(), "?"));
+        List<Object> params = new ArrayList<>();
+        params.add(userId);
+        params.addAll(ids);
+        return jdbc.queryForList(
+            "SELECT id, name, strategy_type, start_date, end_date, metrics_json, equity_curve_json " +
+            "FROM backtest_results WHERE user_id = ? AND id IN (" + placeholders + ")",
+            params.toArray()
+        );
+    }
 }

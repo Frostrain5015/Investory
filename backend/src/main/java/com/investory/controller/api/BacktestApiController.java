@@ -250,6 +250,56 @@ public class BacktestApiController {
         return Map.of("status", deleted > 0 ? "ok" : "not_found");
     }
 
+    @GetMapping("/compare")
+    public List<Map<String, Object>> compare(@RequestParam String ids, HttpServletRequest req) {
+        long userId = getUserId(req);
+        if (userId == 0) return List.of();
+        List<Long> idList = Arrays.stream(ids.split(","))
+            .map(String::trim).filter(s -> !s.isEmpty())
+            .map(Long::parseLong).limit(10).toList();
+        if (idList.size() < 2) return List.of();
+
+        List<Map<String, Object>> rows = backtestDao.findByIds(userId, idList);
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("id", row.get("id"));
+            item.put("name", row.get("name"));
+            item.put("strategyType", row.get("strategy_type"));
+            item.put("startDate", row.get("start_date") != null ? row.get("start_date").toString().substring(0, 10) : "");
+            item.put("endDate", row.get("end_date") != null ? row.get("end_date").toString().substring(0, 10) : "");
+            // Parse metrics
+            try {
+                String mj = (String) row.get("metrics_json");
+                item.put("metrics", mj != null ? json.readValue(mj, Map.class) : Map.of());
+            } catch (Exception e) { item.put("metrics", Map.of()); }
+            // Normalize equity curve to base-100
+            try {
+                String ej = (String) row.get("equity_curve_json");
+                if (ej != null) {
+                    List<Map<String, Object>> curve = json.readValue(ej, List.class);
+                    if (!curve.isEmpty()) {
+                        Object baseObj = ((Map<?, ?>) curve.get(0)).get("equity");
+                        double base = baseObj instanceof Number ? ((Number) baseObj).doubleValue() : 1.0;
+                        if (base == 0) base = 1;
+                        final double b = base;
+                        List<Map<String, Object>> norm = curve.stream().map(pt -> {
+                            Object eqObj = ((Map<?, ?>) pt).get("equity");
+                            double eq = eqObj instanceof Number ? ((Number) eqObj).doubleValue() : b;
+                            Map<String, Object> p = new LinkedHashMap<>();
+                            p.put("date", ((Map<?, ?>) pt).get("date"));
+                            p.put("value", Math.round(eq / b * 10000.0) / 100.0);
+                            return p;
+                        }).toList();
+                        item.put("equityCurveNormalized", norm);
+                    } else { item.put("equityCurveNormalized", List.of()); }
+                } else { item.put("equityCurveNormalized", List.of()); }
+            } catch (Exception e) { item.put("equityCurveNormalized", List.of()); }
+            result.add(item);
+        }
+        return result;
+    }
+
     private void emit(SseEmitter emitter, String event, Object data) {
         try {
             emitter.send(SseEmitter.event().name(event).data(json.writeValueAsString(data)));

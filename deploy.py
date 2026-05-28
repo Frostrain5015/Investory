@@ -34,7 +34,7 @@ def ssh_connect():
                 break
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(HOST, username=USER, password=pw, timeout=15)
+    client.connect(HOST, username=USER, password=pw, timeout=30, banner_timeout=60)
     return client
 
 

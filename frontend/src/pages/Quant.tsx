@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { BASE, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings } from '@/services/api'
+import { BASE, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings, getBacktestCompare } from '@/services/api'
 import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useSettings } from '@/hooks/use-settings'
@@ -7,8 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, Activity, ChevronDown, ChevronRight } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { displaySymbol } from '@/lib/format'
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from 'recharts'
-import type { BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent } from '@/types'
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, Legend, RadarChart, Radar, PolarGrid, PolarAngleAxis } from 'recharts'
+import type { BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent, CompareResult } from '@/types'
 import { useT } from '@/i18n/I18nContext'
 import type { Translation } from '@/i18n/translations'
 
@@ -205,6 +205,9 @@ function BacktestSection() {
   const [equityCurve, setEquityCurve] = useState<EquityPoint[] | null>(null)
   const [metrics, setMetrics] = useState<BacktestMetrics | null>(null)
   const [tradeLog, setTradeLog] = useState<TradeLogEntry[] | null>(null)
+  const [compareIds, setCompareIds] = useState<Set<number>>(new Set())
+  const [compareData, setCompareData] = useState<CompareResult[] | null>(null)
+  const [compareLoading, setCompareLoading] = useState(false)
 
   const [strategyType, setStrategyType] = useState<'simple' | 'advanced'>('simple')
   const [wfEnabled, setWfEnabled] = useState(false)
@@ -695,14 +698,221 @@ function BacktestSection() {
     {loading ? (
       <div className="flex items-center justify-center h-32"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /></div>
     ) : results.length > 0 ? (
+      <>
       <Card>
-        <CardHeader><CardTitle className="text-sm flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5" />{q.history}</CardTitle></CardHeader>
-        <CardContent className="p-0"><table className="w-full text-xs"><thead><tr className="border-b border-slate-100"><th className="text-left font-medium text-slate-500 px-4 py-2">{q.historyName}</th><th className="text-left font-medium text-slate-500 px-3 py-2">{q.historyType}</th><th className="text-left font-medium text-slate-500 px-3 py-2">{q.historyPeriod}</th><th className="text-left font-medium text-slate-500 px-3 py-2">{q.historyTime}</th><th className="text-right font-medium text-slate-500 px-4 py-2"></th></tr></thead><tbody>{results.map(r => (<tr key={r.id} className={`border-b border-slate-50 hover:bg-slate-50/50 cursor-pointer ${r.id === selectedId ? 'bg-blue-50/50' : ''}`} onClick={() => selectResult(r.id)}><td className="px-4 py-2 font-medium text-slate-700">{r.name}</td><td className="px-3 py-2"><span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">{r.strategy_type === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple}</span></td><td className="px-3 py-2 text-slate-400">{r.start_date} ~ {r.end_date}</td><td className="px-3 py-2 text-slate-400">{r.created_at?.slice(0, 10)}</td><td className="px-4 py-2 text-right"><button onClick={e => { e.stopPropagation(); handleDelete(r.id) }} className="text-slate-400 hover:text-red-500"><Trash2 className="w-3 h-3" /></button></td></tr>))}</tbody></table></CardContent>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-sm flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5" />{q.history}</CardTitle>
+            {compareIds.size >= 2 && (
+              <button
+                disabled={compareLoading}
+                onClick={async () => {
+                  setCompareLoading(true)
+                  try {
+                    const data = await getBacktestCompare(Array.from(compareIds))
+                    setCompareData(data)
+                  } catch { setCompareData(null) } finally { setCompareLoading(false) }
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 disabled:opacity-50">
+                {compareLoading ? <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" /> : <Activity className="w-3 h-3" />}
+                对比选中 ({compareIds.size})
+              </button>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          <table className="w-full text-xs">
+            <thead><tr className="border-b border-slate-100">
+              <th className="w-8 px-3 py-2" />
+              <th className="text-left font-medium text-slate-500 px-3 py-2">{q.historyName}</th>
+              <th className="text-left font-medium text-slate-500 px-3 py-2 hidden sm:table-cell">{q.historyType}</th>
+              <th className="text-left font-medium text-slate-500 px-3 py-2 hidden lg:table-cell">{q.historyPeriod}</th>
+              <th className="text-left font-medium text-slate-500 px-3 py-2 hidden lg:table-cell">{q.historyTime}</th>
+              <th className="text-right font-medium text-slate-500 px-4 py-2" />
+            </tr></thead>
+            <tbody>
+              {results.map(r => (
+                <tr key={r.id} className={`border-b border-slate-50 hover:bg-slate-50/50 cursor-pointer ${r.id === selectedId ? 'bg-blue-50/50' : ''}`} onClick={() => selectResult(r.id)}>
+                  <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
+                    <input type="checkbox" checked={compareIds.has(r.id)}
+                      onChange={e => setCompareIds(prev => { const next = new Set(prev); e.target.checked ? next.add(r.id) : next.delete(r.id); return next })}
+                      className="w-3.5 h-3.5 rounded cursor-pointer" />
+                  </td>
+                  <td className="px-3 py-2 font-medium text-slate-700">{r.name}</td>
+                  <td className="px-3 py-2 hidden sm:table-cell"><span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">{r.strategy_type === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple}</span></td>
+                  <td className="px-3 py-2 text-slate-400 hidden lg:table-cell">{r.start_date} ~ {r.end_date}</td>
+                  <td className="px-3 py-2 text-slate-400 hidden lg:table-cell">{r.created_at?.slice(0, 10)}</td>
+                  <td className="px-4 py-2 text-right"><button onClick={e => { e.stopPropagation(); handleDelete(r.id) }} className="text-slate-400 hover:text-red-500"><Trash2 className="w-3 h-3" /></button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </CardContent>
       </Card>
+
+      {compareData && compareData.length >= 2 && (
+        <CompareView data={compareData} onClose={() => setCompareData(null)} />
+      )}
+      </>
     ) : results.length === 0 && strategies.length > 0 ? (
       <div className="text-center py-12 text-slate-400 text-sm">{q.noRecords}</div>
     ) : null}
   </>)
+}
+
+// ── Strategy Compare View ────────────────────────────────────────────────
+
+const COMPARE_COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6',
+                        '#0ea5e9', '#f97316', '#14b8a6', '#ec4899', '#6366f1']
+
+function CompareView({ data, onClose }: {
+  data: CompareResult[]
+  onClose: () => void
+}) {
+  // Merge all equity curves by date for Recharts multi-line chart
+  const chartData = useMemo(() => {
+    const dateSet = new Set<string>()
+    data.forEach(d => d.equityCurveNormalized.forEach(p => dateSet.add(p.date)))
+    const dates = Array.from(dateSet).sort()
+    return dates.map(date => {
+      const pt: Record<string, number | string> = { date }
+      data.forEach((d, i) => {
+        const p = d.equityCurveNormalized.find(p => p.date === date)
+        if (p) pt[`strategy_${i}`] = p.value
+      })
+      return pt
+    })
+  }, [data])
+
+  const METRICS: { key: keyof BacktestMetrics; label: string; higherBetter: boolean; fmt: (v: number) => string }[] = [
+    { key: 'totalReturnPct',  label: '总收益',   higherBetter: true,  fmt: v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` },
+    { key: 'annualReturnPct', label: '年化收益', higherBetter: true,  fmt: v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%` },
+    { key: 'sharpeRatio',     label: '夏普比率', higherBetter: true,  fmt: v => v.toFixed(3) },
+    { key: 'maxDrawdownPct',  label: '最大回撤', higherBetter: false, fmt: v => `-${Math.abs(v).toFixed(2)}%` },
+    { key: 'winRatePct',      label: '胜率',     higherBetter: true,  fmt: v => `${v.toFixed(1)}%` },
+    { key: 'profitFactor',    label: '盈亏比',   higherBetter: true,  fmt: v => v.toFixed(2) },
+    { key: 'totalTrades',     label: '总交易数', higherBetter: false, fmt: v => String(Math.round(v)) },
+  ]
+
+  // Radar chart data
+  const radarData = [
+    { subject: '收益', ...Object.fromEntries(data.map((d, i) => [`s${i}`, Math.max(0, Math.min(100, (d.metrics.totalReturnPct ?? 0) + 50))])) },
+    { subject: '夏普', ...Object.fromEntries(data.map((d, i) => [`s${i}`, Math.max(0, Math.min(100, ((d.metrics.sharpeRatio ?? 0) + 1) * 30))])) },
+    { subject: '回撤↑', ...Object.fromEntries(data.map((d, i) => [`s${i}`, Math.max(0, 100 - Math.abs(d.metrics.maxDrawdownPct ?? 50))])) },
+    { subject: '胜率', ...Object.fromEntries(data.map((d, i) => [`s${i}`, d.metrics.winRatePct ?? 0])) },
+    { subject: '盈亏比', ...Object.fromEntries(data.map((d, i) => [`s${i}`, Math.min(100, (d.metrics.profitFactor ?? 0) * 20)])) },
+  ]
+
+  // Text summary
+  const maxReturn = data.reduce((best, d) => (d.metrics.totalReturnPct ?? 0) > (best.metrics.totalReturnPct ?? 0) ? d : best, data[0])
+  const bestSharpe = data.reduce((best, d) => (d.metrics.sharpeRatio ?? 0) > (best.metrics.sharpeRatio ?? 0) ? d : best, data[0])
+  const minDD = data.reduce((best, d) => Math.abs(d.metrics.maxDrawdownPct ?? 100) < Math.abs(best.metrics.maxDrawdownPct ?? 100) ? d : best, data[0])
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center gap-2"><Activity className="w-3.5 h-3.5" />策略对比</CardTitle>
+          <button onClick={onClose} className="text-xs text-slate-400 hover:text-slate-700 px-2 py-1 rounded hover:bg-slate-100">关闭</button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-6">
+        {/* Summary text */}
+        <div className="text-xs text-slate-600 bg-slate-50 rounded-xl p-3 space-y-0.5">
+          <p><span className="font-semibold" style={{ color: COMPARE_COLORS[data.indexOf(maxReturn)] }}>「{maxReturn.name}」</span> 收益最高（{maxReturn.metrics.totalReturnPct >= 0 ? '+' : ''}{(maxReturn.metrics.totalReturnPct ?? 0).toFixed(2)}%）</p>
+          <p><span className="font-semibold" style={{ color: COMPARE_COLORS[data.indexOf(bestSharpe)] }}>「{bestSharpe.name}」</span> 夏普最优（{(bestSharpe.metrics.sharpeRatio ?? 0).toFixed(3)}）</p>
+          <p><span className="font-semibold" style={{ color: COMPARE_COLORS[data.indexOf(minDD)] }}>「{minDD.name}」</span> 回撤最小（{(minDD.metrics.maxDrawdownPct ?? 0).toFixed(2)}%）</p>
+        </div>
+
+        {/* Overlapping equity curve — multiple strategies on same chart */}
+        {chartData.length > 0 && (
+          <div>
+            <p className="text-xs font-semibold text-slate-500 mb-2">资金曲线（以100为基准）</p>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={chartData} margin={{ left: 0, right: 8, top: 4, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="#94a3b8" interval="preserveStartEnd"
+                  tickFormatter={(v: string) => v.substring(0, 7)} />
+                <YAxis tick={{ fontSize: 10 }} stroke="#94a3b8" domain={['auto', 'auto']} />
+                <Tooltip formatter={(v, name) => {
+                  const idx = parseInt(String(name).replace('strategy_', ''))
+                  return [`${Number(v).toFixed(2)}`, data[idx]?.name ?? String(name)]
+                }} />
+                <Legend formatter={(name) => {
+                  const idx = parseInt(String(name).replace('strategy_', ''))
+                  return data[idx]?.name ?? String(name)
+                }} />
+                {data.map((_, i) => (
+                  <Line key={i} type="monotone" dataKey={`strategy_${i}`}
+                    stroke={COMPARE_COLORS[i % COMPARE_COLORS.length]}
+                    strokeWidth={2} dot={false} connectNulls />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+
+        {/* Radar chart */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+          <div>
+            <p className="text-xs font-semibold text-slate-500 mb-2">多维雷达对比</p>
+            <ResponsiveContainer width="100%" height={200}>
+              <RadarChart data={radarData}>
+                <PolarGrid />
+                <PolarAngleAxis dataKey="subject" tick={{ fontSize: 10 }} />
+                {data.map((_, i) => (
+                  <Radar key={i} dataKey={`s${i}`} name={data[i].name}
+                    stroke={COMPARE_COLORS[i % COMPARE_COLORS.length]}
+                    fill={COMPARE_COLORS[i % COMPARE_COLORS.length]} fillOpacity={0.08} />
+                ))}
+                <Legend formatter={(_v, entry) => {
+                  const idx = parseInt(String(entry.dataKey ?? '').replace('s', ''))
+                  return data[idx]?.name ?? String(entry.dataKey ?? '')
+                }} />
+                <Tooltip />
+              </RadarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Metrics comparison table */}
+          <div>
+            <p className="text-xs font-semibold text-slate-500 mb-2">指标对比</p>
+            <div className="overflow-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-100">
+                    <th className="text-left font-medium text-slate-500 py-1.5 pr-2">指标</th>
+                    {data.map((d, i) => (
+                      <th key={i} className="text-right font-semibold py-1.5 px-1.5" style={{ color: COMPARE_COLORS[i % COMPARE_COLORS.length] }}>
+                        {d.name.length > 8 ? d.name.slice(0, 7) + '…' : d.name}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {METRICS.map(({ key, label, higherBetter, fmt }) => {
+                    const vals = data.map(d => (d.metrics[key] as number) ?? (higherBetter ? -Infinity : Infinity))
+                    const best = higherBetter ? Math.max(...vals) : Math.min(...vals)
+                    return (
+                      <tr key={key} className="border-b border-slate-50">
+                        <td className="py-1.5 pr-2 text-slate-500">{label}</td>
+                        {vals.map((v, i) => (
+                          <td key={i} className={`py-1.5 px-1.5 text-right tabular-nums font-medium ${v === best ? '' : 'text-slate-500'}`}
+                            style={v === best ? { color: COMPARE_COLORS[i % COMPARE_COLORS.length] } : {}}>
+                            {isFinite(v) ? fmt(v) : '—'}
+                          </td>
+                        ))}
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
 }
 
 // ── Shared components ───────────────────────────────────────────────────

@@ -7,12 +7,17 @@ import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
   LogOut, TrendingUp, User, Search, Menu, Shield, BarChart2, Sparkles
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
 import { searchStocks, getPortfolios } from '@/services/api'
 import ChatPanel from '@/pages/ChatPanel'
+import UpdateBanner from '@/components/UpdateBanner'
 import type { StockSearchItem } from '@/types'
 import { displaySymbol } from '@/lib/format'
+
+interface ChatContextType { openChatWith: (message: string) => void }
+export const ChatContext = createContext<ChatContextType>({ openChatWith: () => {} })
+export function useChatContext() { return useContext(ChatContext) }
 
 export default function Layout() {
   const { t, lang } = useT()
@@ -23,6 +28,12 @@ export default function Layout() {
   const [showDropdown, setShowDropdown] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
+  const [chatInitialMessage, setChatInitialMessage] = useState('')
+
+  function openChatWith(message: string) {
+    setChatInitialMessage(message)
+    setChatOpen(true)
+  }
 
   const navItems = [
     { to: '/dashboard', icon: LayoutDashboard, label: t.nav.dashboard },
@@ -92,6 +103,7 @@ export default function Layout() {
   )
 
   return (
+    <ChatContext.Provider value={{ openChatWith }}>
     <div className="flex h-full bg-slate-50">
       {/* Desktop sidebar */}
       <div className="hidden lg:flex">{sidebar}</div>
@@ -132,6 +144,7 @@ export default function Layout() {
           </div>
           <LangSwitcher />
         </header>
+        <UpdateBanner />
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>
@@ -147,8 +160,9 @@ export default function Layout() {
 
       {/* Chat Panel */}
       <AnimatePresence>
-        {chatOpen && <ChatPanel onClose={() => setChatOpen(false)} />}
+        {chatOpen && <ChatPanel onClose={() => { setChatOpen(false); setChatInitialMessage('') }} initialMessage={chatInitialMessage} />}
       </AnimatePresence>
     </div>
+    </ChatContext.Provider>
   )
 }

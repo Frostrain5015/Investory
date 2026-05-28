@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
-import { BASE, chartAPI, getStockDetail, searchStocks } from '@/services/api'
+import { BASE, chartAPI, getStockDetail, searchStocks, getHoldingsCorrelation } from '@/services/api'
 import { useSettings } from '@/hooks/use-settings'
 import { useT } from '@/i18n/I18nContext'
-import type { StockDetailResponse, Transaction, Dividend, PriceData } from '@/types'
+import type { StockDetailResponse, Transaction, Dividend, PriceData, HoldingCorrelation } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot, Legend, Line } from 'recharts'
 import { displaySymbol, fmtPriceTs } from '@/lib/format'
@@ -28,6 +28,7 @@ export default function StockDetail() {
   const [watchId, setWatchId] = useState<number | null>(null)
   const [benchmark, setBenchmark] = useState('')
   const [bmData, setBmData] = useState<{ date: string; base100: number; bmBase100: number; bmName: string }[] | null>(null)
+  const [correlations, setCorrelations] = useState<HoldingCorrelation[]>([])
 
   // Benchmarks per market (proper names, not translated)
   const BENCHMARKS: Record<string, { symbol: string; name: string }[]> = {
@@ -66,6 +67,8 @@ export default function StockDetail() {
         const found = list.find((w: any) => w.symbol === symbol)
         if (found) { setWatching(true); setWatchId(found.id) }
       }).catch(() => {})
+    // Holdings correlation
+    getHoldingsCorrelation(symbol).then(setCorrelations).catch(() => {})
   }, [symbol, portfolioId, chartParams, benchmark])
 
   if (loading) {
@@ -459,6 +462,35 @@ export default function StockDetail() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Holdings correlation */}
+      {correlations.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">相关持仓 (30日)</CardTitle></CardHeader>
+          <CardContent>
+            <div className="space-y-2.5">
+              {correlations.slice(0, 6).map(c => (
+                <div key={c.symbol} className="flex items-center gap-3">
+                  <Link to={`/stock?symbol=${encodeURIComponent(c.symbol)}`}
+                    className="text-sm font-medium text-slate-700 hover:text-blue-600 transition-colors w-24 shrink-0 truncate">
+                    {c.name}
+                  </Link>
+                  <div className="flex-1 bg-slate-100 rounded-full h-1.5 relative overflow-hidden">
+                    <div className="absolute top-0 left-0 h-full rounded-full transition-all"
+                      style={{
+                        width: `${Math.abs(c.correlation_30d) * 100}%`,
+                        backgroundColor: c.correlation_30d >= 0 ? positiveHex : negativeHex,
+                      }} />
+                  </div>
+                  <span className="text-xs tabular-nums text-slate-500 w-12 text-right shrink-0">
+                    {c.correlation_30d >= 0 ? '+' : ''}{c.correlation_30d.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }
