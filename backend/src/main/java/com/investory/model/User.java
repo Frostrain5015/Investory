@@ -34,6 +34,9 @@ public class User {
      */
     private boolean isAdmin;
 
+    /** 关联的 Frost ID 用户唯一标识（sub claim），用于 OAuth 登录绑定 */
+    private String frostIdId;
+
     /** 账号创建时间，由数据库或业务层在注册时自动赋值 */
     private LocalDateTime createdAt;
 
@@ -109,6 +112,9 @@ public class User {
      * @param admin true 表示授予管理员权限，false 表示撤销
      */
     public void setAdmin(boolean admin) { isAdmin = admin; }
+
+    public String getFrostIdId() { return frostIdId; }
+    public void setFrostIdId(String frostIdId) { this.frostIdId = frostIdId; }
 
     /**
      * 获取账号创建时间。

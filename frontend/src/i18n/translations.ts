@@ -33,6 +33,9 @@ const zh = {
     createAccount: "创建账户",
     errorCredentials: "用户名或密码错误",
     errorLoginFailed: "登录失败",
+    frostidLogin: "Frost ID 登录",
+    frostidLoggingIn: "正在跳转至 Frost ID...",
+    frostidDesc: "使用 Frost ID 账户快速登录",
   },
 
   // ── Register ──
@@ -650,6 +653,9 @@ const en = {
     createAccount: "Create Account",
     errorCredentials: "Invalid username or password",
     errorLoginFailed: "Login failed",
+    frostidLogin: "Sign in with Frost ID",
+    frostidLoggingIn: "Redirecting to Frost ID...",
+    frostidDesc: "Quick login using your Frost ID account",
   },
 
   register: {
@@ -1260,6 +1266,9 @@ const hk = {
     createAccount: "創建賬戶",
     errorCredentials: "用戶名或密碼錯誤",
     errorLoginFailed: "登錄失敗",
+    frostidLogin: "Frost ID 登錄",
+    frostidLoggingIn: "正在跳轉至 Frost ID...",
+    frostidDesc: "使用 Frost ID 賬戶快速登錄",
   },
 
   // ── Register ──

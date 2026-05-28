@@ -78,6 +78,7 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(loginInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns("/", "/login", "/register", "/logout", "/error",
+                        "/oauth/frost-id/login", "/oauth/frost-id/callback",
                         "/api/session", "/api/stock/search",
                         "/assets/**", "/favicon.svg", "/icons.svg", "/*.js", "/*.css", "/*.json");
     }

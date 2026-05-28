@@ -36,6 +36,7 @@ public class UserDao extends BaseDao {
         u.setUsername(rs.getString("username"));               // 登录用户名（唯一）
         u.setPasswordHash(rs.getString("password_hash"));      // BCrypt 哈希后的密码
         u.setEmail(rs.getString("email"));                     // 用户邮箱
+        try { u.setFrostIdId(rs.getString("frost_id_id")); } catch (SQLException ignored) {}
         // is_admin 为可选字段，列不存在时静默跳过（兼容旧版本数据库结构）
         try { u.setAdmin(rs.getBoolean("is_admin")); } catch (SQLException ignored) {}
         Timestamp ts = rs.getTimestamp("created_at");
@@ -74,6 +75,12 @@ public class UserDao extends BaseDao {
      * @return 新插入记录的主键 ID
      */
     public long insert(User user) {
+        if (user.getFrostIdId() != null) {
+            return insert(
+                "INSERT INTO users (username, password_hash, email, frost_id_id) VALUES (?, ?, ?, ?)",
+                user.getUsername(), user.getPasswordHash(), user.getEmail(), user.getFrostIdId()
+            );
+        }
         return insert(
             "INSERT INTO users (username, password_hash, email) VALUES (?, ?, ?)",
             user.getUsername(), user.getPasswordHash(), user.getEmail()
@@ -90,6 +97,27 @@ public class UserDao extends BaseDao {
      */
     public void updatePassword(long userId, String hash) {
         jdbc.update("UPDATE users SET password_hash=? WHERE id=?", hash, userId);
+    }
+
+    /**
+     * 按 Frost ID 用户唯一标识查找已绑定的用户。
+     */
+    public User findByFrostIdId(String frostIdId) {
+        return queryOne("SELECT * FROM users WHERE frost_id_id = ?", this::map, frostIdId);
+    }
+
+    /**
+     * 按邮箱地址查找用户。
+     */
+    public User findByEmail(String email) {
+        return queryOne("SELECT * FROM users WHERE email = ?", this::map, email);
+    }
+
+    /**
+     * 更新用户的 Frost ID 绑定。
+     */
+    public void updateFrostIdId(long userId, String frostIdId) {
+        jdbc.update("UPDATE users SET frost_id_id = ? WHERE id = ?", frostIdId, userId);
     }
 
     /**
