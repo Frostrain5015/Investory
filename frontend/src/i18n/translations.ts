@@ -55,6 +55,9 @@ const zh = {
     errorPasswordMismatch: "两次密码不一致",
     errorRegisterFailed: "注册失败",
     successMsg: "注册成功，即将跳转...",
+    frostidOnly: "注册已统一至 Frost ID 中央账户系统。",
+    frostidDesc: "通过 Frost ID 账户即可登录 Investory，无需单独注册。",
+    backToLogin: "返回登录",
   },
 
   // ── Dashboard ──
@@ -674,6 +677,9 @@ const en = {
     errorPasswordMismatch: "Passwords do not match",
     errorRegisterFailed: "Registration failed",
     successMsg: "Account created, redirecting...",
+    frostidOnly: "Registration is now handled by Frost ID.",
+    frostidDesc: "Use your Frost ID account to sign in to Investory — no separate registration needed.",
+    backToLogin: "Back to Login",
   },
 
   dashboard: {
@@ -1288,6 +1294,9 @@ const hk = {
     errorPasswordMismatch: "兩次密碼不一致",
     errorRegisterFailed: "註冊失敗",
     successMsg: "註冊成功，即將跳轉...",
+    frostidOnly: "註冊已統一至 Frost ID 中央賬戶系統。",
+    frostidDesc: "通過 Frost ID 賬戶即可登錄 Investory，無需單獨註冊。",
+    backToLogin: "返回登錄",
   },
 
   // ── Dashboard ──
