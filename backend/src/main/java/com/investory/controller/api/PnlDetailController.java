@@ -90,10 +90,11 @@ public class PnlDetailController {
     @GetMapping("/monthly-detail")
     public Map<String, Object> monthly(@RequestParam int year, @RequestParam int month, HttpServletRequest req) {
         long pid = getPortfolioId(req);
-        // sm=月初, em=月末, epm=上月末（用作"前一日"基准价）
         LocalDate sm = LocalDate.of(year, month, 1), em = sm.withDayOfMonth(sm.lengthOfMonth()), epm = sm.minusDays(1);
+        // 若月末在未来，截断到今天（当前月份的详情不至于全是空的）
+        LocalDate today = LocalDate.now();
+        if (em.isAfter(today)) em = today;
         Map<String, BigDecimal> toCny = loadRates();
-        // 以上月末持仓作为月初参考份额
         Map<Long, BigDecimal> shares = resolveShares(pid, epm);
         return buildDetail(pid, year + "-" + String.format("%02d", month), shares, toCny, em, epm);
     }
@@ -138,21 +139,15 @@ public class PnlDetailController {
         List<Map<String, Object>> holdings = new ArrayList<>();
         BigDecimal totalPnl = BigDecimal.ZERO, totalMv = BigDecimal.ZERO;
         for (Map.Entry<Long, BigDecimal> e : shares.entrySet()) {
-            // 跳过份额为零或负数的持仓
             if (e.getValue().compareTo(BigDecimal.ZERO) <= 0) continue;
             Stock st = stockDao.findById(e.getKey()); if (st == null) continue;
             BigDecimal rate = toCny.getOrDefault(st.getCurrency(), BigDecimal.ONE);
-            // 查询期末收盘价与期初收盘价
-            List<StockPrice> tp = stockPriceDao.findRange(e.getKey(), endDay, endDay);
-            List<StockPrice> pp = stockPriceDao.findRange(e.getKey(), prevDay, prevDay);
-            if (tp.isEmpty() || pp.isEmpty()) continue;
-            BigDecimal ct = tp.get(0).getClose(), cp = pp.get(0).getClose();
+            // 查询期末收盘价：若无当日价格，往回找最近一个交易日
+            BigDecimal ct = findNearestClose(e.getKey(), endDay);
+            BigDecimal cp = findNearestClose(e.getKey(), prevDay);
             if (ct == null || cp == null) continue;
-            // 盈亏金额（已折算为 CNY）
             BigDecimal pnl = ct.subtract(cp).multiply(e.getValue()).multiply(rate).setScale(2, java.math.RoundingMode.HALF_UP);
-            // 涨跌幅（百分比）
             BigDecimal pct = cp.compareTo(BigDecimal.ZERO) > 0 ? ct.subtract(cp).divide(cp, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO;
-            // 市值（已折算为 CNY）
             BigDecimal mv = ct.multiply(e.getValue()).multiply(rate).setScale(2, java.math.RoundingMode.HALF_UP);
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("stockName", st.getName()); row.put("symbol", st.getSymbol());
@@ -160,7 +155,6 @@ public class PnlDetailController {
             holdings.add(row);
             totalPnl = totalPnl.add(pnl); totalMv = totalMv.add(mv);
         }
-        // 计算各股权重占比（市值 / 总市值）
         if (totalMv.compareTo(BigDecimal.ZERO) > 0) {
             for (Map<String, Object> row : holdings) {
                 BigDecimal mv = (BigDecimal) row.get("marketValue");
@@ -168,8 +162,18 @@ public class PnlDetailController {
             }
         }
         result.put("totalPnl", totalPnl.setScale(2, java.math.RoundingMode.HALF_UP)); result.put("holdings", holdings);
-        // 附上期末日（月度模式为月末当天）的所有交易记录
+        // 交易记录使用实际 endDay；月末被截断到今天时能正确显示当月所有交易
         result.put("transactions", jdbc.queryForList("SELECT t.type, s.name AS stockName, t.shares, t.price FROM transactions t LEFT JOIN stocks s ON t.stock_id=s.id WHERE t.portfolio_id=? AND t.trade_date=?", pid, java.sql.Date.valueOf(endDay)));
         return result;
+    }
+
+    /** 查找指定股票在目标日或最近的更早日期的收盘价。最多往回找 7 天，避免周末/节假日断档。 */
+    private BigDecimal findNearestClose(long stockId, LocalDate target) {
+        for (int i = 0; i < 7; i++) {
+            LocalDate d = target.minusDays(i);
+            List<StockPrice> prices = stockPriceDao.findRange(stockId, d, d);
+            if (!prices.isEmpty() && prices.get(0).getClose() != null) return prices.get(0).getClose();
+        }
+        return null;
     }
 }

@@ -6,7 +6,6 @@ import HeroParticles from '@/components/HeroParticles'
 import HeroMatrix from '@/components/HeroMatrix'
 import { useT } from '@/i18n/I18nContext'
 import LangSwitcher from '@/components/LangSwitcher'
-import { User } from 'lucide-react'
 
 export default function Hero() {
   const { t } = useT()
@@ -29,6 +28,9 @@ export default function Hero() {
 
       <div className="absolute top-4 right-4 z-20">
         <LangSwitcher dark />
+      </div>
+      <div className="absolute bottom-5 left-5 z-20">
+        <span className="text-[10px] text-slate-600 font-light tracking-widest">❄ Frost Tech</span>
       </div>
 
       <div className="relative z-10 flex flex-col items-center justify-center h-full px-4">

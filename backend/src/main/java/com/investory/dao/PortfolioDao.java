@@ -92,6 +92,15 @@ public class PortfolioDao extends BaseDao {
     }
 
     /**
+     * 查询所有投资组合（供后台定时任务使用，如每日净值回填）。
+     *
+     * @return 全部组合列表，按 id 升序排列；无组合时返回空列表
+     */
+    public List<Portfolio> findAll() {
+        return query("SELECT * FROM portfolios ORDER BY id", this::map);
+    }
+
+    /**
      * 校验指定组合是否属于给定用户（权限验证）。
      *
      * <p>SQL 逻辑：使用 {@code COUNT(*)} 查询同时满足 {@code id} 和 {@code user_id}

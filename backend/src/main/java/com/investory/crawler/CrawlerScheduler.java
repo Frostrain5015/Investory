@@ -21,6 +21,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import com.investory.dao.PortfolioDao;
+import com.investory.model.Portfolio;
+import com.investory.service.PortfolioValueCalculator;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 import com.google.gson.JsonObject;
@@ -48,6 +51,10 @@ public class CrawlerScheduler {
     private final JdbcTemplate jdbc;
     private final CrawlSessionManager sessionManager;
     private final java.net.Proxy socksProxy;
+    @org.springframework.beans.factory.annotation.Autowired
+    private PortfolioValueCalculator valueCalculator;
+    @org.springframework.beans.factory.annotation.Autowired
+    private PortfolioDao portfolioDao;
 
     public CrawlerScheduler(JdbcTemplate jdbc, @org.springframework.beans.factory.annotation.Autowired(required = false) CrawlSessionManager sessionManager) {
         this.jdbc = jdbc;
@@ -131,6 +138,23 @@ public class CrawlerScheduler {
         log.info("晚间二次抓取 A股 + 港股");
         runScript("fetch_stocks.py", "a", "A股(二次)");
         runScript("fetch_stocks.py", "hk", "港股(二次)");
+    }
+
+    // ── 每日收盘后回填所有活跃组合的净值 ─────────────────────────────────
+
+    @Scheduled(cron = "0 30 19 * * MON-FRI", zone = "Asia/Shanghai")
+    public void backfillAllPortfolios() {
+        if (isWeekend()) return;
+        log.info("开始回填所有活跃组合的每日净值");
+        List<Portfolio> portfolios = portfolioDao.findAll();
+        for (Portfolio p : portfolios) {
+            try {
+                valueCalculator.backfillFrom(p.getId(), LocalDate.now(SHANGHAI).minusDays(5));
+            } catch (Exception e) {
+                log.warning("回填组合 " + p.getId() + " 净值失败: " + e.getMessage());
+            }
+        }
+        log.info("回填完成，共处理 " + portfolios.size() + " 个组合");
     }
 
     private void runQuantScript(String mode) {
