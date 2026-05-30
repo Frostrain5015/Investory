@@ -311,7 +311,7 @@ export default function PnlCalendar() {
                             <BarChart
                               layout="vertical"
                               data={[...detail.holdings].sort((a, b) => Math.abs(b.pnl) - Math.abs(a.pnl))}
-                              margin={{ left: 76, right: 36, top: 2, bottom: 2 }}>
+                              margin={{ left: 76, right: 36, top: 14, bottom: 2 }}>
                               <XAxis type="number" tick={{ fontSize: 10 }} tickFormatter={(v: number) => fmtNum(v)} />
                               <YAxis type="category" dataKey="stockName" tick={{ fontSize: 11 }} width={72} />
                               <Tooltip formatter={(v) => [fmtNum(Number(v)), '盈亏']} contentStyle={{ fontSize: 11 }} />
