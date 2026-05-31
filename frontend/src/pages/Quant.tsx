@@ -15,13 +15,23 @@ import type { Translation } from '@/i18n/translations'
 function buildEntryIndicators(t: Translation) {
   const q = t.quant
   return [
-    { name: 'sma', label: q.indicatorSma, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> SMA' }, { value: 'below', label: '< SMA' }] },
-    { name: 'ema', label: q.indicatorEma, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> EMA' }, { value: 'below', label: '< EMA' }] },
-    { name: 'rsi', label: q.indicatorRsi, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 14 }], conditions: [{ value: 'oversold', label: q.indCondOversold }, { value: 'overbought', label: q.indCondOverbought }] },
-    { name: 'macd_histogram', label: q.indicatorMacdHist, params: [{ name: 'fast', label: q.indParamFast, type: 'number' as const, default: 12 }, { name: 'slow', label: q.indParamSlow, type: 'number' as const, default: 26 }], conditions: [{ value: 'above', label: '> 0' }, { value: 'below', label: '< 0' }] },
-    { name: 'bollinger_lower', label: q.indicatorBollLower, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: q.indCondBelowLower }] },
-    { name: 'volume_ma', label: q.indicatorVolMa, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: q.indCondSurge }] },
-    { name: 'kdj_k', label: q.indicatorKdjK, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 9 }], conditions: [{ value: 'oversold', label: q.indCondOversold }, { value: 'overbought', label: q.indCondOverbought }] },
+    // ── Technical ──
+    { name: 'sma', label: 'SMA 均线', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> SMA' }, { value: 'below', label: '< SMA' }] },
+    { name: 'ema', label: 'EMA 均线', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> EMA' }, { value: 'below', label: '< EMA' }] },
+    { name: 'rsi', label: 'RSI', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 14 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
+    { name: 'macd_histogram', label: 'MACD 柱', params: [{ name: 'fast', label: q.indParamFast, type: 'number' as const, default: 12 }, { name: 'slow', label: q.indParamSlow, type: 'number' as const, default: 26 }], conditions: [{ value: 'above', label: '> 0' }, { value: 'below', label: '< 0' }] },
+    { name: 'bollinger_lower', label: '布林下轨', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: '跌破下轨' }] },
+    { name: 'volume_ma', label: '成交量', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '放量' }] },
+    { name: 'kdj_k', label: 'KDJ-K', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 9 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
+    // ── Smart Factors (动量/趋势/波动/风险) ──
+    { name: 'ret_1m', label: '月动量(1M)', params: [], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
+    { name: 'ret_3m', label: '季动量(3M)', params: [], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
+    { name: 'ret_6m', label: '半动量(6M)', params: [], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
+    { name: 'volatility', label: '年化波动', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: '< 阈值%' }] },
+    { name: 'max_drawdown', label: '最大回撤', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 60 }], conditions: [{ value: 'above', label: '> 阈值%' }] },
+    { name: 'ma_spread', label: '均线乖离', params: [{ name: 'fast', label: '快线', type: 'number' as const, default: 5 }, { name: 'slow', label: '慢线', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
+    { name: 'upday_ratio', label: '涨日占比', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> 阈值%' }] },
+    { name: 'volume_ratio', label: '量比', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 5 }], conditions: [{ value: 'above', label: '> 阈值' }] },
   ]
 }
 
@@ -66,126 +76,196 @@ export default function Quant() {
 
 // ── Risk Analysis Section ───────────────────────────────────────────────
 
-function RiskSection() {
-  const { t } = useT()
-  const q = t.quant
-  const { positiveClass } = useSettings()
-  const [styleData, setStyleData] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  const [refreshingMetrics, setRefreshingMetrics] = useState(false)
-  const esRef = useRef<EventSource | null>(null)
+const GROUP_LABELS: Record<string, string> = {
+  value: '价值', growth: '成长', momentum: '动量', quality: '质量',
+  technical: '技术', event: '事件', social: '情绪', other: '其他',
+}
 
-  const loadStyle = useCallback(() => {
+const GROUP_COLORS: Record<string, string> = {
+  value: '#3b82f6', growth: '#22c55e', momentum: '#f59e0b', quality: '#8b5cf6',
+  technical: '#06b6d4', event: '#f97316', social: '#ec4899', other: '#94a3b8',
+}
+
+export function RiskSection() {
+  const { t } = useT()
+  const toast = useToast()
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  const loadAnalysis = useCallback(async () => {
     setLoading(true)
-    fetch(`${BASE}/api/quant/portfolio-style`, { credentials: 'include' })
-      .then(r => r.json()).then(d => { if (!d.error) setStyleData(d); else setStyleData({ _error: d.error }) })
-      .catch(() => {}).finally(() => setLoading(false))
+    try {
+      // Get holdings from API
+      const holdRes = await fetch(`${BASE}/api/holdings`, { credentials: 'include' })
+      const holdData = await holdRes.json()
+      const snaps = holdData.snapshots || []
+      if (snaps.length === 0) {
+        setData({ _error: 'no holdings' })
+        setLoading(false)
+        return
+      }
+
+      // Build holdings list with weights (by market value)
+      const totalVal = snaps.reduce((s: number, h: any) => s + (h.marketValue ?? h.marketValueCny ?? h.totalInvested ?? 0), 0)
+      const holdings = snaps.map((h: any) => ({
+        symbol: h.stockSymbol,
+        name: h.stockName || h.stockSymbol,
+        weight: totalVal > 0 ? ((h.marketValue ?? h.marketValueCny ?? h.totalInvested ?? 0) / totalVal * 100) : (100 / snaps.length),
+      }))
+
+      const { analyzePortfolio } = await import('@/services/api')
+      const result = await analyzePortfolio(holdings)
+      if (result.error) {
+        setData({ _error: result.error })
+      } else {
+        setData(result)
+      }
+    } catch (e: any) {
+      setData({ _error: e.message || '分析失败' })
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
-  useEffect(() => { loadStyle() }, [loadStyle])
-  useEffect(() => () => { if (esRef.current) esRef.current.close() }, [])
+  useEffect(() => { loadAnalysis() }, [loadAnalysis])
 
-  function refreshMetrics() {
-    setRefreshingMetrics(true)
-    if (esRef.current) { esRef.current.close() }
-    const es = new EventSource(`${BASE}/api/quant/refresh`, { withCredentials: true })
-    esRef.current = es
-    es.addEventListener('done', () => { setRefreshingMetrics(false); es.close() })
-    es.addEventListener('error', () => { setRefreshingMetrics(false); es.close() })
-    es.onerror = () => {}
-  }
-
-  const STYLE_COLORS: Record<string, string> = {
-    '大盘价值': 'bg-blue-600', '大盘成长': 'bg-sky-500', '小盘价值': 'bg-amber-600', '小盘成长': 'bg-red-400',
-    '科技成长': 'bg-blue-500', '金融价值': 'bg-amber-500', '消费防御': 'bg-emerald-500',
-    '能源材料': 'bg-orange-500', '医疗健康': 'bg-purple-500', '地产基建': 'bg-slate-500',
-    '综合其他': 'bg-slate-400',
-    'Large Value': 'bg-blue-600', 'Large Growth': 'bg-sky-500', 'Small Value': 'bg-amber-600', 'Small Growth': 'bg-red-400',
-    'Tech Growth': 'bg-blue-500', 'Financial Value': 'bg-amber-500', 'Consumer Defensive': 'bg-emerald-500',
-    'Energy & Materials': 'bg-orange-500', 'Healthcare': 'bg-purple-500', 'Real Estate & Infra': 'bg-slate-500',
-    'Diversified': 'bg-slate-400',
-  }
-
-  // Style names returned by the backend are in Chinese; provide an en mapping
-  const STYLE_NAME_DISPLAY: Record<string, string> = {
-    '大盘价值': 'Large Value', '大盘成长': 'Large Growth', '小盘价值': 'Small Value', '小盘成长': 'Small Growth',
-    '科技成长': 'Tech Growth', '金融价值': 'Financial Value', '消费防御': 'Consumer Defensive',
-    '能源材料': 'Energy & Materials', '医疗健康': 'Healthcare', '地产基建': 'Real Estate & Infra',
-    '综合其他': 'Diversified',
-  }
-
-  const displayStyleName = (zhName: string) => {
-    // If t.quant.title starts with a non-ASCII char, we're in zh mode
-    if (/^[一-鿿]/.test(t.quant.title)) return zhName
-    return STYLE_NAME_DISPLAY[zhName] || zhName
-  }
+  // Derived stats
+  const topHoldings: any[] = data?.top_holdings || []
+  const bottomHoldings: any[] = data?.bottom_holdings || []
+  const groupExposure: Record<string, any> = data?.group_exposure || {}
+  const factorExposure: Record<string, any> = data?.factor_exposure || {}
+  const portfolioScore = data?.portfolio_score ?? 0
 
   return (<>
     <div className="flex items-center gap-2">
-      <button onClick={loadStyle} disabled={loading}
+      <button onClick={loadAnalysis} disabled={loading}
         className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-60">
-        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />{loading ? t.common.loading : q.styleDiagnostics}
-      </button>
-      <button onClick={refreshMetrics} disabled={refreshingMetrics}
-        className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors disabled:opacity-40">
-        <RefreshCw className={`w-3.5 h-3.5 ${refreshingMetrics ? 'animate-spin' : ''}`} />{refreshingMetrics ? t.common.loading : q.refreshMetrics}
+        <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+        {loading ? '分析中...' : '刷新因子分析'}
       </button>
     </div>
 
-    {styleData && !loading && (<>
+    {loading && (
+      <div className="flex flex-col items-center justify-center h-48 gap-2">
+        <div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+        <span className="text-xs text-slate-400">正在调用多因子引擎分析持仓...</span>
+      </div>
+    )}
+
+    {!loading && data?._error && (
+      <Card><CardContent className="py-12 text-center">
+        <BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+        <p className="text-sm text-slate-500">{data._error === 'no holdings' ? '暂无持仓数据' : data._error}</p>
+      </CardContent></Card>
+    )}
+
+    {!loading && data && !data._error && (<>
+      {/* Summary card */}
       <Card>
         <CardContent className="py-4">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs text-slate-500">{q.portfolioStyleDiag}</p>
-              <p className="text-lg font-bold text-slate-900">{styleData.styleSummary}</p>
+              <p className="text-xs text-slate-500">组合因子评分</p>
+              <p className={`text-lg font-bold ${portfolioScore >= 60 ? 'text-emerald-600' : portfolioScore >= 40 ? 'text-amber-600' : 'text-red-500'}`}>
+                {portfolioScore.toFixed(1)} / 100
+              </p>
             </div>
             <div className="flex items-center gap-6 text-xs text-slate-500">
-              <div className="text-center"><p className="text-2xl font-bold text-slate-900">{styleData.positionCount}</p><p>{q.positions}</p></div>
-              <div className="text-center"><p className="text-2xl font-bold text-slate-900">{(styleData.totalValue / 10000).toFixed(0)}{t.dashboard.chartUnitLarge}</p><p>{t.dashboard.totalValue}</p></div>
-              <div className="text-center"><p className={`text-2xl font-bold ${styleData.weightedBeta != null ? (styleData.weightedBeta > 1 ? positiveClass : 'text-slate-900') : 'text-slate-400'}`}>{styleData.weightedBeta ?? '—'}</p><p>{q.weightedBeta}</p></div>
+              <div className="text-center">
+                <p className="text-2xl font-bold text-slate-900">{data.holdings_scored ?? data.holdings_total}</p>
+                <p>持仓数</p>
+              </div>
+              <div className="text-center">
+                <p className={`text-2xl font-bold ${portfolioScore >= 60 ? 'text-emerald-600' : portfolioScore >= 40 ? 'text-amber-600' : 'text-red-500'}`}>{portfolioScore.toFixed(1)}</p>
+                <p>加权均分</p>
+              </div>
+              <div className="text-center">
+                <p className="text-2xl font-bold text-slate-900">{(data.all_holdings || []).filter((h: any) => !h.error).length}</p>
+                <p>已评分</p>
+              </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Factor group exposure */}
         <Card>
-          <CardHeader><CardTitle className="text-sm">{q.styleAllocation}</CardTitle></CardHeader>
+          <CardHeader><CardTitle className="text-sm">因子组暴露</CardTitle></CardHeader>
           <CardContent className="space-y-2">
-            {Object.entries(styleData.styleAllocation || {}).map(([style, data]: [string, any]) => (
-              <div key={style} className="flex items-center gap-2">
-                <span className={`w-2.5 h-2.5 rounded-full ${STYLE_COLORS[style] || STYLE_COLORS[displayStyleName(style)] || 'bg-slate-400'}`} />
-                <span className="text-xs text-slate-600 w-16 truncate">{displayStyleName(style)}</span>
-                <div className="flex-1 bg-slate-100 rounded-full h-2"><div className={`h-full rounded-full ${STYLE_COLORS[style] || STYLE_COLORS[displayStyleName(style)] || 'bg-slate-400'}`} style={{ width: `${Math.max(data.pct, 2)}%` }} /></div>
-                <span className="text-xs text-slate-500 w-12 text-right">{data.pct}%</span>
+            {Object.entries(groupExposure).map(([group, gdata]: [string, any]) => (
+              <div key={group} className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: GROUP_COLORS[group] || '#94a3b8' }} />
+                <span className="text-xs text-slate-600 w-14">{GROUP_LABELS[group] || group}</span>
+                <div className="flex-1 bg-slate-100 rounded-full h-2">
+                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.min(gdata.buy_score * 10, 100)}%` }} />
+                </div>
+                <span className="text-xs font-medium text-emerald-600 w-8 text-right">{gdata.buy_score?.toFixed(1)}</span>
               </div>
             ))}
           </CardContent>
         </Card>
+
+        {/* Top & Bottom holdings */}
         <Card>
-          <CardHeader><CardTitle className="text-sm">{q.recommendations}</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {(styleData.recommendations || []).map((r: any, i: number) => (
-              <div key={i} className={`text-xs p-2 rounded-lg ${r.severity === 'warning' ? 'bg-amber-50 text-amber-800' : 'bg-blue-50 text-blue-800'}`}>
-                <p className="font-medium">{r.title}</p><p className="mt-0.5 opacity-80">{r.detail}</p>
+          <CardHeader><CardTitle className="text-sm">评分排名</CardTitle></CardHeader>
+          <CardContent className="space-y-1.5">
+            <p className="text-xs text-slate-400 mb-1">🟢 评分最高</p>
+            {topHoldings.map((h: any) => (
+              <div key={h.symbol || h.code} className="flex items-center gap-2 text-xs">
+                <span className="font-medium text-slate-900 w-16">{displaySymbol(h.symbol || h.code)}</span>
+                <span className="text-slate-500 truncate flex-1">{h.name}</span>
+                <span className={`font-medium ${(h.total_score ?? 0) >= 60 ? 'text-emerald-600' : 'text-amber-600'}`}>{(h.total_score ?? 0).toFixed(0)}分</span>
               </div>
             ))}
-            {!styleData.recommendations?.length && <p className="text-xs text-slate-400">{q.structureBalanced}</p>}
+            {topHoldings.length === 0 && <p className="text-xs text-slate-400">—</p>}
+            <p className="text-xs text-slate-400 mb-1 mt-2">🔴 评分最低</p>
+            {bottomHoldings.map((h: any) => (
+              <div key={h.symbol || h.code} className="flex items-center gap-2 text-xs">
+                <span className="font-medium text-slate-900 w-16">{displaySymbol(h.symbol || h.code)}</span>
+                <span className="text-slate-500 truncate flex-1">{h.name}</span>
+                <span className="font-medium text-red-500">{(h.total_score ?? 0).toFixed(0)}分</span>
+              </div>
+            ))}
           </CardContent>
         </Card>
       </div>
-    </>)}
 
-    {loading && <div className="flex flex-col items-center justify-center h-48 gap-2"><div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-xs text-slate-400">{q.analyzingStyle}</span></div>}
-    {!loading && !styleData && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">{q.noData}</p></CardContent></Card>}
-    {!loading && styleData?._error && <Card><CardContent className="py-12 text-center"><BarChart2 className="w-8 h-8 text-slate-300 mx-auto mb-2" /><p className="text-sm text-slate-500">{styleData._error === 'no holdings' ? q.noHoldingsData : styleData._error}</p></CardContent></Card>}
+      {/* All holdings detail */}
+      <Card>
+        <CardHeader><CardTitle className="text-sm">持仓因子明细</CardTitle></CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-slate-100 text-slate-500">
+                  <th className="text-left py-1.5 font-medium">代码</th>
+                  <th className="text-left py-1.5 font-medium">名称</th>
+                  <th className="text-right py-1.5 font-medium">权重</th>
+                  <th className="text-right py-1.5 font-medium">综合分</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(data.all_holdings || []).map((h: any) => (
+                  <tr key={h.symbol || h.code} className="border-b border-slate-50">
+                    <td className="py-1.5 font-medium text-slate-900">{displaySymbol(h.symbol || h.code)}</td>
+                    <td className="py-1.5 text-slate-600">{h.name}</td>
+                    <td className="py-1.5 text-right text-slate-500">{(h.weight ?? 0).toFixed(1)}%</td>
+                    <td className={`py-1.5 text-right font-bold ${(h.total_score ?? 0) >= 60 ? 'text-emerald-600' : (h.total_score ?? 0) >= 40 ? 'text-amber-600' : 'text-red-500'}`}>{(h.total_score ?? 0).toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+    </>)}
   </>)
 }
 
 // ── Backtest Section ────────────────────────────────────────────────────
 
-function BacktestSection() {
+export function BacktestSection() {
   const { t } = useT()
   const q = t.quant
   const confirm = useConfirm()

@@ -25,7 +25,7 @@ public class SpaController {
      */
     @GetMapping(value = {"/", "/login", "/register", "/market", "/watchlist", "/dashboard", "/portfolio",
         "/holdings", "/transactions", "/transactions/**", "/dividends", "/dividends/**",
-        "/stock", "/pnl-calendar", "/admin"})
+        "/stock", "/pnl-calendar", "/admin", "/research", "/settings"})
     @ResponseBody
     public String serveSpa() throws IOException {
         Resource resource = new ClassPathResource("static/index.html");

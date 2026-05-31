@@ -24,6 +24,8 @@ import PnlCalendar from '@/pages/PnlCalendar'
 import Portfolio from '@/pages/Portfolio'
 import Settings from '@/pages/Settings'
 import Quant from '@/pages/Quant'
+import Screener from '@/pages/Screener'
+import Research from '@/pages/Research'
 
 const isElectron = !!(window as any).electronAPI?.isDesktop
 
@@ -77,7 +79,9 @@ export default function App() {
               <Route path="/pnl-calendar" element={<PnlCalendar />} />
               <Route path="/portfolio" element={<Portfolio />} />
               <Route path="/settings" element={<Settings />} />
-              <Route path="/quant" element={<Quant />} />
+              <Route path="/quant" element={<Navigate to="/research" replace />} />
+              <Route path="/screener" element={<Navigate to="/research" replace />} />
+              <Route path="/research" element={<Research />} />
               <Route path="/admin" element={<Admin />} />
             </Route>
             <Route path="*" element={<Navigate to="/dashboard" replace />} />

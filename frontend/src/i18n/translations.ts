@@ -5,14 +5,14 @@
 const zh = {
   // ── Navigation ──
   nav: {
-    dashboard: "仪表盘",
+    dashboard: "总览",
     market: "市场",
     holdings: "持仓",
-    transactions: "交易记录",
-    pnl: "盈亏日历",
-    portfolio: "我的组合",
+    transactions: "交易",
+    pnl: "日历",
+    portfolio: "组合",
     settings: "设置",
-    quantLabel: "量化分析",
+    research: "投研",
   },
 
   // ── Login ──
@@ -530,6 +530,32 @@ const zh = {
     return {'action': 'BUY', 'quantity': qty}`,
   },
 
+  screener: {
+    title: "选股器",
+    tabs: { filter: "自选筛选", picks: "今日推荐" },
+    searchPlaceholder: "搜索股票代码或名称...",
+    importHoldings: "导入持仓",
+    refreshScores: "刷新评分",
+    fullScan: "全市场扫描",
+    scanning: "扫描中...",
+    filterPanel: "筛选",
+    factorGroups: "因子组",
+    scoreRange: "综合分",
+    marketFilter: "市场",
+    colSymbol: "代码",
+    colName: "名称",
+    colBuyScore: "买入分",
+    colSellScore: "卖出分",
+    colTotalScore: "综合分",
+    colRegime: "环境",
+    noStocks: "搜索并添加股票到筛选列表，或点击「导入持仓」和「全市场扫描」",
+    noScores: "暂无评分数据，请点击「刷新评分」",
+    noPicks: "暂无推荐，请点击「全市场扫描」获取今日选股",
+    loadingBreakdown: "加载中...",
+    noFactors: "暂无因子明细",
+    importedN: "已导入 {n} 只持仓股票",
+  },
+
   // ── Components / Shared ──
   common: {
     save: "保存",
@@ -629,14 +655,14 @@ const zh = {
 
 const en = {
   nav: {
-    dashboard: "Dashboard",
+    dashboard: "Home",
     market: "Market",
-    holdings: "Holdings",
-    transactions: "Transactions",
-    pnl: "P&L Calendar",
-    portfolio: "Portfolio",
-    settings: "Settings",
-    quantLabel: "Quant",
+    holdings: "Watch",
+    transactions: "Trade",
+    pnl: "Cal",
+    portfolio: "Port",
+    settings: "Set",
+    research: "R&D",
   },
 
   login: {
@@ -1142,6 +1168,32 @@ const en = {
     return {'action': 'BUY', 'quantity': qty}`,
   },
 
+  screener: {
+    title: "Stock Screener",
+    tabs: { filter: "Filter", picks: "Today's Picks" },
+    searchPlaceholder: "Search stock symbol or name...",
+    importHoldings: "Import Holdings",
+    refreshScores: "Refresh Scores",
+    fullScan: "Full Scan",
+    scanning: "Scanning...",
+    filterPanel: "Filters",
+    factorGroups: "Factor Groups",
+    scoreRange: "Score",
+    marketFilter: "Market",
+    colSymbol: "Symbol",
+    colName: "Name",
+    colBuyScore: "Buy",
+    colSellScore: "Sell",
+    colTotalScore: "Score",
+    colRegime: "Regime",
+    noStocks: "Search and add stocks to the screening list, or click \"Import Holdings\" or \"Full Scan\"",
+    noScores: "No scores available. Click \"Refresh Scores\" to compute factor scores",
+    noPicks: "No picks today. Click \"Full Scan\" to run a market scan",
+    loadingBreakdown: "Loading...",
+    noFactors: "No factor data available",
+    importedN: "Imported {n} holdings",
+  },
+
   common: {
     save: "Save",
     cancel: "Cancel",
@@ -1244,14 +1296,14 @@ export type Translation = Widen<typeof zh>
 const hk = {
   // ── Navigation ──
   nav: {
-    dashboard: "儀表盤",
+    dashboard: "總覽",
     market: "市場",
     holdings: "持倉",
-    transactions: "交易記錄",
-    pnl: "盈虧日曆",
-    portfolio: "我的組合",
+    transactions: "交易",
+    pnl: "日曆",
+    portfolio: "組合",
     settings: "設置",
-    quantLabel: "量化分析",
+    research: "投研",
   },
 
   // ── Login ──
@@ -1767,6 +1819,32 @@ const hk = {
         qty = max(10, int(ctx['cash'] * 0.95 / ctx['close']))
 
     return {'action': 'BUY', 'quantity': qty}`,
+  },
+
+  screener: {
+    title: "選股器",
+    tabs: { filter: "自選篩選", picks: "今日推薦" },
+    searchPlaceholder: "搜尋股票代碼或名稱...",
+    importHoldings: "導入持倉",
+    refreshScores: "刷新評分",
+    fullScan: "全市場掃描",
+    scanning: "掃描中...",
+    filterPanel: "篩選",
+    factorGroups: "因子組",
+    scoreRange: "綜合分",
+    marketFilter: "市場",
+    colSymbol: "代碼",
+    colName: "名稱",
+    colBuyScore: "買入分",
+    colSellScore: "賣出分",
+    colTotalScore: "綜合分",
+    colRegime: "環境",
+    noStocks: "搜尋並添加股票到篩選列表，或點擊「導入持倉」和「全市場掃描」",
+    noScores: "暫無評分數據，請點擊「刷新評分」",
+    noPicks: "暫無推薦，請點擊「全市場掃描」獲取今日選股",
+    loadingBreakdown: "載入中...",
+    noFactors: "暫無因子明細",
+    importedN: "已導入 {n} 隻持倉股票",
   },
 
   // ── Components / Shared ──

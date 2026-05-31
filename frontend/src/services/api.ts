@@ -5,6 +5,8 @@ import type {
   StockSearchItem, PriceData, Portfolio,
   HoldingsMetricsResponse, QuantData, BacktestResult,
   HoldingCorrelation, CompareResult,
+  FactorScore, FactorBreakdown, ScanResult, RegimeStatus,
+  FactorScoresResponse, ScanResultsResponse, DailyPick,
 } from '@/types'
 
 export const BASE = import.meta.env.VITE_API_BASE || '/investory'
@@ -280,3 +282,53 @@ export function changePassword(oldPassword: string, newPassword: string): Promis
 }
 export function deleteAccount(): Promise<any> { return request('/api/account', { method: 'DELETE' }) }
 export function refreshPortfolio(): Promise<any> { return request('/api/portfolio/refresh', { method: 'POST' }) }
+
+// ── StockSage Alpha ────────────────────────────────────────────────────────
+
+export function getFactorScores(symbols: string[]): Promise<FactorScoresResponse> {
+  return request<FactorScoresResponse>(`/api/stocksage/factor-scores?symbols=${symbols.join(',')}`)
+}
+
+export function getFactorBreakdown(symbol: string): Promise<FactorBreakdown> {
+  return request<FactorBreakdown>(`/api/stocksage/factor-breakdown/${encodeURIComponent(symbol)}`)
+}
+
+export function getScanResults(type = 'main', limit = 20): Promise<ScanResultsResponse> {
+  return request<ScanResultsResponse>(`/api/stocksage/scan-results?type=${type}&limit=${limit}`)
+}
+
+export function getRegimeStatus(): Promise<{ regime: RegimeStatus }> {
+  return request<{ regime: RegimeStatus }>('/api/stocksage/regime')
+}
+
+export function getDailyPicks(): Promise<{ date: string; picks: DailyPick[] }> {
+  return request<{ date: string; picks: DailyPick[] }>('/api/stocksage/daily-picks')
+}
+
+export function getPickHistory(from: string, to: string): Promise<{ history: DailyPick[] }> {
+  return request<{ history: DailyPick[] }>(`/api/stocksage/pick-history?from=${from}&to=${to}`)
+}
+
+export function submitPickFeedback(pickId: number, liked: boolean): Promise<{ status: string }> {
+  return request<{ status: string }>('/api/stocksage/pick-feedback', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pickId, liked }),
+  })
+}
+
+export function getStockAnalysis(symbol: string): Promise<import('@/types').StockAnalysis> {
+  return request(`/api/stocksage/stock-analysis/${encodeURIComponent(symbol)}`)
+}
+
+export function refreshStockSageScan(): EventSource {
+  return new EventSource(`${BASE}/api/stocksage/refresh`, { withCredentials: true })
+}
+
+export function analyzePortfolio(holdings: { symbol: string; weight: number; name: string }[]): Promise<any> {
+  return request('/api/stocksage/portfolio-analysis', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ holdings }),
+  })
+}

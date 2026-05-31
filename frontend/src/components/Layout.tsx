@@ -5,7 +5,7 @@ import { useT } from '@/i18n/I18nContext'
 import LangSwitcher from '@/components/LangSwitcher'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
-  LogOut, TrendingUp, User, Search, Menu, Shield, BarChart2, Sparkles
+  LogOut, TrendingUp, User, Search, Menu, Shield, FlaskConical, Sparkles
 } from 'lucide-react'
 import { createContext, useContext, useEffect, useState } from 'react'
 import { AnimatePresence } from 'framer-motion'
@@ -41,7 +41,7 @@ export default function Layout() {
     { to: '/holdings', icon: Wallet, label: t.nav.holdings },
     { to: '/transactions', icon: ArrowRightLeft, label: t.nav.transactions },
     { to: '/pnl-calendar', icon: CalendarDays, label: t.nav.pnl },
-    { to: '/quant', icon: BarChart2, label: '量化' },
+    { to: '/research', icon: FlaskConical, label: t.nav.research },
   ]
 
   useEffect(() => {

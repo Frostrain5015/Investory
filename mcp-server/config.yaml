@@ -1,0 +1,33 @@
+# Investory MCP Server Configuration
+
+server:
+  host: "0.0.0.0"
+  port: 8081
+  transport: "sse"  # SSE for remote connections
+
+database:
+  host: "${DB_HOST:localhost}"
+  port: ${DB_PORT:3306}
+  name: "${DB_NAME:investory}"
+  user: "${DB_USER:root}"
+  password: "${DB_PASSWORD}"
+
+auth:
+  # API Keys for external agents. Each key maps to an Investory user.
+  api_keys:
+    - key: "sk-investory-demo"
+      user_id: 1
+      description: "Demo key for testing"
+    # Add more keys below:
+    # - key: "sk-..."
+    #   user_id: 2
+    #   description: "Production key"
+
+# Tool groups that can be toggled
+tools:
+  portfolio: true
+  stocks: true
+  factors: true
+  transactions: true
+  quant: true
+  watchlist: true

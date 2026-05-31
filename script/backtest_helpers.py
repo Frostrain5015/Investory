@@ -145,6 +145,80 @@ def compute_low_n(closes: np.ndarray, period: int) -> np.ndarray:
     return result
 
 
+# ── Smart factor computations (price-derived, no external API needed) ─────
+
+def compute_return_n(closes: np.ndarray, period: int = 20) -> np.ndarray:
+    """N日回报率 (momentum factor)"""
+    result = np.full_like(closes, np.nan)
+    if len(closes) <= period:
+        return result
+    for i in range(period, len(closes)):
+        result[i] = (closes[i] / closes[i - period] - 1) * 100
+    return result
+
+
+def compute_volatility_n(closes: np.ndarray, period: int = 20) -> np.ndarray:
+    """N日年化波动率 (volatility factor)"""
+    result = np.full_like(closes, np.nan)
+    if len(closes) < period + 1:
+        return result
+    for i in range(period, len(closes)):
+        daily_returns = np.diff(closes[i - period:i + 1]) / closes[i - period:i]
+        result[i] = np.std(daily_returns, ddof=0) * np.sqrt(252) * 100
+    return result
+
+
+def compute_max_drawdown_n(closes: np.ndarray, period: int = 60) -> np.ndarray:
+    """N日最大回撤 (risk factor)"""
+    result = np.full_like(closes, np.nan)
+    if len(closes) < period:
+        return result
+    for i in range(period - 1, len(closes)):
+        window = closes[i - period + 1:i + 1]
+        peak = np.maximum.accumulate(window)
+        dd = (window - peak) / peak * 100
+        result[i] = float(np.min(dd))
+    return result
+
+
+def compute_ma_spread(closes: np.ndarray, fast: int = 5, slow: int = 20) -> np.ndarray:
+    """均线乖离率 (trend strength factor): (MA_fast - MA_slow) / MA_slow * 100"""
+    result = np.full_like(closes, np.nan)
+    if len(closes) < slow:
+        return result
+    ma_fast = compute_sma(closes, fast)
+    ma_slow = compute_sma(closes, slow)
+    for i in range(slow - 1, len(closes)):
+        if not np.isnan(ma_slow[i]) and ma_slow[i] > 0:
+            result[i] = (ma_fast[i] - ma_slow[i]) / ma_slow[i] * 100
+    return result
+
+
+def compute_upday_ratio(closes: np.ndarray, period: int = 20) -> np.ndarray:
+    """上涨天数占比 (trend quality factor)"""
+    result = np.full_like(closes, np.nan)
+    if len(closes) < period + 1:
+        return result
+    for i in range(period, len(closes)):
+        window = closes[i - period + 1:i + 1]
+        diff = np.diff(np.insert(window, 0, window[0]))
+        up_days = np.sum(diff > 0)
+        result[i] = up_days / period * 100
+    return result
+
+
+def compute_volume_ratio(closes: np.ndarray, volumes: np.ndarray, period: int = 5) -> np.ndarray:
+    """量比: current volume / N-day avg volume"""
+    result = np.full_like(volumes, np.nan)
+    if len(volumes) < period + 1:
+        return result
+    for i in range(period, len(volumes)):
+        avg_vol = np.mean(volumes[i - period:i])
+        if avg_vol > 0:
+            result[i] = volumes[i] / avg_vol
+    return result
+
+
 # ── Strategy evaluation helpers ──────────────────────────────────────────
 
 def eval_indicator(name: str, ohlcv: dict, params: dict, idx: int) -> Optional[float]:
@@ -230,6 +304,34 @@ def eval_indicator(name: str, ohlcv: dict, params: dict, idx: int) -> Optional[f
             return float(closes[idx])
         elif name == "volume":
             return float(volumes[idx])
+
+        # ── Smart factors (price-derived, no external API) ─────────────
+        elif name == "ret_1m":
+            v = compute_return_n(closes[:n], 20)
+            return float(v[-1]) if not np.isnan(v[-1]) else None
+        elif name == "ret_3m":
+            v = compute_return_n(closes[:n], 60)
+            return float(v[-1]) if not np.isnan(v[-1]) else None
+        elif name == "ret_6m":
+            v = compute_return_n(closes[:n], 120)
+            return float(v[-1]) if not np.isnan(v[-1]) else None
+        elif name == "volatility":
+            v = compute_volatility_n(closes[:n], int(params.get("period", 20)))
+            return float(v[-1]) if not np.isnan(v[-1]) else None
+        elif name == "max_drawdown":
+            v = compute_max_drawdown_n(closes[:n], int(params.get("period", 60)))
+            return float(v[-1]) if not np.isnan(v[-1]) else None
+        elif name == "ma_spread":
+            v = compute_ma_spread(closes[:n],
+                                   int(params.get("fast", 5)),
+                                   int(params.get("slow", 20)))
+            return float(v[-1]) if not np.isnan(v[-1]) else None
+        elif name == "upday_ratio":
+            v = compute_upday_ratio(closes[:n], int(params.get("period", 20)))
+            return float(v[-1]) if not np.isnan(v[-1]) else None
+        elif name == "volume_ratio":
+            v = compute_volume_ratio(closes[:n], volumes[:n], int(params.get("period", 5)))
+            return float(v[-1]) if not np.isnan(v[-1]) else None
         return None
     except Exception:
         return None

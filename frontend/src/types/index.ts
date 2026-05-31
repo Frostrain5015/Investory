@@ -331,3 +331,110 @@ export interface CompareResult {
   metrics: BacktestMetrics
   equityCurveNormalized: { date: string; value: number }[]
 }
+
+// ── StockSage Alpha types ──────────────────────────────────────────────────
+
+export interface FactorScore {
+  symbol: string
+  name?: string
+  buyScore: number
+  sellScore: number
+  totalScore: number
+  regime?: string
+  factorsCount?: number
+  cached?: boolean
+  message?: string
+  bullish?: string[]
+  bearish?: string[]
+}
+
+export interface FactorDetail {
+  name: string
+  group: string
+  value: number
+  buyScore: number
+  sellScore: number
+  description: string
+}
+
+export interface FactorBreakdown {
+  symbol: string
+  totalScore: number
+  buyScore: number
+  sellScore: number
+  factors: FactorDetail[]
+  rawMetrics?: Record<string, unknown>
+}
+
+export interface ScanResult {
+  code: string
+  name: string
+  buyScore: number
+  sellScore: number
+  totalScore: number
+  bullish?: string[]
+  bearish?: string[]
+}
+
+export interface RegimeStatus {
+  signal: string
+  score: number
+  exposure: number
+  description: string
+  indicators?: Record<string, number>
+  timestamp?: string
+}
+
+export interface ChipLevel {
+  label: string
+  shares: number
+  pct: number
+  avgCost: number
+}
+
+export interface ChipDistribution {
+  symbol: string
+  chip: {
+    levels?: ChipLevel[]
+    avgCost?: number
+    supportLevel?: number
+    resistanceLevel?: number
+    currentPrice?: number
+    profitZone?: { pct: number; shares: number }
+    lossZone?: { pct: number; shares: number }
+    [key: string]: unknown
+  }
+}
+
+export interface StockAnalysis {
+  symbol: string
+  factors: FactorBreakdown | { error: string }
+  chip: ChipDistribution | { error: string }
+  regime: RegimeStatus | Record<string, unknown>
+}
+
+export interface DailyPick {
+  id: number
+  pickDate: string
+  stockSymbol: string
+  stockName: string
+  buyScore: number
+  sellScore: number
+  totalScore: number
+  strategyType: string
+  regime: string
+  reasonText: string
+}
+
+export interface FactorScoresResponse {
+  scores: Record<string, FactorScore>
+}
+
+export interface ScanResultsResponse {
+  type: string
+  regime: RegimeStatus | Record<string, unknown>
+  picks: ScanResult[]
+  candidates: ScanResult[]
+  scanned: number
+  timestamp: string
+}
