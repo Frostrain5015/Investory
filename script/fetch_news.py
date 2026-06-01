@@ -257,66 +257,66 @@ def main():
         entries: list[dict] = []
 
         for source_name, url in RSS_FEEDS:
-        try:
-            raw = fetch_feed(url, proxies)
-            kept = 0
-            for entry in raw:
-                title   = entry.get("title", "").strip()
-                summary = entry.get("summary", entry.get("description", "")).strip()
-                link    = entry.get("link", "")
-                if not title or not link:
-                    continue
-                text = title + " " + summary
-                score, category = score_and_classify(text)
-                if score < 2:
-                    continue
-                country = detect_country(text)
-                entries.append({
-                    "title":        title[:500],
-                    "source":       source_name,
-                    "url":          link[:1000],
-                    "summary":      summary[:2000],
-                    "published_at": parse_published(entry),
-                    "category":     category,
-                    "score":        score,
-                    "country_code": country,
-                    "fetched_date": today,
-                })
-                kept += 1
-            print(f"[{source_name}] 获取 {len(raw)} 条，评分通过 {kept} 条")
-        except Exception as e:
-            print(f"[{source_name}] 拉取失败: {e}", file=sys.stderr)
+            try:
+                raw = fetch_feed(url, proxies)
+                kept = 0
+                for entry in raw:
+                    title   = entry.get("title", "").strip()
+                    summary = entry.get("summary", entry.get("description", "")).strip()
+                    link    = entry.get("link", "")
+                    if not title or not link:
+                        continue
+                    text = title + " " + summary
+                    score, category = score_and_classify(text)
+                    if score < 2:
+                        continue
+                    country = detect_country(text)
+                    entries.append({
+                        "title":        title[:500],
+                        "source":       source_name,
+                        "url":          link[:1000],
+                        "summary":      summary[:2000],
+                        "published_at": parse_published(entry),
+                        "category":     category,
+                        "score":        score,
+                        "country_code": country,
+                        "fetched_date": today,
+                    })
+                    kept += 1
+                print(f"[{source_name}] 获取 {len(raw)} 条，评分通过 {kept} 条")
+            except Exception as e:
+                print(f"[{source_name}] 拉取失败: {e}", file=sys.stderr)
 
-    # Top 20 by score
-    entries.sort(key=lambda x: x["score"], reverse=True)
-    top = entries[:20]
+        # Top 50 by score
+        entries.sort(key=lambda x: x["score"], reverse=True)
+        top = entries[:50]
 
-    # Translate titles to Chinese
-    proxy_url = cfg["proxy_url"] or "socks5h://127.0.0.1:7897"
-    for e in top:
-        e["title"] = translate(e["title"], proxy_url)
+        # Translate titles to Chinese
+        proxy_url = cfg["proxy_url"] or "socks5h://127.0.0.1:7897"
+        for e in top:
+            e["title"] = translate(e["title"], proxy_url)
 
-    # Replace today's existing entries with fresh translated data
-    cur.execute("DELETE FROM world_news WHERE fetched_date = %s", (today,))
+        # Replace today's existing entries with fresh translated data
+        cur.execute("DELETE FROM world_news WHERE fetched_date = %s", (today,))
 
-    inserted = 0
-    for e in top:
-        try:
-            cur.execute("""
-                INSERT INTO world_news
-                  (title, source, url, summary, published_at, category, score, country_code, fetched_date)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (e["title"], e["source"], e["url"], e["summary"],
-                  e["published_at"], e["category"], e["score"],
-                  e["country_code"], e["fetched_date"]))
-            inserted += 1
-        except Exception as ex:
-            print(f"写入失败: {ex}", file=sys.stderr)
+        inserted = 0
+        for e in top:
+            try:
+                cur.execute("""
+                    INSERT INTO world_news
+                      (title, source, url, summary, published_at, category, score, country_code, fetched_date)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (e["title"], e["source"], e["url"], e["summary"],
+                      e["published_at"], e["category"], e["score"],
+                      e["country_code"], e["fetched_date"]))
+                inserted += 1
+            except Exception as ex:
+                print(f"写入失败: {ex}", file=sys.stderr)
 
-    conn.commit()
+        conn.commit()
 
-    cur.execute("DELETE FROM world_news WHERE fetched_date < CURDATE() - INTERVAL 7 DAY")
-    conn.commit()
+        cur.execute("DELETE FROM world_news WHERE fetched_date < CURDATE() - INTERVAL 7 DAY")
+        conn.commit()
     finally:
         cur.close()
         conn.close()
