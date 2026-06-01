@@ -5,7 +5,7 @@ import type {
   StockSearchItem, PriceData, Portfolio,
   HoldingsMetricsResponse, QuantData, BacktestResult,
   HoldingCorrelation, CompareResult,
-  FactorScore, FactorBreakdown, ScanResult, RegimeStatus,
+  FactorBreakdown, RegimeStatus,
   FactorScoresResponse, ScanResultsResponse, DailyPick,
 } from '@/types'
 

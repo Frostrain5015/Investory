@@ -20,7 +20,6 @@ export function usePortfolioPreload() {
     triggered.current = true
 
     // Show immediate feedback
-    const statusId = Date.now()
     if (!location.pathname.startsWith('/research')) {
       bubble.show({
         title: '观澜 · 分析中',

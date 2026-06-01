@@ -1,15 +1,14 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
-import { useSettings } from '@/hooks/use-settings'
 import { usePortfolioPreload } from '@/hooks/use-portfolio-preload'
+import { useMorningGreeting } from '@/hooks/use-morning-greeting'
 import { useT } from '@/i18n/I18nContext'
 import LangSwitcher from '@/components/LangSwitcher'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
-  LogOut, TrendingUp, User, Search, Menu, Shield, FlaskConical, Sparkles
+  LogOut, TrendingUp, User, Search, Menu, Shield, FlaskConical
 } from 'lucide-react'
 import { createContext, useContext, useEffect, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
 import { searchStocks, getPortfolios } from '@/services/api'
 import ChatPanel from '@/pages/ChatPanel'
 import UpdateBanner from '@/components/UpdateBanner'
@@ -24,7 +23,7 @@ export default function Layout() {
   const { t, lang } = useT()
   const { username, portfolioId, isAdmin, setPortfolioName, logout } = useAuth()
   usePortfolioPreload()  // triggers background analysis on login
-  const { positiveHex } = useSettings()
+  useMorningGreeting()   // once-per-day greeting bubble
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<StockSearchItem[]>([])
   const [showDropdown, setShowDropdown] = useState(false)
@@ -36,6 +35,13 @@ export default function Layout() {
     setChatInitialMessage(message)
     setChatOpen(true)
   }
+
+  // Open chat panel in response to the morning greeting bubble's action click
+  useEffect(() => {
+    const handler = () => { setChatInitialMessage(''); setChatOpen(true) }
+    window.addEventListener('investory:open-chat', handler)
+    return () => window.removeEventListener('investory:open-chat', handler)
+  }, [])
 
   const navItems = [
     { to: '/dashboard', icon: LayoutDashboard, label: t.nav.dashboard },
@@ -152,24 +158,13 @@ export default function Layout() {
         </main>
       </div>
 
-      {/* Floating AI Button */}
-      <AnimatePresence>
-        {!chatOpen && (
-          <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
-            className="fixed right-6 z-40" style={{ bottom: `calc(1.5rem + env(safe-area-inset-bottom, 0px))` }}>
-            <button onClick={() => setChatOpen(true)}
-              className="w-11 h-11 rounded-full text-white shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 hover:scale-105 transition-all flex items-center justify-center"
-              style={{ background: 'linear-gradient(135deg, #863bff, #47bfff)' }}>
-              <Sparkles className="w-5 h-5" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Chat Panel */}
-      <AnimatePresence>
-        {chatOpen && <ChatPanel onClose={() => { setChatOpen(false); setChatInitialMessage('') }} initialMessage={chatInitialMessage} />}
-      </AnimatePresence>
+      {/* 观澜 — single morph shell, always rendered. Idle state is the
+          bottom-right pill; opens by smoothly morphing into the dock bar. */}
+      <ChatPanel
+        open={chatOpen}
+        onOpen={() => setChatOpen(true)}
+        onClose={() => { setChatOpen(false); setChatInitialMessage('') }}
+        initialMessage={chatInitialMessage} />
     </div>
     </ChatContext.Provider>
   )

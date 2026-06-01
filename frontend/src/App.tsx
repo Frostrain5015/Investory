@@ -24,8 +24,6 @@ import StockDetail from '@/pages/StockDetail'
 import PnlCalendar from '@/pages/PnlCalendar'
 import Portfolio from '@/pages/Portfolio'
 import Settings from '@/pages/Settings'
-import Quant from '@/pages/Quant'
-import Screener from '@/pages/Screener'
 import Research from '@/pages/Research'
 
 const isElectron = !!(window as any).electronAPI?.isDesktop

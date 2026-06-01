@@ -34,7 +34,7 @@ export default function FactorRadarChart({ factors, size = 200 }: Props) {
       <RadarChart data={data}>
         <PolarGrid stroke="#e2e8f0" />
         <PolarAngleAxis dataKey="group" tick={{ fontSize: 11, fill: '#64748b' }} />
-        <Tooltip formatter={(v: number) => v.toFixed(1)} />
+        <Tooltip formatter={(v) => (typeof v === 'number' ? v.toFixed(1) : String(v ?? ''))} />
         <Radar name="买入分" dataKey="buyScore" stroke="#22c55e" fill="#22c55e" fillOpacity={0.2} />
         <Radar name="卖出分" dataKey="sellScore" stroke="#ef4444" fill="#ef4444" fillOpacity={0.2} />
       </RadarChart>

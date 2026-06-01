@@ -1,13 +1,12 @@
 import { useState, useCallback, useEffect, useMemo } from 'react'
-import { Search, RefreshCw, ChevronDown, ChevronRight, SlidersHorizontal, X } from 'lucide-react'
+import { Search, ChevronDown, ChevronRight, SlidersHorizontal, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import MarketRegimeBadge from '@/components/MarketRegimeBadge'
 import FactorRadarChart from '@/components/FactorRadarChart'
 import { useToast } from '@/components/Toast'
-import { useSettings } from '@/hooks/use-settings'
 import {
-  BASE, getFactorScores, getFactorBreakdown, getScanResults,
+  BASE, getFactorBreakdown,
   getRegimeStatus, searchStocks,
 } from '@/services/api'
 import { displaySymbol, shortSymbol } from '@/lib/format'
@@ -35,7 +34,6 @@ const MARKETS = [
 ]
 
 export default function Screener({ embedded }: { embedded?: boolean }) {
-  const { positiveClass } = useSettings()
   const toast = useToast()
   const toastOk = (msg: string) => toast(msg, true)
   const toastErr = (msg: string) => toast(msg, false)
@@ -44,14 +42,14 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
   const [searchResults, setSearchResults] = useState<StockSearchItem[]>([])
   const [symbols, setSymbols] = useState<string[]>([])  // 已添加的股票代码
   const [scores, setScores] = useState<Record<string, FactorScore>>({})
-  const [loading, setLoading] = useState(false)
+  const [loading] = useState(false)
   const [regime, setRegime] = useState<RegimeStatus | null>(null)
 
   // Filters
   const [showFilters, setShowFilters] = useState(true)
   const [activeGroups, setActiveGroups] = useState<Set<string>>(new Set())
   const [minScore, setMinScore] = useState(0)
-  const [maxScore, setMaxScore] = useState(100)
+  const [maxScore] = useState(100)
   const [marketFilter, setMarketFilter] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('totalScore')
   const [sortAsc, setSortAsc] = useState(false)
@@ -127,6 +125,11 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
     if (minScore > 0) list = list.filter(s => (s.totalScore ?? 0) >= minScore)
     if (maxScore < 100) list = list.filter(s => (s.totalScore ?? 0) <= maxScore)
     list = [...list].sort((a, b) => {
+      if (sortKey === 'symbol') {
+        const va = a.symbol || ''
+        const vb = b.symbol || ''
+        return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va)
+      }
       const va = a[sortKey] ?? 0
       const vb = b[sortKey] ?? 0
       return sortAsc ? va - vb : vb - va
@@ -384,7 +387,7 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
               <div className="space-y-2">
                 {scanResults.map(p => (
                   <div key={p.code} className="flex items-center gap-4 p-3 bg-slate-50 rounded-lg">
-                    <span className="text-sm font-medium text-slate-900 w-16">{displaySymbol(p.code)}</span>
+                    <span className="text-sm font-medium text-slate-900 w-16">{displaySymbol(p.code, '')}</span>
                     <span className="text-sm text-slate-700 flex-1">{p.name}</span>
                     <span className={`text-sm font-medium ${(p.buyScore ?? 0) >= 70 ? 'text-emerald-600' : 'text-slate-600'}`}>
                       {p.buyScore?.toFixed(0) ?? '-'}分

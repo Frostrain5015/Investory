@@ -1,17 +1,23 @@
 import { useState, useRef, useEffect } from 'react'
-import { motion } from 'framer-motion'
-import { Sparkles, X, Send, RefreshCw, Trash2, Brain, Check, Loader2 } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Sparkles, X, Send, Trash2, Brain, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { SseEvent } from '@/types'
 import { useT } from '@/i18n/I18nContext'
+import { localizeToolName } from '@/i18n/toolNames'
 import { getCachedSuggestions, getSuggestionsPromise } from '@/services/aiPreload'
 import { BASE } from '@/services/api'
 
 interface PortfolioCard { portfolio_score: number; holdings_scored: number; top_holdings: { symbol: string; name: string; total_score: number }[]; bottom_holdings: { symbol: string; name: string; total_score: number }[]; group_exposure: Record<string, { buy_score: number }> }
 interface PicksCard { regime: string; picks: { code: string; name: string; total_score: number; buy_score: number; bullish: string[] }[]; scanned: number }
-interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard }
+/** A single step in the agent's reasoning trace. Either a chunk of native
+ * reasoning_content, or a tool call (with its eventual completion status). */
+export type TimelineStep =
+  | { kind: 'thinking'; text: string }
+  | { kind: 'tool'; name: string; done: boolean; error?: string }
+interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard }
 interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
 interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
 type ConfirmStatus = 'pending' | 'accepted' | 'refused'
@@ -20,17 +26,79 @@ let gMessages: Message[] = []
 let gListeners: (() => void)[] = []
 function notify() { gListeners.forEach(fn => fn()) }
 
-function ThinkingBlock({ text, done }: { text: string; done: boolean }) {
+/** Renders the agent's reasoning trace as a collapsible timeline:
+ * thinking paragraph → tool call → tool result indicator → next thinking → ...
+ * This mirrors how Codex / Claude Code surface their step-by-step process.  */
+function TimelineBlock({ steps, done, lang }: { steps: TimelineStep[]; done: boolean; lang: 'zh' | 'en' | 'hk' }) {
   const { t } = useT()
-  const [open, setOpen] = useState(false)
+  const [userToggled, setUserToggled] = useState(false)
+  const [open, setOpen] = useState(true)
+  useEffect(() => { if (!userToggled) setOpen(!done) }, [done, userToggled])
+  const onClick = () => { setUserToggled(true); setOpen(o => !o) }
+  if (steps.length === 0) return null
+  const toolCount = steps.filter(s => s.kind === 'tool').length
   return (
     <div className="mb-2">
-      <button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-500 transition-colors">
+      <button onClick={onClick} className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-500 transition-colors">
         <span className={`w-1.5 h-1.5 rounded-full ${done ? 'bg-slate-300' : 'bg-amber-400 animate-pulse'}`} />
         {done ? t.chat.thinking : t.chat.thinkingInProgress}
+        {toolCount > 0 && (
+          <span className="text-[10px] text-slate-400">· {toolCount} {lang === 'en' ? 'tools' : '次工具'}</span>
+        )}
         <span className="text-[9px] ml-0.5 opacity-50">{open ? '▲' : '▼'}</span>
       </button>
-      {open && <div className="mt-1.5 p-2.5 bg-slate-50 rounded-lg text-[11px] text-slate-500 whitespace-pre-wrap leading-relaxed border border-slate-100">{text.trim() || '...'}</div>}
+      {open && (
+        <div className="mt-1.5 p-2.5 bg-slate-50 rounded-lg text-[11px] leading-relaxed border-l-2 border-purple-200 max-h-64 overflow-y-auto space-y-2">
+          {steps.map((step, i) => {
+            if (step.kind === 'thinking') {
+              const text = step.text.trim()
+              if (!text) return null
+              return (
+                <div key={i} className="text-slate-500 whitespace-pre-wrap">{text}</div>
+              )
+            }
+            // tool step
+            const isWeb = step.name === 'web_search'
+            const labelClr = step.error
+              ? 'text-red-600'
+              : isWeb
+              ? 'text-sky-600'
+              : step.done
+              ? 'text-emerald-600'
+              : 'text-purple-500'
+            const dotClr = step.error
+              ? 'bg-red-400'
+              : isWeb
+              ? 'bg-sky-400'
+              : step.done
+              ? 'bg-emerald-400'
+              : 'bg-purple-400 animate-pulse'
+            return (
+              <div key={i} className="flex items-start gap-2">
+                <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${dotClr}`} />
+                <div className="flex-1">
+                  <div className={`flex items-center gap-1.5 ${labelClr}`}>
+                    {isWeb ? <Globe className="w-3 h-3" /> : <Wrench className="w-3 h-3" />}
+                    <span className="font-medium">{localizeToolName(step.name, lang)}</span>
+                    {!step.done && !step.error && (
+                      <span className="text-[10px] opacity-70">{lang === 'en' ? 'running…' : '调用中'}</span>
+                    )}
+                    {step.done && !step.error && (
+                      <Check className="w-3 h-3 opacity-70" />
+                    )}
+                    {step.error && (
+                      <span className="text-[10px] opacity-70">{lang === 'en' ? 'failed' : '失败'}</span>
+                    )}
+                  </div>
+                  {step.error && (
+                    <div className="mt-0.5 text-[10px] text-red-500 break-words">{step.error}</div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -45,18 +113,39 @@ function useChatMessages(): [Message[], (msgs: Message[]) => void] {
   return [gMessages, (msgs: Message[]) => { gMessages = msgs; notify() }]
 }
 
-export default function ChatPanel({ onClose, initialMessage }: { onClose: () => void; initialMessage?: string }) {
-  const { t } = useT()
+export type ChatMode = 'idle' | 'dock' | 'expanded'
+
+interface ChatPanelProps {
+  /** Controlled open/closed flag. When false, the shell renders as the idle pill. */
+  open?: boolean
+  onOpen?: () => void
+  onClose: () => void
+  initialMessage?: string
+  defaultMode?: 'dock' | 'expanded'
+}
+
+export default function ChatPanel({ open = true, onOpen, onClose, initialMessage, defaultMode = 'dock' }: ChatPanelProps) {
+  const { t, lang } = useT()
   const toast = useToast()
+  // 'idle' = collapsed to the floating button; otherwise dock/expanded.
+  const [internalMode, setInternalMode] = useState<'dock' | 'expanded'>(defaultMode)
+  const mode: ChatMode = open ? internalMode : 'idle'
+  const setMode = (m: 'dock' | 'expanded') => { setInternalMode(m); onOpen?.() }
   const [messages, setMessages] = useChatMessages()
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
-  const [toolMsg, setToolMsg] = useState('')
+  const [streamTimeline, setStreamTimeline] = useState<TimelineStep[]>([])
   const [deepThink, setDeepThink] = useState(false)
+  const [webSearch, setWebSearch] = useState(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
   const pendingCard = useRef<{ type: string; data: any } | null>(null)
   const streamAccum = useRef('')
+  // Authoritative timeline ref — frontend builds it from SSE events as the agent runs.
+  // We mutate the ref then mirror into state for re-renders so we don't lose ordering.
+  const timelineRef = useRef<TimelineStep[]>([])
+  const pushTimeline = () => setStreamTimeline([...timelineRef.current])
   const [askData, setAskData] = useState<{ question: string; options: string[] } | null>(null)
   const [confirmData, setConfirmData] = useState<ConfirmData | null>(null)
   const [confirmStatus, setConfirmStatus] = useState<ConfirmStatus | null>(null)
@@ -66,6 +155,62 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { if (initialMessage) setInput(initialMessage) }, [initialMessage])
+
+  // ESC: collapse from expanded → dock, or close dock if already there
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (mode === 'expanded') setMode('dock')
+      else if (!streaming && !input) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mode, streaming, input, onClose])
+
+  // Auto-grow the textarea up to ~8 lines, then scroll inside it
+  useEffect(() => {
+    const ta = textareaRef.current
+    if (!ta) return
+    ta.style.height = '0px'
+    const next = Math.min(ta.scrollHeight, 200)
+    ta.style.height = next + 'px'
+  }, [input])
+
+  // Replay persisted history on mount, if nothing in memory yet
+  useEffect(() => {
+    if (gMessages.length > 0) return
+    fetch(`${BASE}/api/ai/history`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => {
+        if (Array.isArray(d.messages) && d.messages.length > 0) {
+          const restored: Message[] = d.messages.map((m: { role: string; content: string; thinking?: string }) => {
+            // The backend stores the structured timeline as JSON in the `thinking` field.
+            // Older rows contain a raw thinking string — handle both shapes.
+            let timeline: TimelineStep[] | undefined
+            let thinkingLegacy: string | undefined
+            const raw = m.thinking?.trim()
+            if (raw) {
+              if (raw.startsWith('[')) {
+                try {
+                  const parsed = JSON.parse(raw)
+                  if (Array.isArray(parsed)) timeline = parsed as TimelineStep[]
+                } catch { thinkingLegacy = raw }
+              } else {
+                thinkingLegacy = raw
+              }
+            }
+            return {
+              role: m.role === 'user' ? 'user' : m.role === 'assistant' ? 'assistant' : 'system',
+              content: m.content,
+              ...(timeline ? { timeline } : {}),
+              ...(thinkingLegacy ? { thinking: thinkingLegacy } : {}),
+            }
+          })
+          setMessages(restored)
+        }
+      })
+      .catch(() => {})
+  }, [])
 
   useEffect(() => {
     const cached = getCachedSuggestions()
@@ -78,7 +223,7 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
     }).catch(() => { setSuggestions([...t.chat.suggestions]) })
   }, [])
 
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText])
+  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText, streamTimeline])
 
   async function send(textOverride?: string) {
     const text = (textOverride !== undefined ? textOverride : input).trim()
@@ -86,9 +231,9 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
     setInput('')
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
-    setStreaming(true); setStreamText(''); streamAccum.current = ''; setToolMsg(''); setAskData(null); setConfirmData(null); setConfirmStatus(null)
+    setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; setAskData(null); setConfirmData(null); setConfirmStatus(null)
     try {
-      const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, deepThink }) })
+      const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, deepThink, webSearch }) })
       if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
       if (esRef.current) esRef.current.close()
       const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
@@ -99,15 +244,72 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
       es.addEventListener('confirm', (e) => {
         try { const raw = JSON.parse(e.data); const d = raw.data || raw; const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d; if (parsed?.items?.length > 0) { setConfirmData(parsed); setConfirmStatus('pending') } } catch {}
       })
-      es.addEventListener('tool', (e) => { const d: SseEvent = JSON.parse(e.data); setToolMsg(d.name || '') })
-      es.addEventListener('token', (e) => { const d: SseEvent = JSON.parse(e.data); setToolMsg(''); streamAccum.current += (d.msg || ''); setStreamText(streamAccum.current) })
+      es.addEventListener('tool', (e) => {
+        const d: SseEvent = JSON.parse(e.data)
+        const name = d.name || ''
+        if (!name) return
+        // A new tool call closes any open thinking segment and starts a tool step
+        timelineRef.current = [...timelineRef.current, { kind: 'tool', name, done: false }]
+        pushTimeline()
+      })
+      es.addEventListener('tool_end', (e) => {
+        const d: SseEvent = JSON.parse(e.data)
+        const name = d.name || ''
+        // Find the most recent matching tool step and mark it done
+        for (let i = timelineRef.current.length - 1; i >= 0; i--) {
+          const s = timelineRef.current[i]
+          if (s.kind === 'tool' && s.name === name && !s.done) {
+            timelineRef.current[i] = { ...s, done: true }
+            break
+          }
+        }
+        pushTimeline()
+      })
+      es.addEventListener('tool_fail', (e) => {
+        const d = JSON.parse(e.data) as { name?: string; error?: string }
+        const name = d.name || ''
+        const err = d.error || '工具执行失败'
+        for (let i = timelineRef.current.length - 1; i >= 0; i--) {
+          const s = timelineRef.current[i]
+          if (s.kind === 'tool' && s.name === name && !s.done) {
+            timelineRef.current[i] = { ...s, done: true, error: err }
+            break
+          }
+        }
+        pushTimeline()
+      })
+      es.addEventListener('token', (e) => { const d: SseEvent = JSON.parse(e.data); streamAccum.current += (d.msg || ''); setStreamText(streamAccum.current) })
+      es.addEventListener('reasoning', (e) => {
+        const d: SseEvent = JSON.parse(e.data)
+        const chunk = d.msg || ''
+        if (!chunk) return
+        // Append to the last thinking step, or open a new one if the last step is a tool
+        const last = timelineRef.current[timelineRef.current.length - 1]
+        if (last && last.kind === 'thinking') {
+          timelineRef.current[timelineRef.current.length - 1] = { ...last, text: last.text + chunk }
+        } else {
+          timelineRef.current = [...timelineRef.current, { kind: 'thinking', text: chunk }]
+        }
+        pushTimeline()
+      })
       es.addEventListener('done', () => {
-        const raw = streamAccum.current; streamAccum.current = ''; setToolMsg(''); setStreamText('')
-        if (!raw.trim()) { setStreaming(false); es.close(); esRef.current = null; return }
-        const thinkMatch = raw.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/)
-        const thinking = thinkMatch ? thinkMatch[1].trim() : undefined
-        const content = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').trim()
-        const msg: Message = { role: 'assistant', content: content || raw, thinking }
+        const raw = streamAccum.current
+        const finalTimeline = [...timelineRef.current]
+        streamAccum.current = ''; timelineRef.current = []
+        setStreamText(''); setStreamTimeline([])
+        const hasTimeline = finalTimeline.length > 0
+        if (!raw.trim() && !hasTimeline) { setStreaming(false); es.close(); esRef.current = null; return }
+        // Native reasoning channel takes precedence; fall back to <think> tag for legacy/custom providers
+        let content = raw
+        let timelineOut: TimelineStep[] | undefined = hasTimeline ? finalTimeline : undefined
+        if (!timelineOut) {
+          const thinkMatch = raw.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/)
+          if (thinkMatch) {
+            timelineOut = [{ kind: 'thinking', text: thinkMatch[1].trim() }]
+            content = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').trim()
+          }
+        }
+        const msg: Message = { role: 'assistant', content: content.trim() || raw, timeline: timelineOut }
         const s = pendingStrategy.current
         if (s) { msg.hasCode = true; msg.strategyName = s.name; msg.strategyDesc = s.desc; msg.strategyCode = s.code; pendingStrategy.current = null }
         const card = pendingCard.current
@@ -126,19 +328,34 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
           if (raw) { const d: SseEvent = JSON.parse(raw); errMsg = d.msg || t.chat.errorUnknown }
         } catch {}
         setMessages([...newMessages, { role: 'system', content: `⚠ ${errMsg}` }])
-        setStreaming(false); setToolMsg(''); es.close(); esRef.current = null
+        setStreaming(false); es.close(); esRef.current = null
       })
       es.onerror = () => {
         if (!streamAccum.current) {
           setMessages([...newMessages, { role: 'system', content: `⚠ ${t.chat.errorNetwork}` }])
         }
-        setStreaming(false); setToolMsg(''); es.close(); esRef.current = null
+        setStreaming(false); es.close(); esRef.current = null
       }
     } catch (e: unknown) { setStreamText(`${t.chat.errorPrefix} ${e instanceof Error ? e.message : String(e)}`); setStreaming(false) }
   }
 
   function clearChat() { gMessages = []; setMessages([]); setStreamText(''); fetch(`${BASE}/api/ai/clear`, { method: 'POST', credentials: 'include' }).catch(() => {}) }
-  function regenerate() { if (messages.length < 2) return; const trimmed = messages.slice(0, -1); setMessages(trimmed); const lastUser = trimmed.filter(m => m.role === 'user').pop(); if (lastUser) send(lastUser.content) }
+  function stopGeneration() {
+    if (esRef.current) { esRef.current.close(); esRef.current = null }
+    fetch(`${BASE}/api/ai/cancel`, { method: 'POST', credentials: 'include' }).catch(() => {})
+    // Persist whatever partial text + timeline we have so it doesn't disappear
+    const partial = streamAccum.current.trim()
+    const partialTimeline = [...timelineRef.current]
+    streamAccum.current = ''; timelineRef.current = []
+    setStreamText(''); setStreamTimeline([]); setStreaming(false)
+    if (partial || partialTimeline.length > 0) {
+      setMessages([...messages, {
+        role: 'assistant',
+        content: partial || '（已停止）',
+        timeline: partialTimeline.length > 0 ? partialTimeline : undefined,
+      }])
+    }
+  }
   function handleKeyDown(e: React.KeyboardEvent) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }
 
   async function handleConfirmAccept() {
@@ -157,33 +374,55 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
   }
 
   const gradientStyle = { background: 'linear-gradient(135deg, #863bff, #47bfff)' }
+  const hasContent = messages.length > 0 || streaming
 
-  return (
-    <motion.div initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }} transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-      className="fixed right-0 top-0 bottom-0 w-[min(380px,100vw)] bg-white border-l border-slate-200 shadow-2xl z-50 flex flex-col pb-safe">
-
-      {/* Gradient accent line */}
-      <div className="h-0.5 shrink-0" style={gradientStyle} />
-
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-md flex items-center justify-center" style={gradientStyle}>
-            <Sparkles className="w-3 h-3 text-white" />
-          </div>
-          <span className="text-sm font-semibold text-slate-800 tracking-tight">观澜</span>
-          <span className="text-[9px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">AI</span>
+  const headerNode = (
+    <div className="flex items-center justify-between px-4 py-2.5 shrink-0">
+      <div className="flex items-center gap-2">
+        <div className="w-6 h-6 rounded-md flex items-center justify-center" style={gradientStyle}>
+          <Sparkles className="w-3 h-3 text-white" />
         </div>
-        <div className="flex items-center gap-0.5">
-          <button onClick={() => setDeepThink(!deepThink)} className={`p-1.5 rounded-md transition-colors ${deepThink ? 'text-purple-500' : 'text-slate-400 hover:text-slate-500'}`} title={t.chat.deepThink}><Brain className="w-3.5 h-3.5" /></button>
-          {messages.length >= 2 && !streaming && <button onClick={regenerate} className="p-1.5 rounded-md text-slate-400 hover:text-slate-500 transition-colors" title={t.chat.regenerate}><RefreshCw className="w-3.5 h-3.5" /></button>}
-          <button onClick={clearChat} className="p-1.5 rounded-md text-slate-400 hover:text-slate-500 transition-colors" title={t.chat.clearChat}><Trash2 className="w-3.5 h-3.5" /></button>
-          <button onClick={onClose} className="p-1.5 rounded-md text-slate-400 hover:text-slate-500 transition-colors"><X className="w-4 h-4" /></button>
-        </div>
+        <span className="text-sm font-semibold text-slate-800 tracking-tight">观澜</span>
+        <span className="text-[9px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">AI</span>
       </div>
+      <div className="flex items-center gap-0.5">
+        <button onClick={clearChat} className="p-1.5 rounded-md text-slate-400 hover:text-slate-500 transition-colors" title={t.chat.clearChat}><Trash2 className="w-3.5 h-3.5" /></button>
+        <button onClick={() => setMode(mode === 'expanded' ? 'dock' : 'expanded')}
+          className="p-1.5 rounded-md text-slate-400 hover:text-slate-500 transition-colors"
+          title={mode === 'expanded' ? t.chat.collapse : t.chat.expand}>
+          {mode === 'expanded' ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+        </button>
+        <button onClick={onClose} className="p-1.5 rounded-md text-slate-400 hover:text-slate-500 transition-colors"><X className="w-4 h-4" /></button>
+      </div>
+    </div>
+  )
 
-      {/* Messages */}
-      <div className="flex-1 overflow-auto px-4 py-4 space-y-3">
+  const inputBar = (
+    <div className="flex items-end gap-2">
+      <div className="flex items-center gap-0.5 pb-1">
+        <button onClick={() => setDeepThink(!deepThink)} className={`p-1.5 rounded-md transition-colors ${deepThink ? 'text-purple-500' : 'text-slate-400 hover:text-slate-500'}`} title={t.chat.deepThink}><Brain className="w-4 h-4" /></button>
+        <button onClick={() => setWebSearch(!webSearch)} className={`p-1.5 rounded-md transition-colors ${webSearch ? 'text-sky-500' : 'text-slate-400 hover:text-slate-500'}`} title={t.chat.webSearch}><Globe className="w-4 h-4" /></button>
+      </div>
+      <textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+        placeholder={t.chat.placeholder} rows={1} disabled={streaming}
+        className="flex-1 resize-none min-h-[40px] max-h-[200px] rounded-xl bg-transparent px-3 py-2.5 text-sm leading-snug focus:outline-none disabled:opacity-60 placeholder:text-slate-400 overflow-y-auto" />
+      {streaming ? (
+        <button onClick={stopGeneration} title={t.chat.stop}
+          className="w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0 bg-slate-700 hover:bg-slate-800">
+          <Square className="w-3.5 h-3.5 text-white fill-white" />
+        </button>
+      ) : (
+        <button onClick={() => send()} disabled={!input.trim()}
+          className="w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0 disabled:opacity-30"
+          style={input.trim() ? gradientStyle : { background: '#e2e8f0', color: '#94a3b8' }}>
+          <Send className="w-4 h-4 text-white" />
+        </button>
+      )}
+    </div>
+  )
+
+  const messagesArea = (
+    <div className="flex-1 overflow-auto px-4 py-4 space-y-3">
         {messages.length === 0 && !streaming && (
           <div className="text-center py-10">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-3" style={{ background: 'linear-gradient(135deg, rgba(134,59,255,0.12), rgba(71,191,255,0.12))' }}>
@@ -209,7 +448,9 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
                 ? 'text-white' : 'bg-slate-50 text-slate-700 border border-slate-100'
             }`} style={m.role === 'user' ? gradientStyle : undefined}>
               {m.role === 'assistant' ? <>
-                {m.thinking && <ThinkingBlock text={m.thinking} done={true} />}
+                {m.timeline && m.timeline.length > 0
+                  ? <TimelineBlock steps={m.timeline} done={true} lang={lang} />
+                  : m.thinking && <TimelineBlock steps={[{ kind: 'thinking', text: m.thinking }]} done={true} lang={lang} />}
                 <div className="prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-100 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                     code: ({ children, className, ...props }) => {
@@ -240,16 +481,41 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
         {streaming && (
           <div className="flex justify-start">
             <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${streamText.startsWith('⚠') ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-700 border border-slate-100'}`}>
-              {streamText ? (() => {
-                const thinkMatch = streamText.match(/<think(?:ing)?>([\s\S]*?)(<\/think(?:ing)?>|$)/)
-                const thinking = thinkMatch ? thinkMatch[1] : ''
-                const after = streamText.replace(/<think(?:ing)?>[\s\S]*?(<\/think(?:ing)?>|$)/, '').trim()
+              {(() => {
+                // Fold <think> XML fallback into the live timeline so providers
+                // that don't emit reasoning_content still get a step-by-step trace.
+                let liveSteps = streamTimeline
+                let after = streamText
+                if (liveSteps.length === 0 && streamText) {
+                  const thinkMatch = streamText.match(/<think(?:ing)?>([\s\S]*?)(<\/think(?:ing)?>|$)/)
+                  if (thinkMatch) {
+                    liveSteps = [{ kind: 'thinking', text: thinkMatch[1] }]
+                    after = streamText.replace(/<think(?:ing)?>[\s\S]*?(<\/think(?:ing)?>|$)/, '').trim()
+                  }
+                }
+                const reasoningDone = !!after.trim()
+                // Idle pulse only when nothing has streamed yet
+                const showThinkingPending = deepThink && liveSteps.length === 0 && !after.trim()
+                const showGenericPending = !deepThink && liveSteps.length === 0 && !after.trim()
                 return (<>
-                  {thinking && <ThinkingBlock text={thinking} done={/<\/think(?:ing)?>/.test(streamText)} />}
+                  {showThinkingPending && (
+                    <div className="flex items-center gap-1.5 text-[12px] text-purple-500 mb-1.5">
+                      <Brain className="w-3.5 h-3.5 animate-pulse" />
+                      <span className="font-medium">{t.chat.deepThinkingPending}</span>
+                      <span className="inline-flex gap-0.5 ml-0.5">
+                        <span className="w-1 h-1 rounded-full bg-purple-400 animate-bounce" />
+                        <span className="w-1 h-1 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0.15s' }} />
+                        <span className="w-1 h-1 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0.3s' }} />
+                      </span>
+                    </div>
+                  )}
+                  {liveSteps.length > 0 && <TimelineBlock steps={liveSteps} done={reasoningDone} lang={lang} />}
+                  {showGenericPending && (
+                    <span className="inline-flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>
+                  )}
                   {after && <div className="prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded"><ReactMarkdown remarkPlugins={[remarkGfm]}>{after}</ReactMarkdown></div>}
                 </>)
-              })() : (!toolMsg && <span className="inline-flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>)}
-              {toolMsg && <div className="flex items-center gap-2 text-xs text-slate-400 mt-2 pt-2 border-t border-slate-200"><span className="w-3.5 h-3.5 border-2 border-slate-300 border-t-slate-500 rounded-full animate-spin" />{toolMsg}</div>}
+              })()}
               {askData && (
                 <div className="mt-3 pt-3 border-t border-slate-200 space-y-1.5">
                   <p className="text-xs text-slate-500">{askData.question}</p>
@@ -303,21 +569,152 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
         )}
         <div ref={scrollRef} />
       </div>
+  )
 
-      {/* Input */}
-      <div className="px-4 py-3 border-t border-slate-100 shrink-0 bg-white">
-        <div className="flex items-center gap-2">
-          <textarea value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-            placeholder={t.chat.placeholder} rows={1} disabled={streaming}
-            className="flex-1 resize-none h-10 max-h-24 rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/10 focus:border-purple-300 disabled:bg-slate-50 placeholder:text-slate-400" />
-          <button onClick={() => send()} disabled={!input.trim() || streaming}
-            className="w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0 disabled:opacity-30"
-            style={input.trim() ? gradientStyle : { background: '#e2e8f0', color: '#94a3b8' }}>
-            <Send className="w-4 h-4 text-white" />
-          </button>
-        </div>
+  // ── Single morph shell: idle ↔ dock ↔ expanded ─────────────────────
+  // The shell is ALWAYS the same motion.div. framer-motion's `layout` prop
+  // measures rect changes and animates between forms — so the button truly
+  // grows into the dock bar, and dock grows into expanded, with no mount/
+  // unmount in between.
+  const isIdle = mode === 'idle'
+  const isExpanded = mode === 'expanded'
+  const dockBottom = 'calc(1rem + env(safe-area-inset-bottom, 0px))'
+
+  // Per-mode size + corner radius. layout prop animates these.
+  // Dock with content has a hard ceiling so the bubble can't grow past 60vh —
+  // overflow scrolls inside the messages area instead of pushing the top up forever.
+  const shellSize: React.CSSProperties = isIdle
+    ? { width: 60, height: 60, borderRadius: 9999 }
+    : isExpanded
+    ? { width: 'min(720px, calc(100vw - 32px))', height: 'min(80vh, 720px)', borderRadius: 24 }
+    : hasContent
+    ? { width: 'min(720px, calc(100vw - 24px))', height: 'min(60vh, 540px)', borderRadius: 20 }
+    : { width: 'min(720px, calc(100vw - 24px))', height: 'auto', borderRadius: 20 }
+
+  // Per-mode background. Idle = gradient pill. Otherwise white shell.
+  const shellBg: React.CSSProperties = isIdle
+    ? { background: 'linear-gradient(135deg, #863bff, #47bfff)' }
+    : { background: 'rgba(255,255,255,0.96)' }
+
+  const morphTransition = { type: 'spring' as const, stiffness: 360, damping: 32, mass: 0.85 }
+
+  // Wrapper centering. Idle pins bottom-right (no centering).
+  // Dock/expanded center horizontally; on lg+ shift by half sidebar (120px).
+  const wrapperPosClass = isIdle
+    ? 'fixed z-50'
+    : isExpanded
+    ? 'fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 lg:translate-x-[calc(120px-50%)]'
+    : 'fixed left-1/2 z-50 -translate-x-1/2 lg:translate-x-[calc(120px-50%)]'
+  const wrapperStyle: React.CSSProperties = isIdle
+    ? { right: '1.5rem', bottom: `calc(1.5rem + env(safe-area-inset-bottom, 0px))` }
+    : isExpanded
+    ? {}
+    : { bottom: dockBottom }
+
+  const showInnerContent = !isIdle
+
+  return (
+    <>
+      {/* Backdrop only in expanded mode — independent fade, not in morph subtree */}
+      <AnimatePresence>
+        {isExpanded && (
+          <motion.div
+            key="guanlan-backdrop"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            onClick={() => setMode('dock')}
+            className="fixed inset-0 z-40 bg-slate-900/30"
+            style={{ backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }} />
+        )}
+      </AnimatePresence>
+
+      {/* Centering wrapper — utility classes own translateX so motion is free */}
+      <div className={wrapperPosClass} style={wrapperStyle}>
+      <motion.div
+        layout
+        onClick={isIdle ? () => setMode(defaultMode) : undefined}
+        style={{ ...shellSize, ...shellBg, willChange: 'transform, width, height, border-radius' }}
+        transition={morphTransition}
+        className={`ring-1 shadow-2xl overflow-hidden flex flex-col pb-safe ${
+          isIdle
+            ? 'ring-white/20 shadow-purple-500/30 cursor-pointer hover:scale-105 active:scale-95 transition-transform items-center justify-center'
+            : 'ring-slate-200/70 shadow-purple-500/15'
+        }`}>
+
+        {/* Idle state: a single Sparkles centered in the pill.
+            Uses AnimatePresence so it fades in only when we land back on idle,
+            keeping the shell's layout animation uncluttered. */}
+        <AnimatePresence>
+          {isIdle && (
+            <motion.div key="idle-icon"
+              initial={{ opacity: 0, scale: 0.6 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.6 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="absolute inset-0 flex items-center justify-center text-white pointer-events-none">
+              <Sparkles className="w-6 h-6" />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Active state content. Wrapped in a single AnimatePresence so the
+            whole inner UI fades in/out as one piece. layout="position" on
+            children keeps internal reordering smooth. */}
+        <AnimatePresence>
+          {showInnerContent && (
+            <motion.div key="shell-content"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.22, ease: 'easeOut', delay: isExpanded ? 0.05 : 0.08 }}
+              className="flex flex-col h-full w-full">
+
+              {/* Gradient hairline */}
+              <div className="h-0.5 shrink-0" style={gradientStyle} />
+
+              {/* Header — only when there's content or expanded */}
+              {(hasContent || isExpanded) && headerNode}
+
+              {/* Messages area: when content exists OR we're expanded */}
+              {(hasContent || isExpanded) && (
+                <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                  {messagesArea}
+                </div>
+              )}
+
+              {/* Brand strip — dock idle (empty, but open) only */}
+              {!hasContent && !isExpanded && (
+                <div className="flex items-center justify-between px-4 pt-2 pb-1">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="w-3 h-3" style={{ color: '#863bff' }} />
+                    <span className="text-[11px] font-semibold text-slate-700 tracking-tight">观澜</span>
+                    <span className="text-[9px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">AI</span>
+                  </div>
+                  <div className="flex items-center gap-0.5">
+                    <button onClick={() => setMode('expanded')}
+                      className="text-[10px] text-slate-400 hover:text-purple-500 transition-colors px-1.5 py-0.5 rounded hover:bg-purple-50 inline-flex items-center gap-1"
+                      title={t.chat.expand}>
+                      <Maximize2 className="w-3 h-3" />展开
+                    </button>
+                    <button onClick={onClose}
+                      className="text-slate-300 hover:text-slate-500 transition-colors p-1"
+                      title="收起">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Input bar — bottom of every active state */}
+              <div className={`shrink-0 px-3 py-2 ${isExpanded || hasContent ? 'border-t border-slate-100 bg-white' : ''}`}>
+                {inputBar}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
       </div>
-    </motion.div>
+    </>
   )
 }
 

@@ -303,7 +303,6 @@ export default function Holdings() {
                     const chg = Number(item.changeToday ?? 0)
                     const chgPct = Number(item.changePctToday ?? 0)
                     const up = chg >= 0
-                    const m = metrics[String(item.stock_id)]
                     return (
                       <div key={`${item.stock_id}-${item.id}`} className="px-4 py-3">
                         <div className="flex items-center justify-between mb-1.5">

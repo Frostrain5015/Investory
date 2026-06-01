@@ -109,7 +109,7 @@ export default function Settings() {
   const AI_PRESETS: Record<string, { label: string; baseUrl: string; model: string }> = {
     bailian:   { label: t.settings.presetBailian, baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
     openai:    { label: 'OpenAI',                  baseUrl: '',                                                  model: 'gpt-4o-mini' },
-    deepseek:  { label: 'DeepSeek',                baseUrl: 'https://api.deepseek.com/v1',                       model: 'deepseek-chat' },
+    deepseek:  { label: 'DeepSeek',                baseUrl: 'https://api.deepseek.com/v1',                       model: 'deepseek-v4-flash' },
     moonshot:  { label: 'Moonshot',                baseUrl: 'https://api.moonshot.cn/v1',                        model: 'moonshot-v1-8k' },
     zhipu:     { label: t.settings.presetZhipu,    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',              model: 'glm-4-flash' },
     anthropic: { label: 'Anthropic',               baseUrl: '',                                                  model: 'claude-haiku-4-5' },
@@ -164,7 +164,7 @@ export default function Settings() {
 
   const modelPlaceholder = aiProvider === 'openai'    ? 'e.g. gpt-4o-mini / gpt-4o'
     : aiProvider === 'anthropic' ? 'e.g. claude-haiku-4-5'
-    : aiProvider === 'deepseek'  ? 'e.g. deepseek-chat'
+    : aiProvider === 'deepseek'  ? 'e.g. deepseek-v4-flash / deepseek-v4-pro'
     : t.settings.aiModel
 
   return (

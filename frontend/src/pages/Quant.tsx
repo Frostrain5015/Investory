@@ -3,8 +3,9 @@ import { BASE, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, g
 import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useSettings } from '@/hooks/use-settings'
+import { useChatContext } from '@/components/Layout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, Activity, ChevronDown, ChevronRight } from 'lucide-react'
+import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, Activity, ChevronDown, ChevronRight, Sparkles } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { displaySymbol } from '@/lib/format'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, Legend, RadarChart, Radar, PolarGrid, PolarAngleAxis } from 'recharts'
@@ -83,8 +84,8 @@ const GROUP_COLORS: Record<string, string> = {
 }
 
 export function RiskSection() {
-  const { t } = useT()
-  const toast = useToast()
+  useT()
+  useToast()
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [progress, setProgress] = useState('')
@@ -148,7 +149,6 @@ export function RiskSection() {
   const topHoldings: any[] = data?.top_holdings || []
   const bottomHoldings: any[] = data?.bottom_holdings || []
   const groupExposure: Record<string, any> = data?.group_exposure || {}
-  const factorExposure: Record<string, any> = data?.factor_exposure || {}
   const portfolioScore = data?.portfolio_score ?? 0
 
   // Normalize group bars: find max buy_score, scale all relative to it
@@ -232,7 +232,7 @@ export function RiskSection() {
             <p className="text-xs text-slate-400 mb-1">🟢 评分最高</p>
             {topHoldings.map((h: any) => (
               <div key={h.symbol || h.code} className="flex items-center gap-2 text-xs">
-                <span className="font-medium text-slate-900 w-16">{displaySymbol(h.symbol || h.code)}</span>
+                <span className="font-medium text-slate-900 w-16">{displaySymbol(h.symbol || h.code, h.market || '')}</span>
                 <span className="text-slate-500 truncate flex-1">{h.name}</span>
                 <span className={`font-medium ${(h.total_score ?? 0) >= 60 ? 'text-emerald-600' : 'text-amber-600'}`}>{(h.total_score ?? 0).toFixed(0)}分</span>
               </div>
@@ -241,7 +241,7 @@ export function RiskSection() {
             <p className="text-xs text-slate-400 mb-1 mt-2">🔴 评分最低</p>
             {bottomHoldings.map((h: any) => (
               <div key={h.symbol || h.code} className="flex items-center gap-2 text-xs">
-                <span className="font-medium text-slate-900 w-16">{displaySymbol(h.symbol || h.code)}</span>
+                <span className="font-medium text-slate-900 w-16">{displaySymbol(h.symbol || h.code, h.market || '')}</span>
                 <span className="text-slate-500 truncate flex-1">{h.name}</span>
                 <span className="font-medium text-red-500">{(h.total_score ?? 0).toFixed(0)}分</span>
               </div>
@@ -267,7 +267,7 @@ export function RiskSection() {
               <tbody>
                 {(data.all_holdings || []).map((h: any) => (
                   <tr key={h.symbol || h.code} className="border-b border-slate-50">
-                    <td className="py-1.5 font-medium text-slate-900">{displaySymbol(h.symbol || h.code)}</td>
+                    <td className="py-1.5 font-medium text-slate-900">{displaySymbol(h.symbol || h.code, h.market || '')}</td>
                     <td className="py-1.5 text-slate-600">{h.name}</td>
                     <td className="py-1.5 text-right text-slate-500">{(h.weight ?? 0).toFixed(1)}%</td>
                     <td className={`py-1.5 text-right font-bold ${(h.total_score ?? 0) >= 60 ? 'text-emerald-600' : (h.total_score ?? 0) >= 40 ? 'text-amber-600' : 'text-red-500'}`}>{(h.total_score ?? 0).toFixed(1)}</td>
@@ -289,6 +289,7 @@ export function BacktestSection() {
   const q = t.quant
   const confirm = useConfirm()
   const toast = useToast()
+  const { openChatWith } = useChatContext()
   const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
 
   const ENTRY_INDICATORS = useMemo(() => buildEntryIndicators(t), [t])
@@ -708,6 +709,16 @@ export function BacktestSection() {
               <div><span className="text-slate-400">{q.avgWin}</span> <span className={`font-bold ${positiveClass}`}>{metrics.avgProfitPct != null ? `${metrics.avgProfitPct}%` : '—'}</span></div>
               <div><span className="text-slate-400">{q.avgLoss}</span> <span className={`font-bold ${negativeClass}`}>{metrics.avgLossPct != null ? `${metrics.avgLossPct}%` : '—'}</span></div>
             </div>
+            {selectedId != null && (
+              <div className="mt-3 pt-3 border-t border-slate-100 flex justify-end">
+                <button onClick={() => openChatWith(`请帮我优化回测 #${selectedId} 的策略。先调用 suggest_strategy_optimizations 工具诊断弱点，然后给我 3-5 个具体的参数变体方向，每个说明改动了什么、预期改善哪个指标、潜在新风险。`)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-opacity hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #863bff, #47bfff)' }}>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  让观澜帮我优化
+                </button>
+              </div>
+            )}
             {metrics.wfStability != null && (
               <div className="mt-4 pt-4 border-t border-amber-100">
                 <div className="flex items-center gap-2 mb-3">

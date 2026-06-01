@@ -33,6 +33,23 @@ _TRANSACTION_WRITE_SIGNALS = [
     "buy", "sell", "add", "delete", "remove", "update", "edit",
 ]
 
+# Keywords that signal the user is asking about current events / news / external info
+# — i.e. web search should fire even without the explicit toggle.
+_WEB_SEARCH_TRIGGERS = [
+    "今天", "今日", "刚刚", "最近", "最新", "近期", "本周", "上周", "昨天", "昨夜",
+    "新闻", "消息", "传闻", "公告", "事件", "热搜",
+    "为什么涨", "为什么跌", "原因", "解释下",
+    "现在", "目前", "当前", "实时",
+    "news", "today", "recent", "latest", "happen", "happening", "why is",
+]
+
+def _should_use_web_search(messages: list) -> bool:
+    """Heuristic: enable web_search tool when the latest user message clearly needs fresh facts."""
+    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    if not last_user: return False
+    text = str(last_user.get("content", "")).lower()
+    return any(k.lower() in text for k in _WEB_SEARCH_TRIGGERS)
+
 def _is_complex_query(messages: list) -> bool:
     """Return True if the latest user message warrants the full model."""
     last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
@@ -61,28 +78,39 @@ def build_system_prompt(kb: dict) -> str:
         for p in kb.get("core_principles", [])
     )
     metrics_text = "\n".join(f"- **{k}**: {v}" for k, v in kb.get("key_metrics_guide", {}).items())
-    return f"""你是「观澜」（Horizon），Investory 内置的分析助手。风格：冷静、专业、简洁。不寒暄，不恭维，不废话，不主动给建议。用数据说话。
+    safety = kb.get("safety_net", {})
+    safety_text = "\n".join(f"- **{k}**: {v}" for k, v in safety.items())
+    return f"""你是「观澜」（Horizon），Investory 内置的金融分析助理。风格：冷静、专业、简洁。不寒暄，不恭维，不废话。用数据说话。
 
-你遵循价值投资框架。参考原则：
+【定位】
+风格中立的投资助理。价值、成长、动量、趋势、量化、套利、对冲、被动定投——所有主流方法论都在你的知识范围内。不预设用户偏好，按用户当前持仓特征和提问意图判断其风格倾向，在其语境内回答。不向用户布道任何特定流派。
+
+【核心分析框架】
 {principles_text}
 
-指标解读：
+【指标解读参考】
 {metrics_text}
 
-工具调用规则：
-- ⚠ 策略生成铁律：用户要求写策略/生成策略/构建策略/设计策略时，第一轮对话必须且只能调用 generate_strategy 工具，不得输出任何文字。错误示范：先说"好的我来生成"再调用工具。正确示范：直接调用工具，参数包含完整Python代码。工具调用成功后，再简短告知用户"已生成"。如果你先输出文字再调用工具，用户将看不到保存按钮，这是不可接受的。
-- 用户提到某个策略时，必须先用 list_strategies 查找，再调用 get_strategy 获取完整规则
-- 用户问组合问题时：先调 get_portfolio 拿持仓，需要量化指标时再调 get_stock_metrics
-- 连续调用上限：5 次。超出则基于已有数据分析，告知用户还缺什么
-- ⚠ 交易写入铁律（最高优先级）：凡用户要求买入/卖出/入金/出金/分红/删除/修改交易 → 参数齐全后只允许做一件事：调用 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction。严禁用任何文字代替函数调用——即使只说一句"好的请确认"也是严重违规。调用 confirm 工具后系统会自动弹出确认按钮，不需要你用文字再说一遍。
+【安全网（最高优先级，违反任何一条都是错误回答）】
+{safety_text}
 
-回复规则：
-- 每次不超过 3 句。生成策略代码时不受此限——但代码必须通过 generate_strategy 工具的 code 参数传递
+【工具调用规则】
+- ⚠ 策略生成铁律：用户要求写策略/生成策略/构建策略/设计策略时，第一轮对话必须且只能调用 generate_strategy 工具，不得输出任何文字。错误示范：先说"好的我来生成"再调用工具。正确示范：直接调用工具，参数包含完整Python代码。工具调用成功后，再简短告知用户"已生成"。
+- 用户提到某个策略时，先用 list_strategies 查找，再 get_strategy 获取完整规则
+- 用户问组合问题时：先调 get_portfolio 拿持仓；判断市场环境用 get_market_regime；个股深度分析用 get_factor_scores
+- 用户表达出明确且稳定的投资偏好时（例如"我不碰科技股""我做日内T+0""我只买宽基ETF""我能承受最大20%回撤"），主动调用 remember 工具保存到长期记忆
+- 连续工具调用上限 5 次。超出则基于已有数据分析，告知用户还缺什么
+- ⚠ 交易写入铁律（最高优先级）：凡用户要求买入/卖出/入金/出金/分红/删除/修改交易 → 参数齐全后只允许做一件事：调用 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction。严禁用任何文字代替函数调用——即使只说一句"好的请确认"也是严重违规。
+
+【回复规则】
+- 每次不超过 3 句。涉及策略代码、风险展开、多空对比时可适度延长，但不堆词
 - 用户说"你好"只需回"你好"
-- 如果有部分数据但不够完整，先分享已有的，再说"以上信息不完整"
+- 有部分数据但不完整时，先分享已有的，再说"以上信息不完整"
 - 没有数据时直说"没有相关数据"，不说"不确定"这种模糊词
 - 不带表情，不带感叹号
-- 代码铁律：对话正文中绝对禁止出现 Python 代码、代码块（```）、def 函数。所有代码只能通过 generate_strategy 工具传递。违反此规则用户无法保存策略。"""
+- 不使用绝对化表述（稳赚/必涨/保本/零风险）
+- 涉及方向性判断时同时说明对应的风险情景
+- 代码铁律：对话正文中绝对禁止出现 Python 代码、代码块（```）、def 函数。所有代码只能通过 generate_strategy 工具传递。"""
 
 
 # ── Symbol resolution ────────────────────────────────────────────────────
@@ -409,6 +437,70 @@ def tool_analyze_backtest(backtest_id: int = None) -> dict:
                         "maxDrawdown": metrics.get("maxDrawdownPct"), "winRate": metrics.get("winRatePct")},
         "equityPoints": len(curve),
     }
+
+def tool_suggest_strategy_optimizations(backtest_id: int = None, strategy_id: int = None) -> dict:
+    """For a given backtest result + originating strategy, surface objective weak spots
+    so the model can propose 3-5 parameter variants. Returns the raw signals; the model
+    formulates the suggestions in natural language."""
+    conn = get_db_conn(); cur = conn.cursor()
+    try:
+        # 1. Backtest metrics
+        if backtest_id:
+            cur.execute("SELECT id, name, metrics_json, trade_log_json, start_date, end_date FROM backtest_results WHERE id=%s", (backtest_id,))
+        else:
+            cur.execute("SELECT id, name, metrics_json, trade_log_json, start_date, end_date FROM backtest_results ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+        if not row: return {"error": "无回测记录可优化"}
+        bid, bname, mjs, tjs, sd, ed = row
+        try: metrics = json.loads(mjs or "{}")
+        except: metrics = {}
+        try: trades = json.loads(tjs or "[]")
+        except: trades = []
+
+        # 2. Originating strategy (if linkable by name)
+        strategy_payload = {}
+        if strategy_id:
+            cur.execute("SELECT id, name, strategy_type, strategy_json FROM backtest_strategies WHERE id=%s", (strategy_id,))
+        else:
+            cur.execute("SELECT id, name, strategy_type, strategy_json FROM backtest_strategies WHERE name=%s ORDER BY id DESC LIMIT 1", (bname,))
+        srow = cur.fetchone()
+        if srow:
+            try: strategy_payload = {"id": srow[0], "name": srow[1], "type": srow[2], "rules": json.loads(srow[3] or "{}")}
+            except: strategy_payload = {"id": srow[0], "name": srow[1], "type": srow[2]}
+
+        # 3. Diagnose weak spots
+        weak_spots = []
+        sharpe = metrics.get("sharpeRatio") or 0
+        mdd = abs(metrics.get("maxDrawdownPct") or 0)
+        wr = metrics.get("winRatePct") or 0
+        tot = metrics.get("totalReturnPct") or 0
+        n_trades = metrics.get("totalTrades") or len(trades)
+        avg_p = metrics.get("avgProfitPct") or 0
+        avg_l = abs(metrics.get("avgLossPct") or 0)
+        pf = metrics.get("profitFactor") or 0
+        if sharpe < 1: weak_spots.append("夏普<1，风险调整后收益不足")
+        if mdd > 25: weak_spots.append(f"最大回撤{mdd:.1f}%，超出常见承受阈值")
+        if wr < 40 and n_trades >= 20: weak_spots.append(f"胜率{wr:.0f}%偏低")
+        if avg_l > 0 and avg_p / max(avg_l, 0.01) < 1.2 and n_trades >= 20: weak_spots.append("盈亏比<1.2，单笔风险回报失衡")
+        if pf and pf < 1.3: weak_spots.append(f"profit factor {pf:.2f} 偏低")
+        if n_trades < 10: weak_spots.append(f"交易次数仅{n_trades}笔，统计意义有限")
+        if tot > 0 and sharpe and tot / max(abs(mdd), 1) < 1: weak_spots.append("总收益/最大回撤比<1，效率欠佳")
+
+        return {
+            "backtestId": bid, "backtestName": bname,
+            "period": f"{sd} ~ {ed}",
+            "metrics": {
+                "totalReturn": tot, "sharpe": sharpe, "maxDrawdown": -mdd,
+                "winRate": wr, "totalTrades": n_trades,
+                "avgProfit": avg_p, "avgLoss": -avg_l, "profitFactor": pf,
+            },
+            "weakSpots": weak_spots,
+            "strategy": strategy_payload,
+            "hint": "请基于上述弱点提出 3-5 个具体参数变体，每个变体说明：(a)改动了什么 (b)预期改善哪个指标 (c)潜在新风险。最后建议用户点击UI回测页面手动跑这些变体。",
+        }
+    finally:
+        cur.close(); conn.close()
+
 
 # ── Memory / Knowledge Base ──────────────────────────────────────────────
 
@@ -901,6 +993,14 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"id": {"type": "integer", "description": "回测结果ID，不传则取最新一次"}}, "required": []}
     }},
     {"type": "function", "function": {
+        "name": "suggest_strategy_optimizations",
+        "description": "针对一次回测结果，诊断弱点并提议 3-5 个参数变体方向。用户要求'优化策略''改进回测''调参'时调用。返回原始诊断信号，由你组织成具体建议（每个建议说明改动+预期改善+新风险），并提示用户去回测页面手动测试。",
+        "parameters": {"type": "object", "properties": {
+            "backtest_id": {"type": "integer", "description": "回测结果ID，不传则取最新一次"},
+            "strategy_id": {"type": "integer", "description": "策略ID，不传则按名称匹配最新策略"}
+        }, "required": []}
+    }},
+    {"type": "function", "function": {
         "name": "ask_user", "description": "需要用户做选择时调用。例如：多个回测结果选哪个、多个股票选哪个、确认是否执行操作。提供2-4个选项让用户选",
         "parameters": {"type": "object", "properties": {
             "question": {"type": "string", "description": "问用户的问题"},
@@ -1034,6 +1134,7 @@ TOOL_LABELS = {
     "compute_sector_breakdown": "分析行业分布",
     "benchmark_compare": "对比基准",
     "analyze_backtest": "分析回测",
+    "suggest_strategy_optimizations": "策略优化建议",
     "web_search": "联网搜索",
     "get_fundamentals": "查询基本面",
     "optimize_portfolio": "组合优化",
@@ -1173,6 +1274,8 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_benchmark_compare(portfolio_id, args.get("benchmark", "000001.SH"), args.get("days", 252))
     elif name == "analyze_backtest":
         return tool_analyze_backtest(args.get("id"))
+    elif name == "suggest_strategy_optimizations":
+        return tool_suggest_strategy_optimizations(args.get("backtest_id"), args.get("strategy_id"))
     elif name == "web_search":
         return tool_web_search(args.get("query", ""), args.get("count", 5))
     elif name == "get_fundamentals":
@@ -1464,17 +1567,21 @@ def _confirm_remove_watchlist(args: dict) -> dict:
 
 
 def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> str:
-    label = TOOL_LABELS.get(name, f"调用 {name}")
-    if label:
-        print(f"[TOOL] {label}", flush=True)
+    # Emit the raw tool name so the frontend can localize and special-case
+    # (e.g. web_search renders with a globe + sky color). Pair with [TOOL_END]
+    # / [TOOL_FAIL] so the timeline records started → completed/failed state.
+    print(f"[TOOL] {name}", flush=True)
     try:
         result = _run_tool(name, args, portfolio_id, user_id)
         result = _trim_result(name, result)
+        print(f"[TOOL_END] {name}", flush=True)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
-        err_msg = f"{name} 失败: {str(e)[:300]}"
-        print(f"[TOOL_ERR] {err_msg}", file=sys.stderr, flush=True)
-        return json.dumps({"error": err_msg}, ensure_ascii=False)
+        short = str(e)[:200].replace("\n", " ").replace("\t", " ")
+        # [TOOL_FAIL] <name>\t<short message> — tab separates name from message
+        # so it survives line-based stdout framing.
+        print(f"[TOOL_FAIL] {name}\t{short}", flush=True)
+        return json.dumps({"error": f"{name} 失败: {short}"}, ensure_ascii=False)
 
 
 # ── OpenAI-compatible streaming with function calling ────────────────────
@@ -1497,7 +1604,7 @@ def _needs_proxy(api_base: str) -> bool:
     return True
 
 
-def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0):
+def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0, web_search: bool = False):
     from openai import OpenAI
     import httpx
     kwargs = {"api_key": api_key}
@@ -1521,9 +1628,13 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     if is_dashscope and not deep_think and not _is_complex_query(messages):
         effective_model = DASHSCOPE_FAST_MODEL
 
+    # Filter web_search tool based on the toggle + heuristic
+    expose_web = web_search or _should_use_web_search(messages)
+    effective_tools = TOOLS if expose_web else [t for t in TOOLS if t["function"]["name"] != "web_search"]
+
     def _stream(msgs):
         return client.chat.completions.create(
-            model=effective_model, messages=msgs, tools=TOOLS,
+            model=effective_model, messages=msgs, tools=effective_tools,
             stream=True, temperature=0.7, max_tokens=max_tokens,
             **({"extra_body": extra_body} if extra_body else {}),
         )
@@ -1547,6 +1658,18 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     # Always stream first. If tool calls appear mid-stream, collect and handle.
     stream = _stream(formatted)
 
+    def _emit_delta(delta):
+        # Reasoning content (DeepSeek-reasoner, Qwen3 with enable_thinking, GLM-Zero, Moonshot k1.5, etc.)
+        # Escape backslash + newline so each chunk becomes exactly one line frame —
+        # Java unescapes \\n back to a real newline before forwarding to the client.
+        rc = getattr(delta, "reasoning_content", None)
+        if rc:
+            escaped = rc.replace("\\", "\\\\").replace("\n", "\\n")
+            sys.stdout.write(f"[REASONING]{escaped}\n")
+            sys.stdout.flush()
+        if delta.content:
+            sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
+
     tool_calls = {}  # idx -> {id, name, args}
     has_tools = False
     for chunk in stream:
@@ -1562,8 +1685,8 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                 if tc.function:
                     if tc.function.name: tool_calls[idx]["name"] += tc.function.name
                     if tc.function.arguments: tool_calls[idx]["args"] += tc.function.arguments
-        elif delta.content:
-            sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
+        else:
+            _emit_delta(delta)
 
     total_tool_calls = 0
     while has_tools:
@@ -1629,13 +1752,13 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                     if tc.function:
                         if tc.function.name: tool_calls[idx]["name"] += tc.function.name
                         if tc.function.arguments: tool_calls[idx]["args"] += tc.function.arguments
-            elif delta.content:
-                sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
+            else:
+                _emit_delta(delta)
 
     print("\n[DONE]", flush=True)
 
 
-def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id: int = 0, user_id: int = 0):
+def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id: int = 0, user_id: int = 0, deep_think: bool = False, web_search: bool = False):
     import anthropic, httpx
     client_kwargs = {"api_key": api_key}
     proxy_url = os.getenv("PROXY_URL", get_proxy())
@@ -1654,11 +1777,15 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
             role = "user"
         formatted.append({"role": role, "content": m.get("content", "")})
 
+    # Filter web_search tool based on the toggle + heuristic
+    expose_web = web_search or _should_use_web_search(messages)
+    src_tools = TOOLS if expose_web else [t for t in TOOLS if t["function"]["name"] != "web_search"]
+
     # Convert OpenAI tool format → Anthropic format
     anthropic_tools = [
         {"name": t["function"]["name"], "description": t["function"]["description"],
          "input_schema": t["function"]["parameters"]}
-        for t in TOOLS
+        for t in src_tools
     ]
 
     # Prompt Caching: mark system prompt as ephemeral to cache it across requests
@@ -1668,14 +1795,33 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
     total_tool_calls = 0
 
     while True:
-        stream_kwargs = {"model": model, "messages": formatted, "max_tokens": 1024, "tools": anthropic_tools}
+        max_tokens = 8192 if deep_think else 1024
+        stream_kwargs = {"model": model, "messages": formatted, "max_tokens": max_tokens, "tools": anthropic_tools}
         if system_block:
             stream_kwargs["system"] = system_block
+        if deep_think:
+            # Extended thinking: 2048 tokens of reasoning budget, streamed as thinking_delta events
+            stream_kwargs["thinking"] = {"type": "enabled", "budget_tokens": 2048}
+            # Extended thinking requires temperature=1
+            stream_kwargs["temperature"] = 1
 
         with client.messages.stream(**stream_kwargs) as stream:
-            for text in stream.text_stream:
-                sys.stdout.write(text + "\n")
-                sys.stdout.flush()
+            # Use raw event stream to capture both thinking_delta and text_delta
+            for event in stream:
+                etype = getattr(event, "type", None)
+                if etype == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    dtype = getattr(delta, "type", None)
+                    if dtype == "thinking_delta":
+                        thinking_text = getattr(delta, "thinking", "")
+                        if thinking_text:
+                            escaped = thinking_text.replace("\\", "\\\\").replace("\n", "\\n")
+                            sys.stdout.write(f"[REASONING]{escaped}\n")
+                            sys.stdout.flush()
+                    elif dtype == "text_delta":
+                        text = getattr(delta, "text", "")
+                        if text:
+                            sys.stdout.write(text + "\n"); sys.stdout.flush()
             msg = stream.get_final_message()
 
         if msg.stop_reason != "tool_use":
@@ -1683,14 +1829,20 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
 
         tool_uses = [c for c in msg.content if c.type == "tool_use"]
 
-        # Append full assistant turn (text + tool_use blocks)
+        # Append full assistant turn (preserve thinking blocks for extended thinking continuity)
+        def _block_to_dict(c):
+            if c.type == "text":
+                return {"type": "text", "text": c.text}
+            if c.type == "thinking":
+                return {"type": "thinking", "thinking": c.thinking, "signature": getattr(c, "signature", "")}
+            if c.type == "redacted_thinking":
+                return {"type": "redacted_thinking", "data": getattr(c, "data", "")}
+            if c.type == "tool_use":
+                return {"type": "tool_use", "id": c.id, "name": c.name, "input": c.input}
+            return None
         formatted.append({
             "role": "assistant",
-            "content": [
-                {"type": "text", "text": c.text} if c.type == "text"
-                else {"type": "tool_use", "id": c.id, "name": c.name, "input": c.input}
-                for c in msg.content
-            ],
+            "content": [b for b in (_block_to_dict(c) for c in msg.content) if b is not None],
         })
 
         # Short-circuit: ask_user returns immediately
@@ -1778,6 +1930,7 @@ def main():
     parser.add_argument("--api-key", default=os.environ.get("AI_API_KEY", ""))
     parser.add_argument("--api-base", default="")
     parser.add_argument("--deep-think", action="store_true")
+    parser.add_argument("--web-search", action="store_true")
     parser.add_argument("--portfolio-id", type=int, default=0)
     parser.add_argument("--user-id", type=int, default=0)
     parser.add_argument("--input", default=None)
@@ -1802,14 +1955,14 @@ def main():
         if memories:
             system_prompt += "\n\n" + memories
     if args.deep_think:
-        system_prompt += "\n\n深度思考模式。把推理过程放在<thinking>...</thinking>标签内（这部分前端会折叠，用户点开才看），最终结论放在标签外面直接显示。结论简洁，3-5句。如果要求写策略代码：Investory格式def decide(ctx)函数，只用numpy，禁止pandas/聚宽/米筐API。"
+        system_prompt += "\n\n深度思考模式：充分推理后给出简洁结论（3-5句）。如果要求写策略代码：Investory格式def decide(ctx)函数，只用numpy，禁止pandas/聚宽/米筐API。"
     full_messages = [{"role": "system", "content": system_prompt}] + messages
 
     try:
         if args.provider == "anthropic":
-            call_anthropic_stream(args.api_key, args.model, full_messages, args.portfolio_id, args.user_id)
+            call_anthropic_stream(args.api_key, args.model, full_messages, args.portfolio_id, args.user_id, args.deep_think, args.web_search)
         else:
-            call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think, args.user_id)
+            call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think, args.user_id, args.web_search)
     except Exception as e:
         msg = str(e)
         if "401" in msg or "Unauthorized" in msg or "Authentication" in msg:
