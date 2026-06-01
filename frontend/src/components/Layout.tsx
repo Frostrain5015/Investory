@@ -9,7 +9,7 @@ import {
   LogOut, TrendingUp, User, Search, Menu, Shield, FlaskConical, Sparkles
 } from 'lucide-react'
 import { createContext, useContext, useEffect, useState } from 'react'
-import { AnimatePresence } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import { searchStocks, getPortfolios } from '@/services/api'
 import ChatPanel from '@/pages/ChatPanel'
 import UpdateBanner from '@/components/UpdateBanner'
@@ -152,13 +152,19 @@ export default function Layout() {
         </main>
       </div>
 
-      {/* Floating AI Ball */}
-      <div className="fixed right-6 z-40" style={{ bottom: `calc(1.5rem + env(safe-area-inset-bottom, 0px))` }}>
-        <button onClick={() => setChatOpen(!chatOpen)}
-          className="w-12 h-12 rounded-full bg-slate-900 text-white shadow-lg hover:scale-110 transition-transform flex items-center justify-center">
-          <Sparkles className="w-5 h-5" />
-        </button>
-      </div>
+      {/* Floating AI Button */}
+      <AnimatePresence>
+        {!chatOpen && (
+          <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
+            className="fixed right-6 z-40" style={{ bottom: `calc(1.5rem + env(safe-area-inset-bottom, 0px))` }}>
+            <button onClick={() => setChatOpen(true)}
+              className="w-11 h-11 rounded-full text-white shadow-lg shadow-purple-500/25 hover:shadow-purple-500/40 hover:scale-105 transition-all flex items-center justify-center"
+              style={{ background: 'linear-gradient(135deg, #863bff, #47bfff)' }}>
+              <Sparkles className="w-5 h-5" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Chat Panel */}
       <AnimatePresence>
