@@ -280,7 +280,7 @@ def tool_compute_correlation(portfolio_id: int, symbols: list = None) -> dict:
     for sym in symbols:
         db_sym = resolve_symbol(conn, sym)
         if not db_sym: continue
-        cur.execute("SELECT s.id FROM stocks WHERE symbol=%s", (db_sym,))
+        cur.execute("SELECT id FROM stocks WHERE symbol=%s", (db_sym,))
         sid = cur.fetchone()[0]
         cur.execute("SELECT trade_date, close FROM stock_prices WHERE stock_id=%s ORDER BY trade_date DESC LIMIT %s", (sid, MAX_MULTI_ROWS))
         for d, c in cur.fetchall(): closes.setdefault(str(d), {})[sym] = float(c)

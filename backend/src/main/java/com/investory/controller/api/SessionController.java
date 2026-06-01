@@ -111,4 +111,48 @@ public class SessionController {
         result.put("status", "ok");
         return result;
     }
+
+    /**
+     * 测试用登录端点：直接用用户名密码创建会话（供自动化测试脚本使用）。
+     * 仅验证数据库中存在的用户，不检查 Frost ID OAuth。
+     * 需要在 WebConfig 中放行路径 /api/session/test-login。
+     */
+    @PostMapping("/session/test-login")
+    public Map<String, Object> testLogin(HttpServletRequest req) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        try {
+            String username = req.getParameter("username");
+            String password = req.getParameter("password");
+            if (username == null || password == null) {
+                result.put("error", "username and password required");
+                return result;
+            }
+            var user = userDao.findByUsername(username);
+            if (user == null) {
+                result.put("error", "user not found");
+                return result;
+            }
+            // Verify password using BCrypt
+            var found = userDao.findByUsername(username.trim());
+            if (found == null || !org.mindrot.jbcrypt.BCrypt.checkpw(password, found.getPasswordHash())) {
+                result.put("error", "invalid credentials");
+                return result;
+            }
+            HttpSession session = req.getSession(true);
+            session.setAttribute("userId", found.getId());
+            session.setAttribute("username", found.getUsername());
+            session.setAttribute("isAdmin", found.isAdmin());
+            // Pick first portfolio
+            var portfolios = portfolioDao.findByUser(found.getId());
+            if (!portfolios.isEmpty()) {
+                session.setAttribute("portfolioId", portfolios.get(0).getId());
+            }
+            result.put("authenticated", true);
+            result.put("userId", found.getId());
+            result.put("username", found.getUsername());
+        } catch (Exception e) {
+            result.put("error", e.getMessage());
+        }
+        return result;
+    }
 }
