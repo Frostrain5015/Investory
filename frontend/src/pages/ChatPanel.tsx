@@ -16,12 +16,14 @@ interface PicksCard { regime: string; picks: { code: string; name: string; total
  * reasoning_content, or a tool call (with its eventual completion status). */
 export type ToolCategory = 'query' | 'analysis' | 'mutation'
 export type TimelineStep =
-  | { kind: 'thinking'; text: string }
+  | { kind: 'thinking'; text: string; _ts?: number; _elapsed?: number }
   | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string }
 interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard }
 interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
 interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
 type ConfirmStatus = 'pending' | 'accepted' | 'refused'
+
+const gradientStyle = { background: 'linear-gradient(135deg, #863bff, #47bfff)' }
 
 let gMessages: Message[] = []
 let gListeners: (() => void)[] = []
@@ -55,64 +57,90 @@ function toolStyle(step: Extract<TimelineStep, { kind: 'tool' }>) {
   return { label: 'text-slate-500', dot: 'bg-slate-400 animate-pulse', Icon: Search }
 }
 
-/** Renders the agent's reasoning trace as a collapsible timeline:
- * thinking paragraph → tool call → tool result indicator → next thinking → ...
- * This mirrors how Codex / Claude Code surface their step-by-step process.  */
-function TimelineBlock({ steps, done, lang }: { steps: TimelineStep[]; done: boolean; lang: 'zh' | 'en' | 'hk' }) {
-  const { t } = useT()
+// ── Peer-level step renderers: each step is a standalone block ──────────
+// Like Claude Code's UI: thinking segments and tool calls are peers,
+// not nested inside one container. Tools interrupt thinking, then a new
+// thinking block picks up after the tool completes.
+
+/** A single reasoning segment: collapsible text block with live elapsed timer.
+ *  Claude Code style: "已思考 用时8s" when done, live count-up while streaming. */
+function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: boolean; _ts?: number; _elapsed?: number }) {
+  const [now, setNow] = useState(Date.now())
+  useEffect(() => {
+    if (done || _ts == null) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [done, _ts])
+  const elapsedMs = done ? (_elapsed || 0) : (_ts != null ? now - _ts : 0)
+  const elapsedSec = Math.max(0, Math.round(elapsedMs / 1000))
   const [userToggled, setUserToggled] = useState(false)
   const [open, setOpen] = useState(true)
+  const innerRef = useRef<HTMLDivElement>(null)
   useEffect(() => { if (!userToggled) setOpen(!done) }, [done, userToggled])
-  const onClick = () => { setUserToggled(true); setOpen(o => !o) }
-  if (steps.length === 0) return null
-  const toolCount = steps.filter(s => s.kind === 'tool').length
+  useEffect(() => {
+    if (!done && innerRef.current) innerRef.current.scrollTop = innerRef.current.scrollHeight
+  })
+  if (!text.trim()) return null
   return (
-    <div className="mb-2">
-      <button onClick={onClick} className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-500 transition-colors">
+    <div className="mb-1.5">
+      <button onClick={() => { setUserToggled(true); setOpen(o => !o) }}
+        className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-500 transition-colors">
         <span className={`w-1.5 h-1.5 rounded-full ${done ? 'bg-slate-300' : 'bg-amber-400 animate-pulse'}`} />
-        {done ? t.chat.thinking : t.chat.thinkingInProgress}
-        {toolCount > 0 && (
-          <span className="text-[10px] text-slate-400">· {toolCount} {lang === 'en' ? 'tools' : '次工具'}</span>
-        )}
+        {done ? `已思考 用时${elapsedSec}s` : `思考中… ${elapsedSec}s`}
         <span className="text-[9px] ml-0.5 opacity-50">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
-        <div className="mt-1.5 p-2.5 bg-slate-50 rounded-lg text-[11px] leading-relaxed border-l-2 border-purple-200 max-h-64 overflow-y-auto space-y-2">
-          {steps.map((step, i) => {
-            if (step.kind === 'thinking') {
-              const text = step.text.trim()
-              if (!text) return null
-              return (
-                <div key={i} className="text-slate-500 whitespace-pre-wrap">{text}</div>
-              )
-            }
-            const { label, dot, Icon } = toolStyle(step)
-            return (
-              <div key={i} className="flex items-start gap-2">
-                <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
-                <div className="flex-1">
-                  <div className={`flex items-center gap-1.5 ${label}`}>
-                    <Icon className="w-3 h-3" />
-                    <span className="font-medium">{localizeToolName(step.name, lang)}</span>
-                    {!step.done && !step.error && (
-                      <span className="text-[10px] opacity-70">{lang === 'en' ? 'running…' : '调用中'}</span>
-                    )}
-                    {step.done && !step.error && (
-                      <Check className="w-3 h-3 opacity-70" />
-                    )}
-                    {step.error && (
-                      <span className="text-[10px] opacity-70">{lang === 'en' ? 'failed' : '失败'}</span>
-                    )}
-                  </div>
-                  {step.error && (
-                    <div className="mt-0.5 text-[10px] text-red-500 break-words">{step.error}</div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
+        <div ref={innerRef}
+          className="mt-1 p-2.5 bg-slate-50 rounded-lg text-[11px] text-slate-500 whitespace-pre-wrap leading-relaxed border-l-2 border-purple-200 max-h-48 overflow-y-auto">
+          {text}
         </div>
       )}
+    </div>
+  )
+}
+
+/** A single tool invocation: icon + name + dot (colour-coded by category
+ *  and running/done/failed state). Always visible, never collapsed. */
+function ToolStepDisplay({ step, lang }: { step: Extract<TimelineStep, { kind: 'tool' }>; lang: 'zh' | 'en' | 'hk' }) {
+  const { label, dot, Icon } = toolStyle(step)
+  return (
+    <div className="mb-1.5 flex items-start gap-2 text-[11px]">
+      <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
+      <div className={`flex-1 flex items-center gap-1.5 ${label}`}>
+        <Icon className="w-3 h-3" />
+        <span className="font-medium">{localizeToolName(step.name, lang)}</span>
+        {!step.done && !step.error && (
+          <span className="text-[10px] opacity-70">{lang === 'en' ? 'running…' : '调用中…'}</span>
+        )}
+        {step.done && !step.error && <Check className="w-3 h-3 opacity-70" />}
+        {step.error && (
+          <>
+            <span className="text-[10px] text-red-500">{lang === 'en' ? 'failed' : '失败'}</span>
+            <span className="text-[10px] text-red-400 break-words">{step.error}</span>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Renders an array of TimelineSteps as a peer-level sequence:
+ * each thinking segment gets its own collapse block, each tool gets its
+ * own inline indicator — exactly how Claude Code / Codex render. */
+function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: boolean; lang: 'zh' | 'en' | 'hk' }) {
+  if (steps.length === 0) return null
+  return (
+    <div className="mb-2">
+      {steps.map((step, i) => {
+        if (step.kind === 'thinking') {
+          // This segment is "done" if anything follows it (tool call or newer
+          // thinking) OR if the whole generation is complete. Only the very
+          // last segment in an active generation stays live.
+          const segDone = i < steps.length - 1 || done
+          return <ThinkingSegment key={i} text={step.text} done={segDone} _ts={step._ts} _elapsed={step._elapsed} />
+        }
+        return <ToolStepDisplay key={i} step={step} lang={lang} />
+      })}
     </div>
   )
 }
@@ -159,6 +187,19 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   // Authoritative timeline ref — frontend builds it from SSE events as the agent runs.
   // We mutate the ref then mirror into state for re-renders so we don't lose ordering.
   const timelineRef = useRef<TimelineStep[]>([])
+  /** Stamp _elapsed on every thinking step that isn't the last element (i.e. has
+   *  already been closed by a subsequent tool or newer thinking segment). This
+   *  ensures previous segments never show "用时0s" when a new step arrives. */
+  function stampClosedElapsed(tl: TimelineStep[]) {
+    const now = Date.now()
+    for (let i = 0; i < tl.length - 1; i++) {
+      const s = tl[i]
+      if (s.kind === 'thinking' && s._ts != null && s._elapsed == null) {
+        tl[i] = { ...s, _elapsed: now - s._ts }
+      }
+    }
+    return tl
+  }
   const pushTimeline = () => setStreamTimeline([...timelineRef.current])
   const [askData, setAskData] = useState<{ question: string; options: string[] } | null>(null)
   const [confirmData, setConfirmData] = useState<ConfirmData | null>(null)
@@ -237,7 +278,27 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     }).catch(() => { setSuggestions([...t.chat.suggestions]) })
   }, [])
 
-  useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamText, streamTimeline])
+  // Streaming: instant scroll to chase the rapidly-arriving tokens.
+  // Use a ref to avoid calling scrollIntoView on every single character
+  // (React batches state but the wall-clock is tight).
+  const streamTick = useRef(0)
+  useEffect(() => {
+    if (!streaming) return
+    const tick = ++streamTick.current
+    requestAnimationFrame(() => {
+      if (tick === streamTick.current) scrollRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior })
+    })
+  }, [streaming, streamText, streamTimeline])
+
+  // When a new message lands (streaming finished), scroll smoothly for a
+  // polished landing. Ignore the initial mount replay.
+  const prevLen = useRef(messages.length)
+  useEffect(() => {
+    if (messages.length > prevLen.current && !streaming) {
+      scrollRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+    prevLen.current = messages.length
+  }, [messages, streaming])
 
   async function send(textOverride?: string) {
     const text = (textOverride !== undefined ? textOverride : input).trim()
@@ -264,6 +325,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         if (!name) return
         const category: ToolCategory = d.category === 'analysis' || d.category === 'mutation' ? d.category : 'query'
         // A new tool call closes any open thinking segment and starts a tool step
+        stampClosedElapsed(timelineRef.current)
         timelineRef.current = [...timelineRef.current, { kind: 'tool', name, category, done: false }]
         pushTimeline()
       })
@@ -303,12 +365,19 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         if (last && last.kind === 'thinking') {
           timelineRef.current[timelineRef.current.length - 1] = { ...last, text: last.text + chunk }
         } else {
-          timelineRef.current = [...timelineRef.current, { kind: 'thinking', text: chunk }]
+          stampClosedElapsed(timelineRef.current)
+          timelineRef.current = [...timelineRef.current, { kind: 'thinking', text: chunk, _ts: Date.now() }]
         }
         pushTimeline()
       })
       es.addEventListener('done', () => {
         const raw = streamAccum.current
+        // Stamp ALL thinking segments (including the last one — gen is done)
+        timelineRef.current.forEach((s, i) => {
+          if (s.kind === 'thinking' && s._ts != null && s._elapsed == null) {
+            timelineRef.current[i] = { ...s, _elapsed: Date.now() - s._ts }
+          }
+        })
         const finalTimeline = [...timelineRef.current]
         streamAccum.current = ''; timelineRef.current = []
         setStreamText(''); setStreamTimeline([])
@@ -360,6 +429,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     fetch(`${BASE}/api/ai/cancel`, { method: 'POST', credentials: 'include' }).catch(() => {})
     // Persist whatever partial text + timeline we have so it doesn't disappear
     const partial = streamAccum.current.trim()
+    timelineRef.current.forEach((s, i) => {
+      if (s.kind === 'thinking' && s._ts != null && s._elapsed == null) {
+        timelineRef.current[i] = { ...s, _elapsed: Date.now() - s._ts }
+      }
+    })
     const partialTimeline = [...timelineRef.current]
     streamAccum.current = ''; timelineRef.current = []
     setStreamText(''); setStreamTimeline([]); setStreaming(false)
@@ -388,7 +462,6 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     if (results.length > 0) setMessages([...messages, { role: 'system', content: results.join('\n') }])
   }
 
-  const gradientStyle = { background: 'linear-gradient(135deg, #863bff, #47bfff)' }
   const hasContent = messages.length > 0 || streaming
 
   const headerNode = (
@@ -464,8 +537,8 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             }`} style={m.role === 'user' ? gradientStyle : undefined}>
               {m.role === 'assistant' ? <>
                 {m.timeline && m.timeline.length > 0
-                  ? <TimelineBlock steps={m.timeline} done={true} lang={lang} />
-                  : m.thinking && <TimelineBlock steps={[{ kind: 'thinking', text: m.thinking }]} done={true} lang={lang} />}
+                  ? <TimelineRenderer steps={m.timeline} done={true} lang={lang} />
+                  : m.thinking && <TimelineRenderer steps={[{ kind: 'thinking', text: m.thinking }]} done={true} lang={lang} />}
                 <div className="prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-100 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto">
                   <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
                     code: ({ children, className, ...props }) => {
@@ -556,7 +629,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                       </div>
                     )
                   })()}
-                  {liveSteps.length > 0 && <TimelineBlock steps={liveSteps} done={reasoningDone} lang={lang} />}
+                  {liveSteps.length > 0 && <TimelineRenderer steps={liveSteps} done={reasoningDone} lang={lang} />}
                   {showGenericPending && (
                     <span className="inline-flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>
                   )}
@@ -808,45 +881,81 @@ function StrategyCard({ name, description, code: _code, onSave }: { name: string
   const [saving, setSaving] = useState(false)
 
   const displayName = name || t.chat.strategyPlaceholder
-  const lines = (description || '').split(/\n/).filter(l => l.trim())
+  const lines = (description || '').split(/\n/).map(l => l.trim()).filter(Boolean)
+
+  // Classify description lines into entry / exit / risk / other buckets
+  const entryRx = /(买入|入场|进场|做多|buy|entry|long)/i
+  const exitRx  = /(卖出|出场|离场|做空|止盈|sell|exit|short|take.profit)/i
+  const riskRx  = /(止损|风控|仓位|回撤|stop|position|risk|capital)/i
+  const entryLines = lines.filter(l => entryRx.test(l) && !riskRx.test(l))
+  const exitLines  = lines.filter(l => exitRx.test(l) && !riskRx.test(l))
+  const riskLines  = lines.filter(l => riskRx.test(l))
+  const otherLines = lines.filter(l => !entryRx.test(l) && !exitRx.test(l) && !riskRx.test(l) && l !== displayName)
+
+  function renderRow(label: string, i: number) {
+    return (
+      <div key={i} className="flex items-start gap-1.5 font-semibold text-slate-900">
+        <span className="w-1 h-1 rounded-full bg-purple-400 mt-[5px] shrink-0" />
+        <span>{label}</span>
+      </div>
+    )
+  }
 
   return (
-    <div className="mt-3 pt-3 border-t border-white/25">
-      <div className="rounded-xl bg-white/10 backdrop-blur-sm ring-1 ring-white/20 overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center gap-2 px-3 py-2 bg-white/10">
-          <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 bg-white/25">
-            <Sparkles className="w-3 h-3 text-white" />
-          </div>
+    <div className="mt-3 pt-3 border-t border-slate-200">
+      <div className="rounded-xl bg-white border border-purple-200 shadow-sm overflow-hidden">
+        {/* Header with gradient strip */}
+        <div className="flex items-center gap-2 px-3 py-2" style={gradientStyle}>
+          <Sparkles className="w-3.5 h-3.5 text-white" />
           <span className="text-xs font-semibold text-white tracking-tight">{displayName}</span>
         </div>
 
-        {/* Rules body */}
-        {lines.length > 0 && (
-          <div className="px-3 py-2 space-y-1.5 text-[11px] text-white/85 leading-relaxed">
-            {lines.map((line, i) => {
-              const trimmed = line.trim()
-              if (!trimmed) return null
-              const isRule = /^(买入[：:]|卖出[：:]|入场[：:]|出场[：:]|止损[：:]|止盈[：:]|仓位[：:]|风控[：:]|参数[：:]|Buy|Sell|Entry|Exit|Stop|Position)/i.test(trimmed)
-              return (
-                <div key={i} className={`flex items-start gap-1.5 ${isRule ? 'font-semibold text-white' : ''}`}>
-                  {isRule && <span className="w-1 h-1 rounded-full bg-white/50 mt-[5px] shrink-0" />}
-                  <span>{trimmed}</span>
-                </div>
-              )
-            })}
-          </div>
-        )}
+        <div className="px-3 py-2 space-y-2 text-[11px] leading-relaxed">
+          {/* Entry rules */}
+          {entryLines.length > 0 && (
+            <div>
+              <div className="text-[10px] font-semibold text-emerald-600 mb-1 flex items-center gap-1">
+                <span className="w-1 h-1 rounded-full bg-emerald-500" />入场条件
+              </div>
+              {entryLines.map(renderRow)}
+            </div>
+          )}
+          {/* Exit rules */}
+          {exitLines.length > 0 && (
+            <div>
+              <div className="text-[10px] font-semibold text-red-500 mb-1 flex items-center gap-1">
+                <span className="w-1 h-1 rounded-full bg-red-400" />出场条件
+              </div>
+              {exitLines.map(renderRow)}
+            </div>
+          )}
+          {/* Risk management */}
+          {riskLines.length > 0 && (
+            <div>
+              <div className="text-[10px] font-semibold text-amber-600 mb-1 flex items-center gap-1">
+                <span className="w-1 h-1 rounded-full bg-amber-400" />风控与仓位
+              </div>
+              {riskLines.map(renderRow)}
+            </div>
+          )}
+          {/* Unclassified lines */}
+          {otherLines.length > 0 && (
+            <div className="text-slate-500 space-y-1">
+              {otherLines.map((l, i) => <div key={i}>{l}</div>)}
+            </div>
+          )}
+        </div>
 
         {/* Save button */}
-        <div className="px-3 pb-3 pt-1">
+        <div className="px-3 pb-3">
           <button onClick={async () => {
             const savedName = name || prompt(t.chat.promptStrategyName, t.chat.strategyPlaceholder)
             if (!savedName) return
             setSaving(true)
             try { await onSave(savedName) } finally { setSaving(false) }
           }} disabled={saving}
-            className="w-full h-9 rounded-lg ring-1 ring-white/30 bg-white/15 hover:bg-white/25 active:bg-white/35 text-white text-xs font-semibold transition-all flex items-center justify-center gap-1.5 tracking-wide disabled:opacity-50">
+            className="w-full h-9 rounded-lg text-white text-xs font-semibold transition-all flex items-center justify-center gap-1.5 tracking-wide hover:opacity-90 disabled:opacity-60"
+            style={gradientStyle}>
             {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5 opacity-70" />}
             {saving ? t.chat.saving : t.chat.saveStrategyBtn}
           </button>

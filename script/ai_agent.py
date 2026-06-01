@@ -19,10 +19,13 @@ DASHSCOPE_FAST_MODEL = "qwen-plus-latest"
 _COMPLEX_SIGNALS = [
     "分析", "研究", "报告", "评估", "评价", "优化", "建议", "推荐",
     "详细", "全面", "深入", "综合", "系统性",
-    "帮我写", "生成策略", "写一个策略", "回测",
+    "帮我", "帮我写", "生成策略", "写一个策略", "回测",
+    "查看", "看看", "检查", "审视",
     "比较", "对比", "风险", "夏普", "回撤", "收益率",
     "组合", "配置", "调仓", "再平衡", "仓位",
     "基本面", "估值", "财务", "行业", "赛道",
+    "最近", "近期", "今日", "现在",
+    "帮我查", "帮我跑", "帮我调",
 ]
 
 # Keywords that signal the user wants to write/modify transaction records
@@ -245,6 +248,10 @@ MAX_CORR_STOCKS = 10
 # the agent can chain "read portfolio → factor scores → market regime → news →
 # pick stocks → confirm watchlist" without hitting the cap mid-flow.
 MAX_TOOL_CALLS = 20
+# Web search is expensive (network + DDG rate-limit) and prone to infinite
+# curiosity loops. Cut it off early — 3 searches is enough to cover most
+# fact-finding tasks. Subsequent web_search calls return a synthetic error.
+MAX_WEB_SEARCHES = 3
 
 # Tool taxonomy. Each tool belongs to one of:
 #   - 'query'     : read-only DB / in-memory lookup (cheap, instant)
@@ -279,6 +286,8 @@ TOOL_CATEGORIES = {
     "suggest_strategy_optimizations": "analysis",
     "optimize_portfolio": "analysis",
     "web_search": "analysis",
+    "generate_strategy": "analysis",
+    "run_backtest": "analysis",
     # ── mutation (writes; always Accept/Refuse-gated) ──────────────────
     "confirm_add_watchlist": "mutation",
     "confirm_remove_watchlist": "mutation",
@@ -508,6 +517,82 @@ def tool_analyze_backtest(backtest_id: int = None) -> dict:
                         "maxDrawdown": metrics.get("maxDrawdownPct"), "winRate": metrics.get("winRatePct")},
         "equityPoints": len(curve),
     }
+
+def tool_run_backtest(strategy_id: int = None, code: str = None,
+                      start_date: str = None, end_date: str = None,
+                      initial_capital: float = 100000, commission_pct: float = 0.03) -> dict:
+    """通过 backtest_engine.py 子进程运行一次回测，返回关键指标。用户说'跑回测''测试策略''回测一下'时调用。
+    优先使用 strategy_id（已保存策略）；若无则用 code 参数直接运行。"""
+    import subprocess, json as _json, tempfile, os, uuid
+
+    # 1. Resolve strategy
+    strategy = None
+    if strategy_id:
+        conn = get_db_conn(); cur = conn.cursor()
+        cur.execute("SELECT name, strategy_type, strategy_json FROM backtest_strategies WHERE id=%s", (strategy_id,))
+        row = cur.fetchone()
+        cur.close(); conn.close()
+        if row:
+            try:
+                strat = _json.loads(row[2])
+                strategy = {"code": strat.get("code", "")} if row[1] == "advanced" else strat
+            except Exception:
+                strategy = {"code": row[2]}
+    if not strategy and code:
+        strategy = {"code": code}
+
+    if not strategy:
+        return {"error": "未提供策略参数。请先保存策略或提供代码。"}
+
+    today = str(__import__('datetime').date.today())
+    one_year_ago = str(__import__('datetime').date.today() - __import__('datetime').timedelta(days=365))
+    config = {
+        "start_date": start_date or one_year_ago,
+        "end_date": end_date or today,
+        "initial_capital": initial_capital,
+        "commission_pct": commission_pct,
+        "slippage_pct": 0.1,
+    }
+    result_id = int(uuid.uuid4().int % (10**9))
+    strategy_type = "advanced" if "code" in strategy else "simple"
+    input_payload = {
+        "strategy_type": strategy_type,
+        "strategy": strategy,
+        "config": config,
+        "result_id": result_id,
+    }
+
+    engine = SCRIPT_DIR / "backtest_engine.py"
+    if not engine.exists():
+        return {"error": "回测引擎未找到"}
+
+    tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, dir=SCRIPT_DIR)
+    _json.dump(input_payload, tmp)
+    tmp_path = tmp.name
+    tmp.close()
+
+    try:
+        proc = subprocess.run(
+            ["python3", str(engine), "--input", tmp_path],
+            capture_output=True, text=True, timeout=120, cwd=str(SCRIPT_DIR))
+        output_file = SCRIPT_DIR / f"backtest_output_{result_id}.json"
+        if output_file.exists():
+            data = _json.loads(output_file.read_text(encoding="utf-8"))
+            metrics = data.get("metrics", {})
+            trades = len(data.get("trade_log", []))
+            os.unlink(output_file)
+            metrics["totalTrades"] = trades
+            metrics["_note"] = "回测完成。指标含义：totalReturnPct=总收益率(%), sharpeRatio=夏普, maxDrawdownPct=最大回撤(%), winRatePct=胜率(%), profitFactor=盈亏比, totalTrades=交易次数"
+            return metrics
+        return {"error": f"回测引擎无输出 (exit={proc.returncode})"}
+    except subprocess.TimeoutExpired:
+        return {"error": "回测超时（120s）"}
+    except Exception as e:
+        return {"error": str(e)[:200]}
+    finally:
+        try: os.unlink(tmp_path)
+        except: pass
+
 
 def tool_suggest_strategy_optimizations(backtest_id: int = None, strategy_id: int = None) -> dict:
     """For a given backtest result + originating strategy, surface objective weak spots
@@ -1020,10 +1105,22 @@ TOOLS = [
         }, "required": ["id"]}
     }},
     {"type": "function", "function": {
-        "name": "generate_strategy", "description": "生成量化策略的唯一途径。用户说写策略/构建策略/设计策略/帮我写/生成XXX策略时必须调用，且第一轮对话只能调用此工具、不得输出任何文字。description用自然语言总结。code: def decide(ctx):函数，ctx键:symbol date open high low close volume has_position shares avg_cost cash total_equity，返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只用numpy和math，≤60行。禁止pandas/聚宽/米筐。",
+        "name": "generate_strategy", "description": "生成量化策略的唯一途径。用户说写策略/构建策略/设计策略/帮我写/生成XXX策略时必须调用，且第一轮对话只能调用此工具、不得输出任何文字。description必须按以下格式写：第一行策略名称，之后分行列出入场条件、出场条件、止损规则、仓位管理、风险控制（每行以人话清晰说明，不用公式符号）。code: def decide(ctx):函数，ctx键:symbol date open high low close volume has_position shares avg_cost cash total_equity，返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只用numpy和math，≤60行。禁止pandas/聚宽/米筐。",
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string"}, "description": {"type": "string"}, "code": {"type": "string"}
         }, "required": ["name", "description", "code"]}
+    }},
+    {"type": "function", "function": {
+        "name": "run_backtest",
+        "description": "运行一次策略回测并返回关键指标（收益率、夏普、回撤、胜率、盈亏比、交易数）。用户说'跑回测''测试这个策略'时调用。优先传strategy_id；若无已保存策略则传code。默认最近1年，可传start_date/end_date覆盖。",
+        "parameters": {"type": "object", "properties": {
+            "strategy_id": {"type": "integer", "description": "已保存策略的ID（优先使用，传了就不需要code）"},
+            "code": {"type": "string", "description": "Python策略代码（无strategy_id时用）"},
+            "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD，默认一年前"},
+            "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD，默认今天"},
+            "initial_capital": {"type": "number", "description": "初始资金，默认100000"},
+            "commission_pct": {"type": "number", "description": "佣金%，默认0.03"}
+        }, "required": []}
     }},
     # A: Data tools
     {"type": "function", "function": {
@@ -1196,6 +1293,7 @@ TOOL_LABELS = {
     "list_strategies": "获取策略列表",
     "get_strategy": "读取策略详情",
     "generate_strategy": "生成策略",
+    "run_backtest": "运行回测",
     "search_stocks": "搜索股票",
     "get_stock_price": "查询股价",
     "get_pnl_history": "获取组合走势",
@@ -1318,6 +1416,13 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_list_strategies()
     elif name == "get_strategy":
         return tool_get_strategy(args.get("id", 0))
+    elif name == "run_backtest":
+        return tool_run_backtest(
+            args.get("strategy_id"), args.get("code"),
+            args.get("start_date"), args.get("end_date"),
+            float(args.get("initial_capital", 100000)),
+            float(args.get("commission_pct", 0.03)),
+        )
     elif name == "generate_strategy":
         code = args.get("code", "")
         if "def decide(ctx)" not in code:
@@ -1661,10 +1766,18 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> 
     # Emit the raw tool name + taxonomy category so the frontend can pick the
     # right icon/colour (query=gray, analysis=purple, mutation=amber). Pair
     # with [TOOL_END] / [TOOL_FAIL] for completed/failed state.
+    import time as _time
     print(f"[TOOL] {name}\t{_tool_category(name)}", flush=True)
+    t0 = _time.monotonic()
     try:
         result = _run_tool(name, args, portfolio_id, user_id)
         result = _trim_result(name, result)
+        # For instant tools (sub-100ms) the frontend never gets to render
+        # the "running" state before [TOOL_END] arrives. Pad to a minimum
+        # ~350ms so the user can see each tool fire in the timeline.
+        elapsed = _time.monotonic() - t0
+        if elapsed < 0.35:
+            _time.sleep(0.35 - elapsed)
         print(f"[TOOL_END] {name}", flush=True)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
@@ -1780,6 +1893,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             _emit_delta(delta)
 
     total_tool_calls = 0
+    web_search_count = 0
     while has_tools:
         sorted_tools = [tool_calls[i] for i in sorted(tool_calls)]
         formatted.append({"role": "assistant", "content": None, "tool_calls": [
@@ -1797,16 +1911,26 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                                "content": json.dumps({"answered": "已向用户展示选项，等待选择"})})
             print("\n[DONE]", flush=True); return
 
-        # Split tools: those within limit run in parallel, excess get error
+        # Split tools: those within limit run in parallel, excess get error.
+        # web_search has a tighter cap — after 3 searches the model should
+        # synthesise what it has rather than keep querying.
         runnable, capped = [], []
         for t in sorted_tools:
+            if t["name"] == "web_search":
+                if web_search_count >= MAX_WEB_SEARCHES:
+                    capped.append(t); continue
+                web_search_count += 1
             if len(runnable) + total_tool_calls < MAX_TOOL_CALLS:
                 runnable.append(t)
             else:
                 capped.append(t)
         for t in capped:
+            if t["name"] == "web_search":
+                err = f"已达到本轮对话最大联网搜索次数（{MAX_WEB_SEARCHES}次）。请基于已有搜索结果给出完整回答，不要继续搜索。"
+            else:
+                err = "已达到本轮对话最大工具调用次数"
             formatted.append({"role": "tool", "tool_call_id": t["id"],
-                               "content": json.dumps({"error": "已达到本轮对话最大工具调用次数"})})
+                               "content": json.dumps({"error": err}, ensure_ascii=False)})
 
         # Execute runnable tools in parallel, collect results in original order.
         # Per-tool timeout: heavy analytic tools get more time. On timeout we
@@ -1890,6 +2014,7 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
                     if system_prompt else None)
 
     total_tool_calls = 0
+    web_search_count = 0
 
     while True:
         max_tokens = 8192 if deep_think else 1024
@@ -1953,9 +2078,12 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
             print("\n[DONE]", flush=True)
             return
 
-        # Split runnable vs capped by MAX_TOOL_CALLS
+        # Split runnable vs capped by MAX_TOOL_CALLS. web_search has its own cap.
         runnable, capped = [], []
         for tu in tool_uses:
+            if tu.name == "web_search":
+                if web_search_count >= MAX_WEB_SEARCHES: capped.append(tu); continue
+                web_search_count += 1
             if len(runnable) + total_tool_calls < MAX_TOOL_CALLS:
                 runnable.append(tu)
             else:
@@ -1963,7 +2091,8 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
 
         results_map = {}
         for tu in capped:
-            results_map[tu.id] = json.dumps({"error": "已达到本轮对话最大工具调用次数"})
+            err = "已达到本轮对话最大联网搜索次数（{}次）。请基于已有搜索结果给出完整回答。".format(MAX_WEB_SEARCHES) if tu.name == "web_search" else "已达到本轮对话最大工具调用次数"
+            results_map[tu.id] = json.dumps({"error": err}, ensure_ascii=False)
 
         if runnable:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(runnable)) as executor:
