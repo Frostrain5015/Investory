@@ -89,20 +89,12 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
     } catch { /* ignore */ }
   }, [])
 
-  // Add symbol + auto-score immediately
-  const addSymbol = useCallback(async (s: StockSearchItem) => {
+  // Add symbol to list (no auto-score — scoring happens on scan button click)
+  const addSymbol = useCallback((s: StockSearchItem) => {
     const sym = normSym(s.symbol)
-    setSymbols(prev => {
-      if (prev.includes(sym)) return prev
-      return [...prev, sym]
-    })
+    setSymbols(prev => prev.includes(sym) ? prev : [...prev, sym])
     setQuery('')
     setSearchResults([])
-    // Auto-score the newly added stock
-    try {
-      const res = await getFactorScores([sym])
-      if (res?.scores) setScores(prev => ({ ...prev, ...res.scores }))
-    } catch { /* ignore */ }
   }, [])
 
   const removeSymbol = useCallback((sym: string) => {

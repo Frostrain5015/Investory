@@ -36,6 +36,23 @@ public class StocksageScheduler {
         this.cacheDao = cacheDao;
     }
 
+    // ── 盘后预热缓存 ─────────────────────────────────────────────────────
+
+    /**
+     * 每个交易日 15:30 预热 akshare 缓存（收盘后数据已更新）。
+     * 预热 CSI300 前30只股票 + 市场环境数据，后续选股/风控分析秒级响应。
+     */
+    @Scheduled(cron = "${stocksage.prefetch.cron:0 30 15 * * MON-FRI}", zone = "Asia/Shanghai")
+    public void scheduledPrefetch() {
+        log.info("[StockSage] 开始预热缓存");
+        try {
+            executor.executeWithTimeout(20, java.util.concurrent.TimeUnit.MINUTES, "prefetch_data");
+            log.info("[StockSage] 缓存预热完成");
+        } catch (Exception e) {
+            log.warning("[StockSage] 缓存预热失败: " + e.getMessage());
+        }
+    }
+
     // ── 收盘后主策略扫描 ─────────────────────────────────────────────────
 
     /**
