@@ -13,7 +13,7 @@ SCRIPT_DIR = Path(__file__).parent
 KB_FILE = SCRIPT_DIR / "ai_knowledge_base.json"
 
 # DashScope model routing: fast model for simple queries, configured model for deep analysis
-DASHSCOPE_FAST_MODEL = "qwen-turbo-latest"
+DASHSCOPE_FAST_MODEL = "qwen-plus-latest"
 
 # Keywords that signal the user needs deep analysis — always use the full model
 _COMPLEX_SIGNALS = [
@@ -1480,13 +1480,21 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> 
 # ── OpenAI-compatible streaming with function calling ────────────────────
 
 def get_proxy():
-    """Load proxy URL from config.ini"""
+    """Load proxy URL from config.ini (only for overseas APIs like Yahoo Finance)."""
     import configparser
     cfg = configparser.ConfigParser()
     cfg_file = SCRIPT_DIR / "config.ini"
     if cfg_file.exists(): cfg.read(cfg_file, encoding="utf-8")
     try: return cfg.get("proxy", "url", fallback="").strip()
     except: return ""
+
+
+def _needs_proxy(api_base: str) -> bool:
+    """Domestic Chinese APIs don't need proxy. Only use proxy for overseas endpoints."""
+    domestic_domains = ["aliyuncs.com", "aliyun.com", "bailian", "dashscope"]
+    if api_base and any(d in api_base for d in domestic_domains):
+        return False
+    return True
 
 
 def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0):
@@ -1496,7 +1504,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     if api_base: kwargs["base_url"] = api_base
     # Proxy support for overseas API access
     proxy_url = os.getenv("PROXY_URL", get_proxy())
-    if proxy_url:
+    if proxy_url and _needs_proxy(api_base):
         kwargs["http_client"] = httpx.Client(proxy=proxy_url)
     client = OpenAI(**kwargs)
     max_tokens = 4096 if deep_think else 1024
@@ -1738,7 +1746,7 @@ def generate_suggestions(api_key: str, model: str, api_base: str):
     kwargs = {"api_key": api_key}
     if api_base: kwargs["base_url"] = api_base
     proxy_url = os.getenv("PROXY_URL", get_proxy())
-    if proxy_url:
+    if proxy_url and _needs_proxy(api_base):
         kwargs["http_client"] = httpx.Client(proxy=proxy_url)
     client = OpenAI(**kwargs)
     resp = client.chat.completions.create(

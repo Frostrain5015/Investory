@@ -34,7 +34,7 @@ public class AiApiController {
     private String defaultKey;
 
     private static final String DEFAULT_PROVIDER = "bailian";
-    private static final String DEFAULT_MODEL   = "qwen3.7-max";
+    private static final String DEFAULT_MODEL   = "qwen-plus-latest";
     private static final String DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 
     @Autowired
