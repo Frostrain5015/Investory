@@ -118,8 +118,22 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
         }
         setMessages([...newMessages, msg]); setStreaming(false); es.close(); esRef.current = null
       })
-      es.addEventListener('error', (e) => { pendingStrategy.current = null; try { const d: SseEvent = JSON.parse((e as MessageEvent).data); setStreamText(d.msg || t.chat.errorUnknown) } catch { setStreamText(t.chat.errorNetwork) }; setStreaming(false); setToolMsg(''); es.close(); esRef.current = null })
-      es.onerror = () => {}
+      es.addEventListener('error', (e) => {
+        pendingStrategy.current = null
+        let errMsg = t.chat.errorNetwork
+        try {
+          const raw = (e as MessageEvent).data
+          if (raw) { const d: SseEvent = JSON.parse(raw); errMsg = d.msg || t.chat.errorUnknown }
+        } catch {}
+        setMessages([...newMessages, { role: 'system', content: `⚠ ${errMsg}` }])
+        setStreaming(false); setToolMsg(''); es.close(); esRef.current = null
+      })
+      es.onerror = () => {
+        if (!streamAccum.current) {
+          setMessages([...newMessages, { role: 'system', content: `⚠ ${t.chat.errorNetwork}` }])
+        }
+        setStreaming(false); setToolMsg(''); es.close(); esRef.current = null
+      }
     } catch (e: unknown) { setStreamText(`${t.chat.errorPrefix} ${e instanceof Error ? e.message : String(e)}`); setStreaming(false) }
   }
 
@@ -172,7 +186,7 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
       <div className="flex-1 overflow-auto px-4 py-4 space-y-3">
         {messages.length === 0 && !streaming && (
           <div className="text-center py-10">
-            <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-3" style={{ ...gradientStyle, opacity: 0.1 }}>
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-3" style={{ background: 'linear-gradient(135deg, rgba(134,59,255,0.12), rgba(71,191,255,0.12))' }}>
               <Sparkles className="w-5 h-5" style={{ color: '#863bff' }} />
             </div>
             <p className="text-sm font-medium text-slate-700">{t.chat.greeting}</p>
@@ -225,7 +239,7 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
         ))}
         {streaming && (
           <div className="flex justify-start">
-            <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-slate-50 text-slate-700 border border-slate-100">
+            <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${streamText.startsWith('⚠') ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-700 border border-slate-100'}`}>
               {streamText ? (() => {
                 const thinkMatch = streamText.match(/<think(?:ing)?>([\s\S]*?)(<\/think(?:ing)?>|$)/)
                 const thinking = thinkMatch ? thinkMatch[1] : ''
