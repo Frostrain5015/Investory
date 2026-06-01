@@ -87,8 +87,8 @@ public class AiSessionManager {
         emitToAll(s, "reasoning", Map.of("msg", chunk));
     }
 
-    public void emitTool(long userId, String name) {
-        emitToAll(get(userId), "tool", Map.of("name", name));
+    public void emitTool(long userId, String name, String category) {
+        emitToAll(get(userId), "tool", Map.of("name", name, "category", category));
     }
 
     public void emitToolEnd(long userId, String name) {

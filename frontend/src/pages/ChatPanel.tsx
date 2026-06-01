@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Brain, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench } from 'lucide-react'
+import { Sparkles, X, Send, Trash2, Brain, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, Database } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -14,9 +14,10 @@ interface PortfolioCard { portfolio_score: number; holdings_scored: number; top_
 interface PicksCard { regime: string; picks: { code: string; name: string; total_score: number; buy_score: number; bullish: string[] }[]; scanned: number }
 /** A single step in the agent's reasoning trace. Either a chunk of native
  * reasoning_content, or a tool call (with its eventual completion status). */
+export type ToolCategory = 'query' | 'analysis' | 'mutation'
 export type TimelineStep =
   | { kind: 'thinking'; text: string }
-  | { kind: 'tool'; name: string; done: boolean; error?: string }
+  | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string }
 interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard }
 interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
 interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
@@ -25,6 +26,34 @@ type ConfirmStatus = 'pending' | 'accepted' | 'refused'
 let gMessages: Message[] = []
 let gListeners: (() => void)[] = []
 function notify() { gListeners.forEach(fn => fn()) }
+
+/** Per-category visual treatment. Three tool families get three palettes:
+ *   query     → slate  (read-only, cheap, instant — lowest visual weight)
+ *   analysis  → purple (engine / external calls — medium weight; web_search is sky)
+ *   mutation  → amber  (writes DB / state — highest, draws the eye)
+ * Errors override to red. Done state shifts to emerald.                  */
+function toolStyle(step: Extract<TimelineStep, { kind: 'tool' }>) {
+  const cat: ToolCategory = step.category || 'query'
+  const isWeb = step.name === 'web_search'
+  if (step.error) {
+    return { label: 'text-red-600', dot: 'bg-red-400', Icon: Wrench }
+  }
+  if (step.done) {
+    return { label: 'text-emerald-600', dot: 'bg-emerald-400',
+             Icon: cat === 'mutation' ? Database : cat === 'analysis' ? (isWeb ? Globe : Sparkles) : Search }
+  }
+  // running
+  if (cat === 'mutation') {
+    return { label: 'text-amber-600', dot: 'bg-amber-400 animate-pulse', Icon: Database }
+  }
+  if (cat === 'analysis') {
+    return isWeb
+      ? { label: 'text-sky-600', dot: 'bg-sky-400 animate-pulse', Icon: Globe }
+      : { label: 'text-purple-500', dot: 'bg-purple-400 animate-pulse', Icon: Sparkles }
+  }
+  // query
+  return { label: 'text-slate-500', dot: 'bg-slate-400 animate-pulse', Icon: Search }
+}
 
 /** Renders the agent's reasoning trace as a collapsible timeline:
  * thinking paragraph → tool call → tool result indicator → next thinking → ...
@@ -57,28 +86,13 @@ function TimelineBlock({ steps, done, lang }: { steps: TimelineStep[]; done: boo
                 <div key={i} className="text-slate-500 whitespace-pre-wrap">{text}</div>
               )
             }
-            // tool step
-            const isWeb = step.name === 'web_search'
-            const labelClr = step.error
-              ? 'text-red-600'
-              : isWeb
-              ? 'text-sky-600'
-              : step.done
-              ? 'text-emerald-600'
-              : 'text-purple-500'
-            const dotClr = step.error
-              ? 'bg-red-400'
-              : isWeb
-              ? 'bg-sky-400'
-              : step.done
-              ? 'bg-emerald-400'
-              : 'bg-purple-400 animate-pulse'
+            const { label, dot, Icon } = toolStyle(step)
             return (
               <div key={i} className="flex items-start gap-2">
-                <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${dotClr}`} />
+                <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
                 <div className="flex-1">
-                  <div className={`flex items-center gap-1.5 ${labelClr}`}>
-                    {isWeb ? <Globe className="w-3 h-3" /> : <Wrench className="w-3 h-3" />}
+                  <div className={`flex items-center gap-1.5 ${label}`}>
+                    <Icon className="w-3 h-3" />
                     <span className="font-medium">{localizeToolName(step.name, lang)}</span>
                     {!step.done && !step.error && (
                       <span className="text-[10px] opacity-70">{lang === 'en' ? 'running…' : '调用中'}</span>
@@ -245,11 +259,12 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         try { const raw = JSON.parse(e.data); const d = raw.data || raw; const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d; if (parsed?.items?.length > 0) { setConfirmData(parsed); setConfirmStatus('pending') } } catch {}
       })
       es.addEventListener('tool', (e) => {
-        const d: SseEvent = JSON.parse(e.data)
+        const d = JSON.parse(e.data) as { name?: string; category?: ToolCategory }
         const name = d.name || ''
         if (!name) return
+        const category: ToolCategory = d.category === 'analysis' || d.category === 'mutation' ? d.category : 'query'
         // A new tool call closes any open thinking segment and starts a tool step
-        timelineRef.current = [...timelineRef.current, { kind: 'tool', name, done: false }]
+        timelineRef.current = [...timelineRef.current, { kind: 'tool', name, category, done: false }]
         pushTimeline()
       })
       es.addEventListener('tool_end', (e) => {
@@ -463,15 +478,16 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                 </div>
               </> : <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>}
               {m.hasCode && (
-                <div className="mt-3 pt-3 border-t border-white/20">
-                  <button onClick={async () => {
-                    const name = m.strategyName || prompt(t.chat.promptStrategyName, t.chat.strategyPlaceholder)
-                    if (!name) return
+                <StrategyCard
+                  name={m.strategyName || ''}
+                  description={m.strategyDesc || ''}
+                  code={m.strategyCode || m.content}
+                  onSave={async (name: string) => {
                     const code = m.strategyCode || m.content
                     const res = await fetch(`${BASE}/api/backtest/strategies`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, strategyType: 'advanced', strategy: { code } }) })
                     const data = await res.json(); if (data.error) toast(data.error, false); else toast(t.chat.strategySaved, true)
-                  }} className="w-full h-8 rounded-lg bg-white/20 text-white text-xs font-medium hover:bg-white/30 transition-colors">{t.chat.saveStrategyBtn}</button>
-                </div>
+                  }}
+                />
               )}
               {m.portfolioCard && <DataCard title="组合因子分析" score={m.portfolioCard.portfolio_score ?? 0} top={m.portfolioCard.top_holdings} bottom={m.portfolioCard.bottom_holdings} />}
               {m.picksCard && <PicksCardDisplay card={m.picksCard} />}
@@ -494,9 +510,18 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                   }
                 }
                 const reasoningDone = !!after.trim()
-                // Idle pulse only when nothing has streamed yet
-                const showThinkingPending = deepThink && liveSteps.length === 0 && !after.trim()
-                const showGenericPending = !deepThink && liveSteps.length === 0 && !after.trim()
+                // The currently-running tool, if any — surfaced as a peer status
+                // indicator (sibling to "深度思考中…"), not buried in the timeline.
+                const runningTool = (() => {
+                  for (let i = liveSteps.length - 1; i >= 0; i--) {
+                    const s = liveSteps[i]
+                    if (s.kind === 'tool' && !s.done) return s
+                  }
+                  return null
+                })()
+                // Idle pulse only when nothing has streamed yet AND no tool is running
+                const showThinkingPending = deepThink && liveSteps.length === 0 && !after.trim() && !runningTool
+                const showGenericPending = !deepThink && liveSteps.length === 0 && !after.trim() && !runningTool
                 return (<>
                   {showThinkingPending && (
                     <div className="flex items-center gap-1.5 text-[12px] text-purple-500 mb-1.5">
@@ -509,6 +534,28 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                       </span>
                     </div>
                   )}
+                  {runningTool && !after.trim() && (() => {
+                    const s = toolStyle(runningTool)
+                    const dotColor = runningTool.error
+                      ? 'bg-red-400'
+                      : runningTool.category === 'mutation'
+                      ? 'bg-amber-400'
+                      : runningTool.category === 'analysis'
+                      ? (runningTool.name === 'web_search' ? 'bg-sky-400' : 'bg-purple-400')
+                      : 'bg-slate-400'
+                    return (
+                      <div className={`flex items-center gap-1.5 text-[12px] mb-1.5 ${s.label}`}>
+                        <s.Icon className="w-3.5 h-3.5 animate-pulse" />
+                        <span className="font-medium">{localizeToolName(runningTool.name, lang)}</span>
+                        <span className="text-[10px] opacity-70">{lang === 'en' ? 'running…' : '调用中'}</span>
+                        <span className="inline-flex gap-0.5 ml-0.5">
+                          <span className={`w-1 h-1 rounded-full animate-bounce ${dotColor}`} />
+                          <span className={`w-1 h-1 rounded-full animate-bounce ${dotColor}`} style={{ animationDelay: '0.15s' }} />
+                          <span className={`w-1 h-1 rounded-full animate-bounce ${dotColor}`} style={{ animationDelay: '0.3s' }} />
+                        </span>
+                      </div>
+                    )
+                  })()}
                   {liveSteps.length > 0 && <TimelineBlock steps={liveSteps} done={reasoningDone} lang={lang} />}
                   {showGenericPending && (
                     <span className="inline-flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>
@@ -520,7 +567,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                 <div className="mt-3 pt-3 border-t border-slate-200 space-y-1.5">
                   <p className="text-xs text-slate-500">{askData.question}</p>
                   {askData.options.map((o: string, i: number) => (
-                    <button key={i} onClick={() => { setAskData(null); send(o) }} className="block w-full text-left text-xs px-3 py-2 rounded-lg border border-slate-200 hover:bg-white hover:border-slate-300 transition-colors">{o}</button>
+                    <button key={i} onClick={() => { setAskData(null); send(o) }} className="block w-full text-left text-xs px-3 py-2 rounded-lg border border-slate-200 hover:bg-white hover:border-slate-300 active:bg-purple-50 active:border-purple-200 transition-colors">{o}</button>
                   ))}
                 </div>
               )}
@@ -690,16 +737,16 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                     <span className="text-[11px] font-semibold text-slate-700 tracking-tight">观澜</span>
                     <span className="text-[9px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">AI</span>
                   </div>
-                  <div className="flex items-center gap-0.5">
+                  <div className="flex items-center gap-1">
                     <button onClick={() => setMode('expanded')}
-                      className="text-[10px] text-slate-400 hover:text-purple-500 transition-colors px-1.5 py-0.5 rounded hover:bg-purple-50 inline-flex items-center gap-1"
+                      className="text-xs text-purple-500 hover:text-purple-600 font-medium transition-colors px-2 py-1 rounded-lg hover:bg-purple-50 inline-flex items-center gap-1"
                       title={t.chat.expand}>
-                      <Maximize2 className="w-3 h-3" />展开
+                      <Maximize2 className="w-3.5 h-3.5" />展开
                     </button>
                     <button onClick={onClose}
-                      className="text-slate-300 hover:text-slate-500 transition-colors p-1"
+                      className="text-slate-300 hover:text-slate-500 transition-colors p-1.5 rounded-lg hover:bg-slate-100"
                       title="收起">
-                      <X className="w-3 h-3" />
+                      <X className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </div>
@@ -752,6 +799,59 @@ function PicksCardDisplay({ card }: { card: PicksCard }) {
           {p.bullish?.slice(0, 2).map((r, ri) => (<span key={ri} className="text-[10px] px-1 py-0.5 bg-emerald-50 text-emerald-600 rounded">{r}</span>))}
         </div>
       ))}
+    </div>
+  )
+}
+
+function StrategyCard({ name, description, code: _code, onSave }: { name: string; description: string; code: string; onSave: (name: string) => Promise<void> }) {
+  const { t } = useT()
+  const [saving, setSaving] = useState(false)
+
+  const displayName = name || t.chat.strategyPlaceholder
+  const lines = (description || '').split(/\n/).filter(l => l.trim())
+
+  return (
+    <div className="mt-3 pt-3 border-t border-white/25">
+      <div className="rounded-xl bg-white/10 backdrop-blur-sm ring-1 ring-white/20 overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center gap-2 px-3 py-2 bg-white/10">
+          <div className="w-5 h-5 rounded-md flex items-center justify-center shrink-0 bg-white/25">
+            <Sparkles className="w-3 h-3 text-white" />
+          </div>
+          <span className="text-xs font-semibold text-white tracking-tight">{displayName}</span>
+        </div>
+
+        {/* Rules body */}
+        {lines.length > 0 && (
+          <div className="px-3 py-2 space-y-1.5 text-[11px] text-white/85 leading-relaxed">
+            {lines.map((line, i) => {
+              const trimmed = line.trim()
+              if (!trimmed) return null
+              const isRule = /^(买入[：:]|卖出[：:]|入场[：:]|出场[：:]|止损[：:]|止盈[：:]|仓位[：:]|风控[：:]|参数[：:]|Buy|Sell|Entry|Exit|Stop|Position)/i.test(trimmed)
+              return (
+                <div key={i} className={`flex items-start gap-1.5 ${isRule ? 'font-semibold text-white' : ''}`}>
+                  {isRule && <span className="w-1 h-1 rounded-full bg-white/50 mt-[5px] shrink-0" />}
+                  <span>{trimmed}</span>
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Save button */}
+        <div className="px-3 pb-3 pt-1">
+          <button onClick={async () => {
+            const savedName = name || prompt(t.chat.promptStrategyName, t.chat.strategyPlaceholder)
+            if (!savedName) return
+            setSaving(true)
+            try { await onSave(savedName) } finally { setSaving(false) }
+          }} disabled={saving}
+            className="w-full h-9 rounded-lg ring-1 ring-white/30 bg-white/15 hover:bg-white/25 active:bg-white/35 text-white text-xs font-semibold transition-all flex items-center justify-center gap-1.5 tracking-wide disabled:opacity-50">
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5 opacity-70" />}
+            {saving ? t.chat.saving : t.chat.saveStrategyBtn}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

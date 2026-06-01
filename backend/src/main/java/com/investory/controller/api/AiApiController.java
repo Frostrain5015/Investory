@@ -233,13 +233,18 @@ public class AiApiController {
                             }
                             session.emitToolFail(uid, name, errMsg);
                         } else if (line.startsWith("[TOOL]")) {
-                            String name = line.substring(6).trim();
+                            // Payload: "<name>\t<category>"  (category optional, defaults to query)
+                            String payload = line.substring(6).trim();
+                            int tab = payload.indexOf('\t');
+                            String name = tab >= 0 ? payload.substring(0, tab) : payload;
+                            String category = tab >= 0 ? payload.substring(tab + 1).trim() : "query";
                             // A new tool call closes the current thinking segment
                             openThinking[0] = null;
                             Map<String, Object> step = new LinkedHashMap<>();
-                            step.put("kind", "tool"); step.put("name", name); step.put("done", false);
+                            step.put("kind", "tool"); step.put("name", name);
+                            step.put("category", category); step.put("done", false);
                             timeline.add(step);
-                            session.emitTool(uid, name);
+                            session.emitTool(uid, name, category);
                         } else if (line.startsWith("[CONFIRM]")) {
                             session.emitConfirm(uid, line.substring(9).trim());
                         } else if (line.startsWith("[ERROR]")) {
