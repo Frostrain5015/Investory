@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
+import { usePortfolioPreload } from '@/hooks/use-portfolio-preload'
 import { useT } from '@/i18n/I18nContext'
 import LangSwitcher from '@/components/LangSwitcher'
 import {
@@ -22,6 +23,7 @@ export function useChatContext() { return useContext(ChatContext) }
 export default function Layout() {
   const { t, lang } = useT()
   const { username, portfolioId, isAdmin, setPortfolioName, logout } = useAuth()
+  usePortfolioPreload()  // triggers background analysis on login
   const { positiveHex } = useSettings()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<StockSearchItem[]>([])

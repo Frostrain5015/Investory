@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from '@/hooks/use-auth'
 import { SettingsProvider } from '@/hooks/use-settings'
 import { ThemeProvider } from '@/hooks/use-theme'
 import { ToastProvider } from '@/components/Toast'
+import { NotificationBubbleProvider } from '@/components/NotificationBubble'
 import { preloadSuggestions } from '@/services/aiPreload'
 import { ConfirmProvider } from '@/hooks/use-confirm'
 import { I18nProvider, useT } from '@/i18n/I18nContext'
@@ -62,6 +63,7 @@ export default function App() {
           <ThemeProvider>
           <I18nProvider>
           <ToastProvider>
+          <NotificationBubbleProvider>
           <ConfirmProvider>
           <Routes>
             <Route path="/" element={<PublicRoute><Hero /></PublicRoute>} />
@@ -87,6 +89,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           </ConfirmProvider>
+          </NotificationBubbleProvider>
           </ToastProvider>
           </I18nProvider>
           </ThemeProvider>

@@ -127,7 +127,22 @@ export function RiskSection() {
     }
   }, [])
 
-  useEffect(() => { loadAnalysis() }, [loadAnalysis])
+  useEffect(() => {
+    // Check for preloaded analysis from login-time background task
+    try {
+      const cached = sessionStorage.getItem('investory_preloaded_analysis')
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        if (parsed && parsed.portfolio_score != null) {
+          setData(parsed)
+          setLoading(false)
+          sessionStorage.removeItem('investory_preloaded_analysis')
+          return
+        }
+      }
+    } catch {}
+    loadAnalysis()
+  }, [loadAnalysis])
 
   // Derived stats
   const topHoldings: any[] = data?.top_holdings || []
