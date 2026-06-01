@@ -65,7 +65,7 @@ export default function Layout() {
   const sidebar = (
     <aside className="w-60 flex flex-col bg-slate-900 text-slate-300 shrink-0 h-full">
       <a href={`${import.meta.env.BASE_URL}dashboard`} onClick={() => setSidebarOpen(false)} className="flex items-center gap-3 px-5 h-16 border-b border-slate-800">
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: positiveHex }}>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #863bff, #47bfff)' }}>
           <TrendingUp className="w-5 h-5 text-white" />
         </div>
         <span className="text-lg font-bold text-white tracking-tight">Investory</span>
