@@ -312,6 +312,7 @@ export interface BacktestResult {
 export interface IndicatorDef {
   name: string
   label: string
+  ic?: number  // Information Coefficient: how predictive this indicator is (>0.05=strong, <0.02=noise)
   params: { name: string; label: string; type: 'number'; default: number; min?: number; max?: number }[]
   conditions?: { value: string; label: string }[]
 }

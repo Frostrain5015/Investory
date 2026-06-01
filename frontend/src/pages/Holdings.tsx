@@ -3,12 +3,12 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
-import { BASE, searchStocks, chartAPI, getHoldingsMetrics } from '@/services/api'
+import { BASE, searchStocks, chartAPI, getFactorScores } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/card'
 import { displaySymbol, fmtPriceTs } from '@/lib/format'
 import Sparkline from '@/components/Sparkline'
 import { useT } from '@/i18n/I18nContext'
-import type { StockSearchItem, PriceData, StockMetrics } from '@/types'
+import type { StockSearchItem, PriceData, FactorScore } from '@/types'
 import { Search, X, Plus, GripVertical } from 'lucide-react'
 
 interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number; changeToday?: number; changePctToday?: number; priceTimestamp?: string }
@@ -42,7 +42,7 @@ export default function Holdings() {
   const [dragKey, setDragKey] = useState<string | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropIdx, setDropIdx] = useState<number | null>(null)
-  const [metrics, setMetrics] = useState<Record<string, StockMetrics>>({})
+  const [factorScores, setFactorScores] = useState<Record<string, FactorScore>>({})
 
   useEffect(() => {
     if (items.length === 0) return
@@ -57,7 +57,8 @@ export default function Holdings() {
 
   useEffect(() => {
     if (!showRiskMetrics || items.length === 0) return
-    getHoldingsMetrics().then(r => setMetrics(r.metrics)).catch(() => {})
+    const syms = items.map(i => i.symbol)
+    getFactorScores(syms).then(r => { if (r?.scores) setFactorScores(r.scores) }).catch(() => {})
   }, [showRiskMetrics, items.length])
 
   function handleDragStart(groupKey: string, idx: number) {
@@ -232,8 +233,7 @@ export default function Holdings() {
                         <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.market.change}</th>
                         <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.market.changePct}</th>
                         {showRiskMetrics && <>
-                          <th className="text-center text-xs font-medium text-slate-500 px-3 py-2">{t.holdings.percentile}</th>
-                          <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">Beta</th>
+                          <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">评分</th>
                           <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.holdings.volatility}</th>
                         </>}
                         <th className="text-right text-xs font-medium text-slate-500 px-3 py-2 w-10"></th>
@@ -277,26 +277,12 @@ export default function Holdings() {
                               {valid ? `${up ? '+' : ''}${chgPct.toFixed(2)}%` : '—'}
                             </td>
                             {showRiskMetrics && (() => {
-                              const m = metrics[String(item.stock_id)]
-                              const pct = m?.percentile_5y ?? null
-                              const badgeColor = pct == null
-                                ? 'bg-slate-100 text-slate-400'
-                                : pct < 30 ? 'bg-blue-100 text-blue-700'
-                                : pct > 70 ? 'bg-red-100 text-red-600'
-                                : 'bg-slate-100 text-slate-600'
-                              return <>
-                                <td className="px-3 py-3 text-center">
-                                  {pct != null
-                                    ? <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${badgeColor}`}>{pct.toFixed(0)}%</span>
-                                    : <span className="text-slate-300 text-xs">—</span>}
-                                </td>
-                                <td className="px-3 py-3 text-right tabular-nums text-xs text-slate-700">
-                                  {m?.beta_1y != null ? m.beta_1y.toFixed(2) : <span className="text-slate-300">—</span>}
-                                </td>
-                                <td className="px-3 py-3 text-right tabular-nums text-xs text-slate-700">
-                                  {m?.volatility_1y != null ? `${m.volatility_1y.toFixed(1)}%` : <span className="text-slate-300">—</span>}
-                                </td>
-                              </>
+                              const fs = factorScores[item.symbol]
+                              const ts = fs?.totalScore ?? 0
+                              const color = ts >= 60 ? 'text-emerald-600' : ts >= 40 ? 'text-amber-600' : ts > 0 ? 'text-red-500' : 'text-slate-300'
+                              return <td className="px-3 py-3 text-right font-bold tabular-nums text-sm">
+                                <span className={color}>{ts > 0 ? ts.toFixed(0) : '—'}</span>
+                              </td>
                             })()}
                             <td className="px-3 py-3 text-right">
                               {managing && (
@@ -337,13 +323,10 @@ export default function Holdings() {
                             <div className="flex justify-between"><span>{t.stockDetail.price}</span><span className="tabular-nums">{valid ? Number(item.price).toFixed(2) : '—'}</span></div>
                             <div className="flex justify-between"><span>{t.market.change}</span><span className={`tabular-nums ${up ? positiveClass : negativeClass}`}>{valid ? `${up ? '+' : ''}${chg.toFixed(2)}` : '—'}</span></div>
                             <div className="flex justify-between"><span>{t.market.changePct}</span><span className={`tabular-nums ${up ? positiveClass : negativeClass}`}>{valid ? `${up ? '+' : ''}${chgPct.toFixed(2)}%` : '—'}</span></div>
-                            {showRiskMetrics && (
-                              <>
-                                <div className="flex justify-between"><span>{t.holdings.percentile}</span><span>{m?.percentile_5y != null ? `${m.percentile_5y.toFixed(0)}%` : '—'}</span></div>
-                                <div className="flex justify-between"><span>Beta</span><span>{m?.beta_1y != null ? m.beta_1y.toFixed(2) : '—'}</span></div>
-                                <div className="flex justify-between"><span>{t.holdings.volatility}</span><span>{m?.volatility_1y != null ? `${m.volatility_1y.toFixed(1)}%` : '—'}</span></div>
-                              </>
-                            )}
+                            {showRiskMetrics && (() => {
+                              const fs = factorScores[item.symbol]
+                              return <div className="flex justify-between"><span>因子评分</span><span className={fs?.totalScore && fs.totalScore >= 60 ? 'text-emerald-600 font-bold' : ''}>{fs?.totalScore ? fs.totalScore.toFixed(0) : '—'}</span></div>
+                            })()}
                             {managing && (
                               <div className="pt-1"><button onClick={() => removeWatch(item.stock_id)}
                                 className="text-xs text-red-500">{t.common.delete}</button></div>

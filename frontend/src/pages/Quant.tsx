@@ -16,22 +16,22 @@ function buildEntryIndicators(t: Translation) {
   const q = t.quant
   return [
     // ── Technical ──
-    { name: 'sma', label: 'SMA 均线', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> SMA' }, { value: 'below', label: '< SMA' }] },
-    { name: 'ema', label: 'EMA 均线', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> EMA' }, { value: 'below', label: '< EMA' }] },
-    { name: 'rsi', label: 'RSI', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 14 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
-    { name: 'macd_histogram', label: 'MACD 柱', params: [{ name: 'fast', label: q.indParamFast, type: 'number' as const, default: 12 }, { name: 'slow', label: q.indParamSlow, type: 'number' as const, default: 26 }], conditions: [{ value: 'above', label: '> 0' }, { value: 'below', label: '< 0' }] },
-    { name: 'bollinger_lower', label: '布林下轨', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: '跌破下轨' }] },
-    { name: 'volume_ma', label: '成交量', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '放量' }] },
-    { name: 'kdj_k', label: 'KDJ-K', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 9 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
-    // ── Smart Factors (动量/趋势/波动/风险) ──
-    { name: 'ret_1m', label: '月动量(1M)', params: [], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
-    { name: 'ret_3m', label: '季动量(3M)', params: [], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
-    { name: 'ret_6m', label: '半动量(6M)', params: [], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
-    { name: 'volatility', label: '年化波动', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: '< 阈值%' }] },
-    { name: 'max_drawdown', label: '最大回撤', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 60 }], conditions: [{ value: 'above', label: '> 阈值%' }] },
-    { name: 'ma_spread', label: '均线乖离', params: [{ name: 'fast', label: '快线', type: 'number' as const, default: 5 }, { name: 'slow', label: '慢线', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
-    { name: 'upday_ratio', label: '涨日占比', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> 阈值%' }] },
-    { name: 'volume_ratio', label: '量比', params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 5 }], conditions: [{ value: 'above', label: '> 阈值' }] },
+    { name: 'sma', label: 'SMA 均线', ic: 0, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> SMA' }, { value: 'below', label: '< SMA' }] },
+    { name: 'ema', label: 'EMA 均线', ic: 0, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> EMA' }, { value: 'below', label: '< EMA' }] },
+    { name: 'rsi', label: 'RSI', ic: 0, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 14 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
+    { name: 'macd_histogram', label: 'MACD 柱', ic: 0, params: [{ name: 'fast', label: q.indParamFast, type: 'number' as const, default: 12 }, { name: 'slow', label: q.indParamSlow, type: 'number' as const, default: 26 }], conditions: [{ value: 'above', label: '> 0' }, { value: 'below', label: '< 0' }] },
+    { name: 'bollinger_lower', label: '布林下轨', ic: 0.017, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: '跌破下轨' }] },
+    { name: 'volume_ma', label: '成交量', ic: 0.061, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '放量' }] },
+    { name: 'kdj_k', label: 'KDJ-K', ic: 0, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 9 }], conditions: [{ value: 'oversold', label: '超卖' }, { value: 'overbought', label: '超买' }] },
+    // ── Smart Factors ──
+    { name: 'ret_1m', label: '月动量', ic: -0.055, params: [], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
+    { name: 'ret_3m', label: '季动量', ic: -0.048, params: [], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
+    { name: 'ret_6m', label: '半年动量', ic: -0.045, params: [], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
+    { name: 'volatility', label: '波动率', ic: 0.066, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'below', label: '< 阈值%' }] },
+    { name: 'max_drawdown', label: '最大回撤', ic: 0.035, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 60 }], conditions: [{ value: 'above', label: '> 阈值%' }] },
+    { name: 'ma_spread', label: '均线乖离', ic: 0.115, params: [{ name: 'fast', label: '快线', type: 'number' as const, default: 5 }, { name: 'slow', label: '慢线', type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> 阈值%' }, { value: 'below', label: '< 阈值%' }] },
+    { name: 'upday_ratio', label: '涨日占比', ic: 0.056, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 20 }], conditions: [{ value: 'above', label: '> 阈值%' }] },
+    { name: 'volume_ratio', label: '量比', ic: 0.028, params: [{ name: 'period', label: q.indParamPeriod, type: 'number' as const, default: 5 }], conditions: [{ value: 'above', label: '> 阈值' }] },
   ]
 }
 
@@ -76,14 +76,10 @@ export default function Quant() {
 
 // ── Risk Analysis Section ───────────────────────────────────────────────
 
-const GROUP_LABELS: Record<string, string> = {
-  value: '价值', growth: '成长', momentum: '动量', quality: '质量',
-  technical: '技术', event: '事件', social: '情绪', other: '其他',
-}
-
 const GROUP_COLORS: Record<string, string> = {
-  value: '#3b82f6', growth: '#22c55e', momentum: '#f59e0b', quality: '#8b5cf6',
-  technical: '#06b6d4', event: '#f97316', social: '#ec4899', other: '#94a3b8',
+  '价值': '#3b82f6', '成长': '#22c55e', '动量': '#f59e0b', '质量': '#8b5cf6',
+  '技术': '#06b6d4', '事件': '#f97316', '资金': '#14b8a6', '情绪': '#ec4899',
+  '风控': '#ef4444', '其他': '#94a3b8',
 }
 
 export function RiskSection() {
@@ -91,11 +87,13 @@ export function RiskSection() {
   const toast = useToast()
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [progress, setProgress] = useState('')
 
   const loadAnalysis = useCallback(async () => {
     setLoading(true)
+    setProgress('加载持仓...')
+
     try {
-      // Get holdings from API
       const holdRes = await fetch(`${BASE}/api/holdings`, { credentials: 'include' })
       const holdData = await holdRes.json()
       const snaps = holdData.snapshots || []
@@ -105,13 +103,14 @@ export function RiskSection() {
         return
       }
 
-      // Build holdings list with weights (by market value)
       const totalVal = snaps.reduce((s: number, h: any) => s + (h.marketValue ?? h.marketValueCny ?? h.totalInvested ?? 0), 0)
       const holdings = snaps.map((h: any) => ({
         symbol: h.stockSymbol,
         name: h.stockName || h.stockSymbol,
         weight: totalVal > 0 ? ((h.marketValue ?? h.marketValueCny ?? h.totalInvested ?? 0) / totalVal * 100) : (100 / snaps.length),
       }))
+
+      setProgress('分析中...')
 
       const { analyzePortfolio } = await import('@/services/api')
       const result = await analyzePortfolio(holdings)
@@ -124,6 +123,7 @@ export function RiskSection() {
       setData({ _error: e.message || '分析失败' })
     } finally {
       setLoading(false)
+      setProgress('')
     }
   }, [])
 
@@ -136,8 +136,11 @@ export function RiskSection() {
   const factorExposure: Record<string, any> = data?.factor_exposure || {}
   const portfolioScore = data?.portfolio_score ?? 0
 
+  // Normalize group bars: find max buy_score, scale all relative to it
+  const maxGroupBuy = Math.max(1, ...Object.values(groupExposure).map((g: any) => g.buy_score || 0))
+
   return (<>
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-3">
       <button onClick={loadAnalysis} disabled={loading}
         className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-60">
         <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
@@ -148,7 +151,8 @@ export function RiskSection() {
     {loading && (
       <div className="flex flex-col items-center justify-center h-48 gap-2">
         <div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-        <span className="text-xs text-slate-400">正在调用多因子引擎分析持仓...</span>
+        <span className="text-xs text-slate-500">正在调用多因子引擎分析持仓...</span>
+        {progress && <span className="text-xs text-slate-400 font-mono">{progress}</span>}
       </div>
     )}
 
@@ -196,9 +200,9 @@ export function RiskSection() {
             {Object.entries(groupExposure).map(([group, gdata]: [string, any]) => (
               <div key={group} className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: GROUP_COLORS[group] || '#94a3b8' }} />
-                <span className="text-xs text-slate-600 w-14">{GROUP_LABELS[group] || group}</span>
+                <span className="text-xs text-slate-600 w-10">{group}</span>
                 <div className="flex-1 bg-slate-100 rounded-full h-2">
-                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.min(gdata.buy_score * 10, 100)}%` }} />
+                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${Math.min((gdata.buy_score / maxGroupBuy) * 100, 100)}%` }} />
                 </div>
                 <span className="text-xs font-medium text-emerald-600 w-8 text-right">{gdata.buy_score?.toFixed(1)}</span>
               </div>

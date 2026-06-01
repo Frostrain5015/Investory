@@ -41,7 +41,7 @@ export default function Layout() {
     { to: '/holdings', icon: Wallet, label: t.nav.holdings },
     { to: '/transactions', icon: ArrowRightLeft, label: t.nav.transactions },
     { to: '/pnl-calendar', icon: CalendarDays, label: t.nav.pnl },
-    { to: '/research', icon: FlaskConical, label: t.nav.research },
+    { to: '/research', icon: FlaskConical, label: <>{t.nav.research}<span className="ml-1.5 px-1 py-0.5 text-[9px] font-medium bg-amber-100/15 text-amber-400 rounded">Beta</span></> },
   ]
 
   useEffect(() => {

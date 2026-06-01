@@ -86,6 +86,7 @@ public class StocksageApiController {
      */
     @GetMapping("/refresh")
     public SseEmitter refresh(@RequestParam(value = "symbols", defaultValue = "") String symbols,
+                               @RequestParam(value = "strategy", defaultValue = "main") String strategy,
                                HttpServletResponse response) {
         response.setHeader("X-Accel-Buffering", "no");
         response.setHeader("Cache-Control", "no-cache");
@@ -94,7 +95,7 @@ public class StocksageApiController {
         if (!symbols.isBlank()) {
             executor.executeWithSse(emitter, "score_stocks", "--symbols", symbols);
         } else {
-            executor.executeWithSse(emitter, "scan_universe", "--type", "main");
+            executor.executeWithSse(emitter, "scan_universe", "--type", strategy);
         }
         return emitter;
     }
@@ -132,9 +133,10 @@ public class StocksageApiController {
     /**
      * POST /api/stocksage/portfolio-analysis
      * Body: {"holdings": [{"symbol":"600519","weight":30,"name":"茅台"},...]}
-     * 对组合持仓逐只调用 research()，加权聚合所有因子得分。
-     * 返回: portfolio_score, group_exposure, factor_exposure, top/bottom holdings
+     * 持仓 JSON 写入临时文件传递，避免 shell 转义问题。
      */
+    private static final com.fasterxml.jackson.databind.ObjectMapper stocksageJson = new com.fasterxml.jackson.databind.ObjectMapper();
+
     @PostMapping("/portfolio-analysis")
     public Map<String, Object> analyzePortfolio(@RequestBody Map<String, Object> body) {
         try {
@@ -143,11 +145,36 @@ public class StocksageApiController {
             if (holdings == null || holdings.isEmpty()) {
                 return Map.of("error", "no holdings provided");
             }
-            String holdingsJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(holdings);
-            return executor.execute("portfolio_analysis", "--holdings", holdingsJson);
+            String holdingsJson = stocksageJson.writeValueAsString(holdings);
+            java.io.File tmp = java.io.File.createTempFile("investory_holdings_", ".json");
+            java.nio.file.Files.writeString(tmp.toPath(), holdingsJson);
+            try {
+                return executor.executeWithTimeout(3, java.util.concurrent.TimeUnit.MINUTES,
+                    "portfolio_analysis", "--holdings", "@" + tmp.getAbsolutePath());
+            } finally {
+                tmp.delete();
+            }
         } catch (Exception e) {
             return Map.of("error", e.getMessage());
         }
+    }
+
+    @GetMapping("/portfolio-analysis-stream")
+    public SseEmitter analyzePortfolioStream(
+            @RequestParam("holdings") String holdingsJson,
+            HttpServletResponse response) {
+        response.setHeader("X-Accel-Buffering", "no");
+        response.setHeader("Cache-Control", "no-cache");
+        SseEmitter emitter = new SseEmitter(300000L);
+        try {
+            java.io.File tmp = java.io.File.createTempFile("investory_holdings_", ".json");
+            java.nio.file.Files.writeString(tmp.toPath(), holdingsJson);
+            tmp.deleteOnExit();
+            executor.executeWithSse(emitter, "portfolio_analysis", "--holdings", "@" + tmp.getAbsolutePath());
+        } catch (Exception e) {
+            try { emitter.send(SseEmitter.event().name("error").data(Map.of("message", e.getMessage()))); emitter.complete(); } catch (Exception ignored) {}
+        }
+        return emitter;
     }
 
     // ── 股票综合分析 ─────────────────────────────────────────────────────

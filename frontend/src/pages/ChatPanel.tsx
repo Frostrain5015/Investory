@@ -9,7 +9,9 @@ import { useT } from '@/i18n/I18nContext'
 import { getCachedSuggestions, getSuggestionsPromise } from '@/services/aiPreload'
 import { BASE } from '@/services/api'
 
-interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData }
+interface PortfolioCard { portfolio_score: number; holdings_scored: number; top_holdings: { symbol: string; name: string; total_score: number }[]; bottom_holdings: { symbol: string; name: string; total_score: number }[]; group_exposure: Record<string, { buy_score: number }> }
+interface PicksCard { regime: string; picks: { code: string; name: string; total_score: number; buy_score: number; bullish: string[] }[]; scanned: number }
+interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard }
 interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
 interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
 type ConfirmStatus = 'pending' | 'accepted' | 'refused'
@@ -55,6 +57,7 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
   const [toolMsg, setToolMsg] = useState('')
   const [deepThink, setDeepThink] = useState(false)
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
+  const pendingCard = useRef<{ type: string; data: any } | null>(null)
   const streamAccum = useRef('')  // accumulates raw stream text; read synchronously in done handler
   const [askData, setAskData] = useState<{ question: string; options: string[] } | null>(null)
   const [confirmData, setConfirmData] = useState<ConfirmData | null>(null)
@@ -125,6 +128,12 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
         const d = JSON.parse(e.data)
         pendingStrategy.current = { name: d.name, desc: d.description, code: d.code }
       })
+      es.addEventListener('portfolio_card', (e) => {
+        pendingCard.current = { type: 'portfolio', data: JSON.parse(e.data) }
+      })
+      es.addEventListener('picks_card', (e) => {
+        pendingCard.current = { type: 'picks', data: JSON.parse(e.data) }
+      })
       es.addEventListener('ask', (e) => {
         const d = JSON.parse(e.data)
         setAskData({ question: d.question, options: d.options || [] })
@@ -168,7 +177,14 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
         if (s) {
           msg.hasCode = true; msg.strategyName = s.name; msg.strategyDesc = s.desc; msg.strategyCode = s.code
           pendingStrategy.current = null
-        } else {
+        }
+        const card = pendingCard.current
+        if (card) {
+          if (card.type === 'portfolio') msg.portfolioCard = card.data
+          else if (card.type === 'picks') msg.picksCard = card.data
+          pendingCard.current = null
+        }
+        if (!s && !card) {
           // Fallback: detect code directly in the response (AI sometimes writes code inline)
           const codeMatch = raw.match(/```(?:python)?\s*\n(def decide\(ctx[^)]*\):[\s\S]*?)```/)
           if (codeMatch) {
@@ -324,6 +340,58 @@ export default function ChatPanel({ onClose, initialMessage }: { onClose: () => 
                   }} className="w-full h-9 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800">
                     {t.chat.saveStrategyBtn}
                   </button>
+                </div>
+              )}
+              {/* Portfolio analysis card */}
+              {m.portfolioCard && (
+                <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-700">组合因子分析</span>
+                    <span className={`text-xs font-bold ${(m.portfolioCard.portfolio_score ?? 0) >= 60 ? 'text-emerald-600' : (m.portfolioCard.portfolio_score ?? 0) >= 40 ? 'text-amber-600' : 'text-red-500'}`}>
+                      {(m.portfolioCard.portfolio_score ?? 0).toFixed(0)}分
+                    </span>
+                  </div>
+                  {m.portfolioCard.top_holdings?.length > 0 && (
+                    <div className="text-[11px] space-y-1">
+                      <span className="text-emerald-600 font-medium">评分最高</span>
+                      {m.portfolioCard.top_holdings.map((h, i) => (
+                        <div key={i} className="flex justify-between text-slate-600">
+                          <span>{h.symbol} {h.name}</span>
+                          <span className="font-medium">{h.total_score?.toFixed(0)}分</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {m.portfolioCard.bottom_holdings?.length > 0 && (
+                    <div className="text-[11px] space-y-1">
+                      <span className="text-red-500 font-medium">评分最低</span>
+                      {m.portfolioCard.bottom_holdings.map((h, i) => (
+                        <div key={i} className="flex justify-between text-slate-600">
+                          <span>{h.symbol} {h.name}</span>
+                          <span className="font-medium">{h.total_score?.toFixed(0)}分</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {/* Daily picks card */}
+              {m.picksCard && (
+                <div className="mt-3 pt-3 border-t border-slate-200 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-slate-700">今日推荐</span>
+                    <span className="text-[10px] text-slate-400">扫描 {m.picksCard.scanned} 只 · {m.picksCard.regime}</span>
+                  </div>
+                  {m.picksCard.picks?.map((p, i) => (
+                    <div key={i} className="flex items-center gap-2 text-[11px]">
+                      <span className="font-medium text-slate-900 w-16">{p.code}</span>
+                      <span className="text-slate-500 flex-1 truncate">{p.name}</span>
+                      <span className={`font-bold ${(p.total_score ?? 0) >= 60 ? 'text-emerald-600' : 'text-slate-600'}`}>{p.total_score?.toFixed(0)}分</span>
+                      {p.bullish?.slice(0, 2).map((r, ri) => (
+                        <span key={ri} className="text-[10px] px-1 py-0.5 bg-emerald-50 text-emerald-600 rounded">{r}</span>
+                      ))}
+                    </div>
+                  ))}
                 </div>
               )}
             </div>

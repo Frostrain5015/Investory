@@ -146,21 +146,49 @@ def tool_get_portfolio(portfolio_id: int) -> dict:
 
 
 def tool_get_stock_metrics(symbol: str) -> dict:
-    """获取单只股票的量化指标"""
-    conn = get_db_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT s.id FROM stocks s WHERE s.symbol=%s OR s.symbol LIKE %s", (symbol, f"%{symbol}"))
-    row = cur.fetchone()
-    if not row: cur.close(); conn.close(); return {"error": f"未找到股票 {symbol}"}
-    sid = row[0]
-    cur.execute("SELECT percentile_5y, beta_1y, volatility_1y, max_drawdown_1y FROM stock_metric_cache WHERE stock_id=%s", (sid,))
-    m = cur.fetchone()
-    cur.close(); conn.close()
-    if not m: return {"symbol": symbol, "metrics": None, "note": "暂无缓存数据"}
-    return {"symbol": symbol, "percentile_5y": round(float(m[0]),1) if m[0] else None,
-            "beta": round(float(m[1]),2) if m[1] else None,
-            "volatility": round(float(m[2]),1) if m[2] else None,
-            "maxDrawdown": round(float(m[3]),1) if m[3] else None}
+    """[DEPRECATED] 重定向到 get_factor_scores"""
+    return tool_get_factor_scores(symbol)
+
+
+def tool_get_factor_scores(symbol: str) -> dict:
+    """获取股票的多因子评分：综合分 + 各维度（价值/成长/动量/质量/技术等）得分。
+    数据来自 StockSage 51因子引擎，比旧的 Beta/波动率更全面。
+    调用 bridge.py score_stocks 获取实时评分。"""
+    import subprocess, json as _json, os
+    bridge = os.path.join(SCRIPT_DIR, "..", "backend", "src", "main", "python", "stocksage_alpha", "bridge.py")
+    if not os.path.exists(bridge):
+        bridge = "/opt/investory/stocksage_alpha/bridge.py"
+    if not os.path.exists(bridge):
+        return {"error": "因子引擎未找到", "scores": {}}
+
+    try:
+        result = subprocess.run(
+            ["python3", bridge, "factor_breakdown", "--symbol", symbol],
+            capture_output=True, text=True, timeout=120, cwd=os.path.dirname(bridge))
+        for line in result.stdout.split("\n"):
+            if line.startswith("RESULT:"):
+                data = _json.loads(line[7:].strip())
+                if "error" in data:
+                    return {"error": data["error"], "symbol": symbol}
+                factors = data.get("factors", [])
+                # Summarize by group
+                groups = {}
+                for f in factors:
+                    g = f.get("group", "other")
+                    if g not in groups:
+                        groups[g] = {"buy_score": 0, "count": 0}
+                    groups[g]["buy_score"] += f.get("buy_score", 0)
+                    groups[g]["count"] += 1
+                return {
+                    "symbol": symbol,
+                    "total_score": data.get("total_score", 0),
+                    "factor_groups": {g: round(v["buy_score"], 1) for g, v in groups.items()},
+                    "factor_count": len(factors),
+                    "factors": factors[:10],  # top 10 factors
+                }
+        return {"error": f"因子引擎无响应 (exit={result.returncode})", "symbol": symbol}
+    except Exception as e:
+        return {"error": f"因子分析失败: {str(e)[:200]}", "symbol": symbol}
 
 
 MAX_ROWS = 5000
@@ -455,18 +483,138 @@ def tool_get_backtests(limit: int = 5) -> list:
 
 
 def tool_get_style_analysis(portfolio_id: int) -> dict:
-    """运行组合风格诊断"""
-    sys.path.insert(0, str(SCRIPT_DIR))
+    """[DEPRECATED] 重定向到 get_portfolio_analysis"""
+    return tool_get_portfolio_analysis(portfolio_id)
+
+
+def tool_get_portfolio_analysis(portfolio_id: int) -> dict:
+    """运行 StockSage 多因子组合分析：对每只持仓调用51因子引擎，按市值加权聚合。
+    返回组合评分、因子组暴露、Top/Bottom 持仓排名。
+    结果通过 [PORTFOLIO_CARD] 在前端渲染为可视化卡片。"""
+    import subprocess, json as _json, os
+
+    # Get holdings with weights
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT s.symbol, s.name, h.total_shares, h.total_invested,
+               (SELECT close FROM stock_prices WHERE stock_id=s.id ORDER BY trade_date DESC LIMIT 1) AS price
+        FROM holdings h JOIN stocks s ON h.stock_id=s.id
+        WHERE h.portfolio_id=%s AND h.total_shares>0
+    """, (portfolio_id,))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+
+    if not rows: return {"error": "暂无持仓"}
+
+    total_val = sum(float(r[3] or 0) for r in rows)
+    holdings = [{"symbol": r[0].split(".")[-1] if "." in r[0] else r[0],
+                 "name": r[1], "weight": round(float(r[3] or 0)/total_val*100, 1) if total_val > 0 else 0}
+                for r in rows]
+
+    # Call bridge portfolio_analysis
+    bridge = "/opt/investory/stocksage_alpha/bridge.py"
+    if not os.path.exists(bridge):
+        bridge = os.path.join(SCRIPT_DIR, "..", "backend", "src", "main", "python", "stocksage_alpha", "bridge.py")
+    if not os.path.exists(bridge):
+        return {"error": "因子引擎未找到"}
+
+    import tempfile
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+        _json.dump(holdings, f)
+        tmp_path = f.name
+
     try:
-        from portfolio_style_analyzer import analyze_portfolio, load_config, get_conn
-        cfg = load_config()
-        conn = get_conn(cfg)
-        try:
-            return analyze_portfolio(conn, portfolio_id)
-        finally:
-            conn.close()
+        result = subprocess.run(
+            ["python3", bridge, "portfolio_analysis", "--holdings", f"@{tmp_path}"],
+            capture_output=True, text=True, timeout=300, cwd=os.path.dirname(bridge))
+        for line in result.stdout.split("\n"):
+            if line.startswith("RESULT:"):
+                data = _json.loads(line[7:].strip())
+                data["_card_type"] = "portfolio_analysis"
+                data["holdings_count"] = len(holdings)
+                # Build card output marker for frontend
+                card = {
+                    "type": "portfolio_analysis",
+                    "data": {
+                        "portfolio_score": data.get("portfolio_score", 0),
+                        "holdings_scored": data.get("holdings_scored", 0),
+                        "top_holdings": data.get("top_holdings", [])[:3],
+                        "bottom_holdings": data.get("bottom_holdings", [])[:3],
+                        "group_exposure": data.get("group_exposure", {}),
+                    }
+                }
+                data["_card"] = card
+                return data
+        return {"error": f"因子引擎无响应 (exit={result.returncode})"}
     except Exception as e:
-        return {"error": f"风格分析失败: {str(e)[:200]}"}
+        return {"error": f"组合分析失败: {str(e)[:200]}"}
+    finally:
+        os.unlink(tmp_path)
+
+
+def tool_get_market_regime() -> dict:
+    """获取当前A股市场环境：牛市/熊市/正常/谨慎/危机，含评分(0-10)。
+    数据来自 StockSage 市场环境检测引擎（基于CSI300均线和动量）。"""
+    import subprocess, json as _json, os
+    bridge = "/opt/investory/stocksage_alpha/bridge.py"
+    if not os.path.exists(bridge):
+        bridge = os.path.join(SCRIPT_DIR, "..", "backend", "src", "main", "python", "stocksage_alpha", "bridge.py")
+    if not os.path.exists(bridge):
+        return {"error": "引擎未找到"}
+
+    try:
+        result = subprocess.run(
+            ["python3", bridge, "regime_status"],
+            capture_output=True, text=True, timeout=60, cwd=os.path.dirname(bridge))
+        for line in result.stdout.split("\n"):
+            if line.startswith("RESULT:"):
+                data = _json.loads(line[7:].strip())
+                regime = data.get("regime", {})
+                return {
+                    "regime": regime.get("signal", "unknown"),
+                    "score": regime.get("score", 5),
+                    "description": regime.get("description", ""),
+                    "exposure": regime.get("exposure", 0.85),
+                    "indicators": regime.get("indicators", {}),
+                }
+        return {"error": "引擎无响应"}
+    except Exception as e:
+        return {"error": str(e)[:200]}
+
+
+def tool_get_daily_picks(strategy: str = "main", limit: int = 5) -> dict:
+    """获取今日选股推荐：StockSage 每日收盘后自动扫描全市场，
+    选出综合评分最高的股票。结果通过 [PICKS_CARD] 在前端渲染。"""
+    import subprocess, json as _json, os
+    bridge = "/opt/investory/stocksage_alpha/bridge.py"
+    if not os.path.exists(bridge):
+        bridge = os.path.join(SCRIPT_DIR, "..", "backend", "src", "main", "python", "stocksage_alpha", "bridge.py")
+    if not os.path.exists(bridge):
+        return {"error": "引擎未找到"}
+
+    try:
+        result = subprocess.run(
+            ["python3", bridge, "scan_universe", "--type", strategy],
+            capture_output=True, text=True, timeout=300, cwd=os.path.dirname(bridge))
+        for line in result.stdout.split("\n"):
+            if line.startswith("RESULT:"):
+                data = _json.loads(line[7:].strip())
+                picks = data.get("picks", [])[:limit]
+                card = {
+                    "type": "daily_picks",
+                    "data": {
+                        "regime": data.get("regime", "unknown"),
+                        "picks": picks,
+                        "scanned": data.get("scanned", 0),
+                    }
+                }
+                return {"_card_type": "daily_picks", "_card": card,
+                        "picks": picks, "regime": data.get("regime"),
+                        "scanned": data.get("scanned")}
+        return {"error": "扫描引擎无响应"}
+    except Exception as e:
+        return {"error": str(e)[:200]}
 
 
 def tool_list_strategies() -> list:
@@ -672,14 +820,25 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}, "required": []}
     }},
     {"type": "function", "function": {
-        "name": "get_stock_metrics", "description": "获取某只股票的量化指标：5年分位数、Beta、年化波动率、最大回撤",
+        "name": "get_factor_scores", "description": "【推荐】获取股票的多因子综合评分和各维度得分（价值/成长/动量/质量/技术等），数据来自StockSage 51因子引擎。用户问'分析一下XX股票''XX股票怎么样'时必须调用。比旧的Beta/波动率更全面。",
         "parameters": {"type": "object", "properties": {
-            "symbol": {"type": "string", "description": "股票代码，如 600519.SH"}
+            "symbol": {"type": "string", "description": "股票代码，如 600519.SH 或 600519"}
         }, "required": ["symbol"]}
     }},
     {"type": "function", "function": {
-        "name": "get_style_analysis", "description": "运行完整的组合风格诊断，返回风格配置、行业偏好、风险特征和优化建议",
+        "name": "get_portfolio_analysis", "description": "【推荐】运行StockSage多因子组合分析：对每只持仓做51因子拆解，按市值加权聚合，返回组合评分、因子暴露、Top/Bottom持仓排名。用户问'我的组合怎么样''持仓健康吗'时调用。结果会渲染为可视化卡片。",
         "parameters": {"type": "object", "properties": {}, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "get_market_regime", "description": "获取当前A股市场环境（牛市/熊市/正常/谨慎/危机）及评分(0-10)。基于CSI300均线和动量检测。用户问'现在市场怎么样''大盘什么情况'时调用。",
+        "parameters": {"type": "object", "properties": {}, "required": []}
+    }},
+    {"type": "function", "function": {
+        "name": "get_daily_picks", "description": "获取今日StockSage选股推荐：每日收盘后自动全市场扫描选出的综合评分最高股票。用户问'今天有什么推荐''最近该买什么'时调用。结果会渲染为推荐卡片。",
+        "parameters": {"type": "object", "properties": {
+            "strategy": {"type": "string", "description": "策略类型: main(多因子综合)|chip(筹码)|golden_cross(技术共振)|hot(热榜)，默认main"},
+            "limit": {"type": "integer", "description": "返回数量，默认5"}
+        }, "required": []}
     }},
     {"type": "function", "function": {
         "name": "get_backtests", "description": "获取最近的历史回测记录和结果指标",
@@ -764,7 +923,7 @@ TOOLS = [
         }, "required": ["query"]}
     }},
     {"type": "function", "function": {
-        "name": "get_fundamentals", "description": "获取单只股票的基本面数据：PE、PB、ROE、EPS(TTM)、营收增速、市值、行业。用户问估值或财务面时必须调用。",
+        "name": "get_fundamentals", "description": "[DEPRECATED] 获取单只股票的基本面数据。建议优先使用 get_factor_scores 获取更全面的多因子分析。",
         "parameters": {"type": "object", "properties": {
             "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
         }, "required": ["symbol"]}
@@ -970,11 +1129,19 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
     elif name == "get_portfolio":
         return tool_get_portfolio(portfolio_id)
     elif name == "get_stock_metrics":
-        return tool_get_stock_metrics(args.get("symbol", ""))
+        return tool_get_factor_scores(args.get("symbol", ""))
     elif name == "get_backtests":
         return tool_get_backtests(args.get("limit", 5))
     elif name == "get_style_analysis":
-        return tool_get_style_analysis(portfolio_id)
+        return tool_get_portfolio_analysis(portfolio_id)
+    elif name == "get_factor_scores":
+        return tool_get_factor_scores(args.get("symbol", ""))
+    elif name == "get_portfolio_analysis":
+        return tool_get_portfolio_analysis(portfolio_id)
+    elif name == "get_market_regime":
+        return tool_get_market_regime()
+    elif name == "get_daily_picks":
+        return tool_get_daily_picks(args.get("strategy", "main"), args.get("limit", 5))
     elif name == "list_strategies":
         return tool_list_strategies()
     elif name == "get_strategy":
@@ -1009,7 +1176,11 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
     elif name == "web_search":
         return tool_web_search(args.get("query", ""), args.get("count", 5))
     elif name == "get_fundamentals":
-        return tool_get_fundamentals(args.get("symbol", ""))
+        # Redirect to factor scores for richer analysis
+        result = tool_get_factor_scores(args.get("symbol", ""))
+        if "error" not in result:
+            result["_note"] = "已升级为多因子分析。旧的基本面数据(PE/PB/ROE)已包含在价值和质量因子中。"
+        return result
     elif name == "optimize_portfolio":
         return tool_optimize_portfolio(
             args.get("portfolio_id", portfolio_id),

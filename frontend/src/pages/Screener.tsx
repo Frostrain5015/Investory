@@ -60,10 +60,17 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
   const [expanded, setExpanded] = useState<string | null>(null)
   const [breakdowns, setBreakdowns] = useState<Record<string, FactorBreakdown>>({})
 
+  const SCAN_STRATEGIES = [
+    { key: 'main', label: '多因子综合' },
+    { key: 'golden_cross', label: '技术共振' },
+    { key: 'hot', label: '热榜动量' },
+    { key: 'chip', label: '筹码集中' },
+  ]
   // Scan results tab
   const [tab, setTab] = useState<'screener' | 'picks'>('screener')
   const [scanResults, setScanResults] = useState<ScanResult[]>([])
   const [scanning, setScanning] = useState(false)
+  const [scanStrategy, setScanStrategy] = useState('main')
 
   // Load regime on mount
   useEffect(() => {
@@ -143,7 +150,7 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
     }
     setScanning(true)
     // Pass symbols to SSE endpoint so it only scans those stocks
-    const url = `${BASE}/api/stocksage/refresh?symbols=${symbols.join(',')}`
+    const url = `${BASE}/api/stocksage/refresh?symbols=${symbols.join(',')}&strategy=${scanStrategy}`
     const es = new EventSource(url, { withCredentials: true })
     es.addEventListener('progress', (e: any) => {
       try {
@@ -234,10 +241,14 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
             )}
           </AnimatePresence>
         </div>
+        <select value={scanStrategy} onChange={e => setScanStrategy(e.target.value)}
+          className="px-2 py-2 text-sm border border-slate-200 rounded-lg bg-white text-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20">
+          {SCAN_STRATEGIES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+        </select>
         <button onClick={startScan} disabled={scanning}
           className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg transition-colors ${scanning ? 'text-slate-400 bg-slate-100 cursor-not-allowed' : 'text-white bg-emerald-600 hover:bg-emerald-700'}`}>
           <Search className="w-4 h-4" />
-          {scanning ? '扫描中...' : '全市场扫描'}
+          {scanning ? '扫描中...' : '扫描'}
         </button>
         <button onClick={() => setShowFilters(!showFilters)}
           className="flex items-center gap-1 px-3 py-2 text-sm font-medium text-slate-500 hover:text-slate-700 transition-colors">
@@ -281,15 +292,11 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
                   ))}
                 </div>
               </div>
-              {/* Score range */}
+              {/* Score range — single slider, filters minimum */}
               <div>
-                <p className="text-xs font-medium text-slate-500 mb-2">综合分: {minScore} - {maxScore}</p>
-                <div className="flex gap-2">
-                  <input type="range" min={0} max={100} value={minScore} onChange={e => setMinScore(+e.target.value)}
-                    className="flex-1 accent-blue-600" />
-                  <input type="range" min={0} max={100} value={maxScore} onChange={e => setMaxScore(+e.target.value)}
-                    className="flex-1 accent-blue-600" />
-                </div>
+                <p className="text-xs font-medium text-slate-500 mb-2">最低评分: {minScore}</p>
+                <input type="range" min={0} max={100} value={minScore} onChange={e => setMinScore(+e.target.value)}
+                  className="w-full accent-blue-600" />
               </div>
               {/* Market filter */}
               <div>
