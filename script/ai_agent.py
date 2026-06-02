@@ -139,7 +139,10 @@ def build_system_prompt(kb: dict) -> str:
     metrics_text = "\n".join(f"- **{k}**: {v}" for k, v in kb.get("key_metrics_guide", {}).items())
     safety = kb.get("safety_net", {})
     safety_text = "\n".join(f"- **{k}**: {v}" for k, v in safety.items())
+    today = __import__('datetime').date.today()
     return f"""你是「观澜」（Horizon），Investory 内置的金融分析助理。风格：冷静、专业、简洁。不寒暄，不恭维，不废话。用数据说话。
+
+【当前日期】{today}（{today.strftime('%A')}）。所有涉及"今天""近期""最近"的回答都必须基于此日期。交易默认日期也是今天。
 
 【定位】
 风格中立的投资助理。价值、成长、动量、趋势、量化、套利、对冲、被动定投——所有主流方法论都在你的知识范围内。不预设用户偏好，按用户当前持仓特征和提问意图判断其风格倾向，在其语境内回答。不向用户布道任何特定流派。
@@ -1573,6 +1576,11 @@ def _clean_body(body: dict) -> dict:
     """Remove None/empty values so frontend doesn't send 'null' strings."""
     return {k: v for k, v in body.items() if v is not None and v != ""}
 
+def _today_str() -> str:
+    """Return today's date as yyyy-MM-dd string."""
+    from datetime import date
+    return date.today().isoformat()
+
 def _resolve_stock_id(value) -> int:
     """Try to resolve a stock symbol to an ID, or return the integer as-is."""
     if isinstance(value, (int, float)) and value > 0:
@@ -1604,10 +1612,11 @@ def _confirm_create(args: dict) -> dict:
         label_parts.append(f"{'买入' if t == 'BUY' else '卖出'} {args.get('shares', 0)}股")
     if args.get("tradeDate"):
         label_parts.append(f"日期 {args['tradeDate']}")
+    trade_date = args.get("tradeDate") or _today_str()
     body = _clean_body({
         "stockId": sid, "type": t, "shares": args.get("shares"),
         "price": args.get("price", 0), "fee": args.get("fee", 0),
-        "tradeDate": args.get("tradeDate", ""), "currency": args.get("currency", "CNY"),
+        "tradeDate": trade_date, "currency": args.get("currency", "CNY"),
         "note": args.get("note", ""),
     })
     if t == "DIV":
@@ -1638,6 +1647,8 @@ def _confirm_update(args: dict) -> dict:
     for k in ("stockId", "type", "shares", "price", "fee", "tradeDate", "currency", "note", "amountPerShare"):
         if k in args and args[k] is not None:
             body[k] = args[k]
+    if "tradeDate" not in body:
+        body["tradeDate"] = _today_str()
     t = body.get("type", "")
     endpoint = "/api/dividends" if t == "DIV" else "/api/transactions"
     # Look up existing record for display label
@@ -1716,7 +1727,7 @@ def _confirm_bulk_create(args: dict) -> dict:
         body = {
             "stockId": tx.get("stockId"), "type": t, "shares": tx.get("shares"),
             "price": tx.get("price", 0), "fee": tx.get("fee", 0),
-            "tradeDate": tx.get("tradeDate", ""), "currency": tx.get("currency", "CNY"),
+            "tradeDate": tx.get("tradeDate") or _today_str(), "currency": tx.get("currency", "CNY"),
             "note": tx.get("note", ""),
         }
         if t == "DIV":
@@ -1735,6 +1746,8 @@ def _confirm_bulk_update(args: dict) -> dict:
     for u in updates:
         tid = u.get("id")
         body = {k: v for k, v in u.items() if v is not None}
+        if "tradeDate" not in body:
+            body["tradeDate"] = _today_str()
         t = body.get("type", "")
         endpoint = "/api/dividends" if t == "DIV" else "/api/transactions"
         items.append({
