@@ -781,13 +781,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             whole inner UI fades in/out as one piece. layout="position" on
             children keeps internal reordering smooth. */}
         <AnimatePresence>
-          {showInnerContent && (
-            <motion.div key="shell-content" layout="position"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.22, ease: 'easeOut', delay: isExpanded ? 0.05 : 0.08 }}
-              className="flex flex-col h-full w-full">
+          {/* Content always in DOM — shell's overflow-hidden naturally reveals/hides it.
+              The morph is now a seamless continuous motion in both directions. */}
+          <motion.div layout="position"
+            style={{ opacity: showInnerContent ? 1 : 0, transition: 'opacity 0.2s' }}
+            className="flex flex-col h-full w-full">
 
               {/* Gradient hairline */}
               <div className="h-0.5 shrink-0" style={gradientStyle} />
@@ -830,7 +828,6 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                 {inputBar}
               </div>
             </motion.div>
-          )}
         </AnimatePresence>
       </motion.div>
       </div>
