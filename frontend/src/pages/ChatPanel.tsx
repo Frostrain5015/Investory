@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sparkles, X, Send, Trash2, Brain, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, Database } from 'lucide-react'
 import { useToast } from '@/components/Toast'
@@ -180,6 +180,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [streamTimeline, setStreamTimeline] = useState<TimelineStep[]>([])
   const [deepThink, setDeepThink] = useState(false)
   const [webSearch, setWebSearch] = useState(false)
+  const [dockHeight, setDockHeight] = useState(96)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
   const pendingCard = useRef<{ type: string; data: any } | null>(null)
@@ -208,6 +209,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [suggestions, setSuggestions] = useState<string[]>([])
   const esRef = useRef<EventSource | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const hairlineRef = useRef<HTMLDivElement>(null)
+  const headerRef = useRef<HTMLDivElement>(null)
+  const messagesPanelRef = useRef<HTMLDivElement>(null)
+  const brandStripRef = useRef<HTMLDivElement>(null)
+  const inputWrapRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { if (initialMessage) setInput(initialMessage) }, [initialMessage])
 
@@ -223,7 +229,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   }, [mode, streaming, input, onClose])
 
   // Auto-grow the textarea up to ~8 lines, then scroll inside it
-  useEffect(() => {
+  useLayoutEffect(() => {
     const ta = textareaRef.current
     if (!ta) return
     ta.style.height = '0px'
@@ -464,8 +470,48 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
 
   const hasContent = messages.length > 0 || streaming
 
+  useLayoutEffect(() => {
+    if (mode !== 'dock' || typeof window === 'undefined') return
+
+    let frame = 0
+    const viewportHeight = () => window.visualViewport?.height ?? window.innerHeight
+    const measure = () => {
+      const dockMaxHeight = Math.min(viewportHeight() * 0.6, 540)
+      const hairlineHeight = hairlineRef.current?.getBoundingClientRect().height ?? 0
+      const headerHeight = hasContent ? (headerRef.current?.getBoundingClientRect().height ?? 0) : 0
+      const brandHeight = !hasContent ? (brandStripRef.current?.getBoundingClientRect().height ?? 0) : 0
+      const inputHeight = inputWrapRef.current?.getBoundingClientRect().height ?? 0
+      const fixedHeight = hairlineHeight + headerHeight + brandHeight + inputHeight
+      const messagesHeight = hasContent
+        ? Math.min(messagesPanelRef.current?.scrollHeight ?? 0, Math.max(0, dockMaxHeight - fixedHeight))
+        : 0
+      const measured = Math.min(dockMaxHeight, fixedHeight + messagesHeight)
+
+      if (measured <= 0) return
+      setDockHeight(prev => Math.abs(prev - measured) > 1 ? Math.round(measured) : prev)
+    }
+    const scheduleMeasure = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(measure)
+    }
+
+    measure()
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(scheduleMeasure) : null
+    const observedNodes = [hairlineRef.current, headerRef.current, messagesPanelRef.current, brandStripRef.current, inputWrapRef.current]
+    observedNodes.forEach(node => { if (node && observer) observer.observe(node) })
+    window.addEventListener('resize', scheduleMeasure)
+    window.visualViewport?.addEventListener('resize', scheduleMeasure)
+
+    return () => {
+      cancelAnimationFrame(frame)
+      observer?.disconnect()
+      window.removeEventListener('resize', scheduleMeasure)
+      window.visualViewport?.removeEventListener('resize', scheduleMeasure)
+    }
+  }, [mode, hasContent, messages, streaming, streamText, streamTimeline, input, suggestions, askData, confirmData])
+
   const headerNode = (
-    <div className="flex items-center justify-between px-4 py-2.5 shrink-0">
+    <div ref={headerRef} className="flex items-center justify-between px-4 py-2.5 shrink-0">
       <div className="flex items-center gap-2">
         <div className="w-6 h-6 rounded-md flex items-center justify-center" style={gradientStyle}>
           <Sparkles className="w-3 h-3 text-white" />
@@ -510,7 +556,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   )
 
   const messagesArea = (
-    <div className="flex-1 overflow-auto px-4 py-4 space-y-3">
+    <div ref={messagesPanelRef} className="flex-1 overflow-auto px-4 py-4 space-y-3">
         {messages.length === 0 && !streaming && (
           <div className="text-center py-10">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-3" style={{ background: 'linear-gradient(135deg, rgba(134,59,255,0.12), rgba(71,191,255,0.12))' }}>
@@ -692,28 +738,37 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   )
 
   // ── CSS-driven morph shell: idle ↔ dock ↔ expanded ──────────────────
-  // Using CSS transitions instead of Framer Motion `layout` so the collapse
-  // is automatically the exact reverse of the expand — symmetric and seamless.
+  // Keep every state on numeric/calc anchors. `auto` cannot interpolate, so it
+  // creates the visible jumps that made the shell feel broken.
   const isIdle = mode === 'idle'
   const isExpanded = mode === 'expanded'
   const dockBottom = 'calc(1rem + env(safe-area-inset-bottom, 0px))'
+  const morphDuration = '320ms'
+  const morphEase = 'cubic-bezier(0.22, 1, 0.36, 1)'
 
-  const shellW = isIdle ? 60 : 'min(720px, calc(100vw - 32px))'
-  const shellH = isIdle ? 60
-    : isExpanded ? 'min(80vh, 720px)'
-    : hasContent ? 'min(60vh, 540px)' : 'auto'
-  const shellR = isIdle ? 9999 : isExpanded ? 24 : 20
+  const shellW = isIdle ? '60px' : 'min(720px, calc(100vw - 32px))'
+  const shellH = isIdle ? '60px'
+    : isExpanded ? 'min(80svh, 720px)'
+    : `${dockHeight}px`
+  const shellR = isIdle ? '9999px' : isExpanded ? '24px' : '20px'
   const shellBgVal = isIdle
     ? 'linear-gradient(135deg, #863bff, #47bfff)'
     : 'rgba(255,255,255,0.96)'
 
-  // Wrapper positioning — CSS transition on all properties for smooth morph
+  // Bottom-left anchoring stays valid for all three shapes. Expanded mode is
+  // centered by moving its bottom edge to half of the remaining viewport height.
   const wrapperClass = 'fixed z-50'
-  const wrapperPos: React.CSSProperties = isIdle
-    ? { right: '1.5rem', bottom: `calc(1.5rem + env(safe-area-inset-bottom, 0px))`, top: 'auto', left: 'auto', transform: 'none' }
-    : isExpanded
-    ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', right: 'auto', bottom: 'auto' }
-    : { bottom: dockBottom, left: '50%', transform: 'translateX(-50%)', top: 'auto', right: 'auto' }
+  const wrapperPos: React.CSSProperties = {
+    left: isIdle ? 'calc(100vw - 1.5rem - 30px)' : '50vw',
+    bottom: isIdle
+      ? 'calc(1.5rem + env(safe-area-inset-bottom, 0px))'
+      : isExpanded
+      ? 'max(10svh, calc((100svh - 720px) / 2))'
+      : dockBottom,
+    transform: 'translateX(-50%)',
+    transition: `left ${morphDuration} ${morphEase}, bottom ${morphDuration} ${morphEase}`,
+    willChange: 'left, bottom',
+  }
 
   const showInnerContent = !isIdle
 
@@ -732,18 +787,19 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         )}
       </AnimatePresence>
 
-      {/* Shell — CSS transition animates width/height/border-radius symmetrically */}
-      <div className={wrapperClass} style={{ ...wrapperPos, transition: 'top 0.35s cubic-bezier(0.34,1.56,0.64,1), left 0.35s cubic-bezier(0.34,1.56,0.64,1), bottom 0.35s cubic-bezier(0.34,1.56,0.64,1), right 0.35s cubic-bezier(0.34,1.56,0.64,1), transform 0.35s cubic-bezier(0.34,1.56,0.64,1)' }}>
+      {/* Shell — width/height change directly, so text is never scale-distorted. */}
+      <div className={wrapperClass} style={wrapperPos}>
       <div
         onClick={isIdle ? () => setMode(defaultMode) : undefined}
         style={{
           width: shellW, height: shellH, borderRadius: shellR,
           background: shellBgVal,
-          transition: 'width 0.35s cubic-bezier(0.34,1.56,0.64,1), height 0.35s cubic-bezier(0.34,1.56,0.64,1), border-radius 0.35s cubic-bezier(0.34,1.56,0.64,1), background 0.35s ease',
+          transition: `width ${morphDuration} ${morphEase}, height ${morphDuration} ${morphEase}, border-radius ${morphDuration} ${morphEase}, background ${morphDuration} ease`,
+          willChange: 'width, height, border-radius',
         }}
-        className={`ring-1 shadow-2xl overflow-hidden flex flex-col pb-safe ${
+        className={`relative ring-1 shadow-2xl overflow-hidden flex flex-col pb-safe ${
           isIdle
-            ? 'ring-white/20 shadow-purple-500/30 cursor-pointer hover:scale-105 active:scale-95 transition-transform items-center justify-center'
+            ? 'ring-white/20 shadow-purple-500/30 cursor-pointer active:brightness-95 items-center justify-center'
             : 'ring-slate-200/70 shadow-purple-500/15'
         }`}>
 
@@ -776,7 +832,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               className="flex flex-col h-full w-full">
 
               {/* Gradient hairline */}
-              <div className="h-0.5 shrink-0" style={gradientStyle} />
+              <div ref={hairlineRef} className="h-0.5 shrink-0" style={gradientStyle} />
 
               {/* Header — only when there's content or expanded */}
               {(hasContent || isExpanded) && headerNode}
@@ -790,7 +846,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
 
               {/* Brand strip — dock idle (empty, but open) only */}
               {!hasContent && !isExpanded && (
-                <div className="flex items-center justify-between px-4 pt-2 pb-1">
+                <div ref={brandStripRef} className="flex items-center justify-between px-4 pt-2 pb-1">
                   <div className="flex items-center gap-1.5">
                     <Sparkles className="w-3 h-3" style={{ color: '#863bff' }} />
                     <span className="text-[11px] font-semibold text-slate-700 tracking-tight">观澜</span>
@@ -812,7 +868,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               )}
 
               {/* Input bar — bottom of every active state */}
-              <div className={`shrink-0 px-3 py-2 ${isExpanded || hasContent ? 'border-t border-slate-100 bg-white' : ''}`}>
+              <div ref={inputWrapRef} className={`shrink-0 px-3 py-2 ${isExpanded || hasContent ? 'border-t border-slate-100 bg-white' : ''}`}>
                 {inputBar}
               </div>
             </motion.div>
