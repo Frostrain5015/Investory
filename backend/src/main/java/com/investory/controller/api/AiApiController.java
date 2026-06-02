@@ -130,20 +130,42 @@ public class AiApiController {
 
         final boolean webSearch = Boolean.TRUE.equals(body.get("webSearch"));
 
-        // Inject fresh portfolio profile on every turn — holdings/profile may have changed
-        // since last message. DashScope's ephemeral cache dedupes identical system blocks
-        // so re-injection costs nothing when nothing has changed.
-        final List<Map<String, Object>> messages;
+        // #2 Context window guard: the frontend re-sends the whole UI history, which
+        // grows unbounded over a long chat and will eventually blow the model context.
+        // Keep only the most recent turns (plus the freshly injected system blocks).
+        final int MAX_HISTORY = 24;
+        List<Map<String, Object>> windowed = rawMessages.size() > MAX_HISTORY
+            ? new ArrayList<>(rawMessages.subList(rawMessages.size() - MAX_HISTORY, rawMessages.size()))
+            : rawMessages;
+
+        // Build the leading system blocks: fresh portfolio profile + last turn's tool
+        // results (#1). DashScope's ephemeral cache dedupes identical system blocks,
+        // so re-injecting costs nothing when nothing changed.
+        List<Map<String, Object>> systemBlocks = new ArrayList<>();
         if (portfolioId > 0) {
             String ctx = buildPortfolioHint(portfolioId);
-            if (!ctx.isEmpty()) {
-                List<Map<String, Object>> withCtx = new ArrayList<>(rawMessages.size() + 1);
-                Map<String, Object> sysMsg = new LinkedHashMap<>();
-                sysMsg.put("role", "system"); sysMsg.put("content", ctx);
-                withCtx.add(sysMsg); withCtx.addAll(rawMessages);
-                messages = withCtx;
-            } else { messages = rawMessages; }
-        } else { messages = rawMessages; }
+            if (!ctx.isEmpty()) systemBlocks.add(Map.of("role", "system", "content", ctx));
+        }
+        if (userId > 0) {
+            try {
+                List<Map<String, Object>> td = jdbc.queryForList(
+                    "SELECT content FROM ai_chat_history WHERE user_id = ? AND role = 'tooldata' ORDER BY id DESC LIMIT 1", userId);
+                if (!td.isEmpty()) {
+                    String tc = String.valueOf(td.get(0).get("content"));
+                    if (tc != null && !tc.isBlank()) {
+                        systemBlocks.add(Map.of("role", "system", "content",
+                            "【上一轮工具已获取的数据（供延续对话参考，已是最新拉取，不必重复查询；如需更新再调用工具）】\n" + tc));
+                    }
+                }
+            } catch (Exception ignored) {}
+        }
+
+        final List<Map<String, Object>> messages;
+        if (!systemBlocks.isEmpty()) {
+            List<Map<String, Object>> withCtx = new ArrayList<>(systemBlocks.size() + windowed.size());
+            withCtx.addAll(systemBlocks); withCtx.addAll(windowed);
+            messages = withCtx;
+        } else { messages = windowed; }
 
         // Persist the user message (last in the list) before we kick off generation
         if (userId > 0 && !rawMessages.isEmpty()) {
@@ -201,6 +223,9 @@ public class AiApiController {
                 // thinking segment; the next reasoning chunk starts a fresh one.
                 StringBuilder accumContent = new StringBuilder();
                 List<Map<String, Object>> timeline = new ArrayList<>();
+                // Compact digest of this turn's tool results (#1), emitted by the
+                // agent as a [CONTEXT] line; persisted and replayed next turn.
+                final String[] toolContext = { null };
                 // Pointer to the current open thinking step (so we can keep appending to it).
                 final Map<String, Object>[] openThinking = new Map[]{ null };
                 java.util.function.Consumer<String> appendThinking = (chunk) -> {
@@ -231,46 +256,39 @@ public class AiApiController {
                                 session.emitStrategy(uid, sdata);
                             } catch (Exception ignored) {}
                         } else if (line.startsWith("[TOOL_END]")) {
-                            String name = line.substring(10).trim();
-                            // Mark the most recent matching tool step as done
-                            for (int i = timeline.size() - 1; i >= 0; i--) {
-                                Map<String, Object> step = timeline.get(i);
-                                if ("tool".equals(step.get("kind")) && name.equals(step.get("name"))
-                                        && !Boolean.TRUE.equals(step.get("done"))) {
-                                    step.put("done", true);
-                                    break;
-                                }
-                            }
-                            session.emitToolEnd(uid, name);
+                            // Payload: "<callId>\t<name>\t<summary>" (summary optional).
+                            // callId pairs with the [TOOL] that started this call (#3).
+                            String[] parts = line.substring(10).trim().split("\t", 3);
+                            String callId = parts.length > 0 ? parts[0] : "";
+                            String name = parts.length > 1 ? parts[1] : "";
+                            String summary = parts.length > 2 ? parts[2].trim() : "";
+                            markToolDone(timeline, callId, name, true, summary, null);
+                            session.emitToolEnd(uid, callId, name, summary);
                         } else if (line.startsWith("[TOOL_FAIL]")) {
-                            String payload = line.substring(11).trim();
-                            int tab = payload.indexOf('\t');
-                            String name = tab >= 0 ? payload.substring(0, tab) : payload;
-                            String errMsg = tab >= 0 ? payload.substring(tab + 1) : "";
-                            // Mark the most recent matching tool step as failed
-                            for (int i = timeline.size() - 1; i >= 0; i--) {
-                                Map<String, Object> step = timeline.get(i);
-                                if ("tool".equals(step.get("kind")) && name.equals(step.get("name"))
-                                        && !Boolean.TRUE.equals(step.get("done"))) {
-                                    step.put("done", true);
-                                    if (!errMsg.isEmpty()) step.put("error", errMsg);
-                                    break;
-                                }
-                            }
-                            session.emitToolFail(uid, name, errMsg);
+                            // Payload: "<callId>\t<name>\t<message>"
+                            String[] parts = line.substring(11).trim().split("\t", 3);
+                            String callId = parts.length > 0 ? parts[0] : "";
+                            String name = parts.length > 1 ? parts[1] : "";
+                            String errMsg = parts.length > 2 ? parts[2] : "";
+                            markToolDone(timeline, callId, name, true, null, errMsg);
+                            session.emitToolFail(uid, callId, name, errMsg);
                         } else if (line.startsWith("[TOOL]")) {
-                            // Payload: "<name>\t<category>"  (category optional, defaults to query)
-                            String payload = line.substring(6).trim();
-                            int tab = payload.indexOf('\t');
-                            String name = tab >= 0 ? payload.substring(0, tab) : payload;
-                            String category = tab >= 0 ? payload.substring(tab + 1).trim() : "query";
+                            // Payload: "<name>\t<category>\t<callId>" (latter two optional)
+                            String[] parts = line.substring(6).trim().split("\t", 3);
+                            String name = parts.length > 0 ? parts[0] : "";
+                            String category = parts.length > 1 ? parts[1].trim() : "query";
+                            String callId = parts.length > 2 ? parts[2].trim() : "";
                             // A new tool call closes the current thinking segment
                             openThinking[0] = null;
                             Map<String, Object> step = new LinkedHashMap<>();
                             step.put("kind", "tool"); step.put("name", name);
                             step.put("category", category); step.put("done", false);
+                            if (!callId.isEmpty()) step.put("callId", callId);
                             timeline.add(step);
-                            session.emitTool(uid, name, category);
+                            session.emitTool(uid, name, category, callId);
+                        } else if (line.startsWith("[CONTEXT]")) {
+                            // Compact tool-result digest for cross-turn continuity (#1)
+                            toolContext[0] = line.substring(9).trim();
                         } else if (line.startsWith("[CONFIRM]")) {
                             session.emitConfirm(uid, line.substring(9).trim());
                         } else if (line.startsWith("[ERROR]")) {
@@ -316,6 +334,17 @@ public class AiApiController {
                             jdbc.update("INSERT INTO ai_chat_history (user_id, role, content) VALUES (?, 'thinking', ?)",
                                 uid, tlJson);
                         }
+                    } catch (Exception ignored) {}
+                }
+                // Persist this turn's tool-result digest (#1) — keep only the most
+                // recent one so the model gets a single, fresh continuity block.
+                if (uid > 0 && toolContext[0] != null && !toolContext[0].isEmpty()) {
+                    try {
+                        jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role = 'tooldata'", uid);
+                        String tc = toolContext[0];
+                        if (tc.length() > 4000) tc = tc.substring(0, 4000);
+                        jdbc.update("INSERT INTO ai_chat_history (user_id, role, content) VALUES (?, 'tooldata', ?)",
+                            uid, tc);
                     } catch (Exception ignored) {}
                 }
             } catch (Exception e) {
@@ -423,7 +452,7 @@ public class AiApiController {
         long uid = userIdOf(req);
         session.clearSession(uid);
         if (uid > 0) {
-            try { jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role IN ('user','assistant','thinking')", uid); } catch (Exception ignored) {}
+            try { jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role IN ('user','assistant','thinking','tooldata')", uid); } catch (Exception ignored) {}
         }
         return Map.of("status", "cleared");
     }
@@ -525,6 +554,33 @@ public class AiApiController {
         } catch (Exception e) {
             return Map.of("show", false);
         }
+    }
+
+    /**
+     * Mark a tool timeline step done/failed. Matches by callId first (exact, even
+     * for parallel same-name calls), falling back to most-recent-by-name so older
+     * agents / any id-less line still resolve. (#3)
+     */
+    private static void markToolDone(List<Map<String, Object>> timeline, String callId,
+                                     String name, boolean done, String summary, String error) {
+        Map<String, Object> match = null;
+        if (callId != null && !callId.isEmpty()) {
+            for (int i = timeline.size() - 1; i >= 0; i--) {
+                Map<String, Object> step = timeline.get(i);
+                if ("tool".equals(step.get("kind")) && callId.equals(step.get("callId"))) { match = step; break; }
+            }
+        }
+        if (match == null) {
+            for (int i = timeline.size() - 1; i >= 0; i--) {
+                Map<String, Object> step = timeline.get(i);
+                if ("tool".equals(step.get("kind")) && name != null && name.equals(step.get("name"))
+                        && !Boolean.TRUE.equals(step.get("done"))) { match = step; break; }
+            }
+        }
+        if (match == null) return;
+        if (done) match.put("done", true);
+        if (summary != null && !summary.isEmpty()) match.put("summary", summary);
+        if (error != null && !error.isEmpty()) match.put("error", error);
     }
 
     private long userIdOf(HttpServletRequest req) {

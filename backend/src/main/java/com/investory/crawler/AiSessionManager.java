@@ -25,8 +25,14 @@ public class AiSessionManager {
         volatile boolean active = false;
         // Latest process handle so cancel() can interrupt mid-generation
         final AtomicReference<Process> process = new AtomicReference<>(null);
-        final LinkedList<String> tokenBuffer = new LinkedList<>();
-        final LinkedList<String> reasoningBuffer = new LinkedList<>();
+        // Single ordered event log. Every emitted SSE event (token, reasoning,
+        // tool, tool_end, tool_fail, ask, confirm, strategy, done, error…) is
+        // appended here so late subscribers can replay the FULL stream in the
+        // exact order it happened. The frontend opens its EventSource only after
+        // the /chat POST returns, by which point the Python process may already
+        // have emitted ask/tool/confirm/done — replaying just token+reasoning
+        // (the old behaviour) dropped those and stalled ask_user forever.
+        final LinkedList<Map<String, Object>> eventLog = new LinkedList<>();
         final List<SseEmitter> subscribers = new CopyOnWriteArrayList<>();
     }
 
@@ -39,8 +45,7 @@ public class AiSessionManager {
     public synchronized void startSession(long userId) {
         UserSession s = get(userId);
         s.active = true;
-        synchronized (s.tokenBuffer) { s.tokenBuffer.clear(); }
-        synchronized (s.reasoningBuffer) { s.reasoningBuffer.clear(); }
+        synchronized (s.eventLog) { s.eventLog.clear(); }
     }
 
     public synchronized void clearSession(long userId) {
@@ -88,33 +93,35 @@ public class AiSessionManager {
     }
 
     public void emitToken(long userId, String token) {
-        UserSession s = get(userId);
-        synchronized (s.tokenBuffer) {
-            s.tokenBuffer.addLast(token);
-            if (s.tokenBuffer.size() > MAX_BUFFER) s.tokenBuffer.removeFirst();
-        }
-        emitToAll(s, "token", Map.of("msg", token));
+        emitToAll(get(userId), "token", Map.of("msg", token));
     }
 
     public void emitReasoning(long userId, String chunk) {
-        UserSession s = get(userId);
-        synchronized (s.reasoningBuffer) {
-            s.reasoningBuffer.addLast(chunk);
-            if (s.reasoningBuffer.size() > MAX_BUFFER) s.reasoningBuffer.removeFirst();
-        }
-        emitToAll(s, "reasoning", Map.of("msg", chunk));
+        emitToAll(get(userId), "reasoning", Map.of("msg", chunk));
     }
 
-    public void emitTool(long userId, String name, String category) {
-        emitToAll(get(userId), "tool", Map.of("name", name, "category", category));
+    public void emitTool(long userId, String name, String category, String callId) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("name", name);
+        data.put("category", category);
+        if (callId != null && !callId.isEmpty()) data.put("callId", callId);
+        emitToAll(get(userId), "tool", data);
     }
 
-    public void emitToolEnd(long userId, String name) {
-        emitToAll(get(userId), "tool_end", Map.of("name", name));
+    public void emitToolEnd(long userId, String callId, String name, String summary) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("name", name);
+        if (callId != null && !callId.isEmpty()) data.put("callId", callId);
+        if (summary != null && !summary.isEmpty()) data.put("summary", summary);
+        emitToAll(get(userId), "tool_end", data);
     }
 
-    public void emitToolFail(long userId, String name, String errMsg) {
-        emitToAll(get(userId), "tool_fail", Map.of("name", name, "error", errMsg));
+    public void emitToolFail(long userId, String callId, String name, String errMsg) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("name", name);
+        if (callId != null && !callId.isEmpty()) data.put("callId", callId);
+        data.put("error", errMsg);
+        emitToAll(get(userId), "tool_fail", data);
     }
 
     public void emitStrategy(long userId, Map<String, Object> data) {
@@ -149,12 +156,14 @@ public class AiSessionManager {
         emitter.onTimeout(() -> s.subscribers.remove(emitter));
         emitter.onError(e -> s.subscribers.remove(emitter));
 
-        // Replay buffered reasoning and tokens for late subscribers
-        synchronized (s.reasoningBuffer) {
-            for (String r : s.reasoningBuffer) emitSingle(emitter, "reasoning", Map.of("msg", r));
-        }
-        synchronized (s.tokenBuffer) {
-            for (String token : s.tokenBuffer) emitSingle(emitter, "token", Map.of("msg", token));
+        // Replay the full ordered event log for late subscribers / reconnects.
+        // This is what makes ask_user, confirm cards, tool steps and the final
+        // `done` reliably appear even when the Python process emitted them before
+        // this EventSource finished connecting.
+        synchronized (s.eventLog) {
+            for (Map<String, Object> ev : s.eventLog) {
+                emitSingle(emitter, String.valueOf(ev.get("event")), ev.get("data"));
+            }
         }
         return emitter;
     }
@@ -172,6 +181,15 @@ public class AiSessionManager {
     }
 
     private void emitToAll(UserSession s, String event, Object data) {
+        // Record into the ordered log first so a subscriber connecting mid-flight
+        // replays this event too, then fan out to current subscribers.
+        synchronized (s.eventLog) {
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("event", event);
+            entry.put("data", data);
+            s.eventLog.addLast(entry);
+            if (s.eventLog.size() > MAX_BUFFER) s.eventLog.removeFirst();
+        }
         for (SseEmitter e : s.subscribers) emitSingle(e, event, data);
     }
 

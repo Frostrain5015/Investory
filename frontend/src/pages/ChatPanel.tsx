@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Brain, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, Database } from 'lucide-react'
+import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, Database } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -17,7 +17,7 @@ interface PicksCard { regime: string; picks: { code: string; name: string; total
 export type ToolCategory = 'query' | 'analysis' | 'mutation'
 export type TimelineStep =
   | { kind: 'thinking'; text: string; _ts?: number; _elapsed?: number }
-  | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string }
+  | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string; summary?: string; callId?: string }
 interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard }
 interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
 interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
@@ -115,16 +115,32 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
  *  and running/done/failed state). Always visible, never collapsed. */
 function ToolStepDisplay({ step, lang }: { step: Extract<TimelineStep, { kind: 'tool' }>; lang: 'zh' | 'en' | 'hk' }) {
   const { label, dot, Icon } = toolStyle(step)
+  const running = !step.done && !step.error
+  // Match the running dot colour to the category palette for the bounce trio.
+  const bounce = step.category === 'mutation' ? 'bg-amber-400'
+    : step.category === 'analysis' ? (step.name === 'web_search' ? 'bg-sky-400' : 'bg-purple-400')
+    : 'bg-slate-400'
   return (
-    <div className="mb-1.5 flex items-start gap-2 text-[11px]">
+    <motion.div initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+      className="mb-1.5 flex items-start gap-2 text-[11px]">
       <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
       <div className={`flex-1 flex items-center gap-1.5 ${label}`}>
-        <Icon className="w-3 h-3" />
+        <Icon className={`w-3 h-3 ${running ? 'animate-pulse' : ''}`} />
         <span className="font-medium">{localizeToolName(step.name, lang)}</span>
-        {!step.done && !step.error && (
-          <span className="text-[10px] opacity-70">{lang === 'en' ? 'running…' : '调用中…'}</span>
+        {running && (
+          <>
+            <span className="text-[10px] opacity-70">{lang === 'en' ? 'running…' : '调用中…'}</span>
+            <span className="inline-flex gap-0.5 ml-0.5">
+              <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} />
+              <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} style={{ animationDelay: '0.15s' }} />
+              <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} style={{ animationDelay: '0.3s' }} />
+            </span>
+          </>
         )}
         {step.done && !step.error && <Check className="w-3 h-3 opacity-70" />}
+        {step.done && !step.error && step.summary && (
+          <span className="text-[10px] text-slate-400">· {step.summary}</span>
+        )}
         {step.error && (
           <>
             <span className="text-[10px] text-red-500">{lang === 'en' ? 'failed' : '失败'}</span>
@@ -132,7 +148,7 @@ function ToolStepDisplay({ step, lang }: { step: Extract<TimelineStep, { kind: '
           </>
         )}
       </div>
-    </div>
+    </motion.div>
   )
 }
 
@@ -190,7 +206,6 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [streamTimeline, setStreamTimeline] = useState<TimelineStep[]>([])
-  const [deepThink, setDeepThink] = useState(false)
   const [webSearch, setWebSearch] = useState(false)
   const [dockHeight, setDockHeight] = useState(96)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -214,6 +229,26 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     return tl
   }
   const pushTimeline = () => setStreamTimeline([...timelineRef.current])
+  /** Mark a running tool step done/failed. Pairs by callId (exact, survives
+   *  parallel same-name calls), falling back to most-recent-by-name. (#3) */
+  function finalizeToolStep(callId: string | undefined, name: string, patch: Partial<Extract<TimelineStep, { kind: 'tool' }>>) {
+    const tl = timelineRef.current
+    let idx = -1
+    if (callId) {
+      for (let i = tl.length - 1; i >= 0; i--) {
+        const s = tl[i]
+        if (s.kind === 'tool' && s.callId === callId) { idx = i; break }
+      }
+    }
+    if (idx < 0) {
+      for (let i = tl.length - 1; i >= 0; i--) {
+        const s = tl[i]
+        if (s.kind === 'tool' && s.name === name && !s.done) { idx = i; break }
+      }
+    }
+    if (idx >= 0) { tl[idx] = { ...(tl[idx] as Extract<TimelineStep, { kind: 'tool' }>), ...patch } }
+    pushTimeline()
+  }
   const [askData, setAskData] = useState<{ question: string; options: string[]; multiSelect: boolean } | null>(null)
   const [askChecked, setAskChecked] = useState<Set<number>>(new Set())
   const [askOther, setAskOther] = useState('')
@@ -221,6 +256,12 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [confirmStatus, setConfirmStatus] = useState<ConfirmStatus | null>(null)
   const [confirmResult, setConfirmResult] = useState('')
   const [executing, setExecuting] = useState(false)
+  // #7 Session-level "always allow": action types the user chose to auto-confirm
+  // for the rest of this session. Lives only in memory (never persisted) and is
+  // intentionally scoped per-action-type so a "remember" on a watchlist add does
+  // not silently green-light a transaction delete.
+  const autoAcceptActionsRef = useRef<Set<string>>(new Set())
+  const [rememberConfirm, setRememberConfirm] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>([])
   const esRef = useRef<EventSource | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -321,60 +362,43 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     prevLen.current = messages.length
   }, [messages, streaming])
 
-  async function send(textOverride?: string) {
-    const text = (textOverride !== undefined ? textOverride : input).trim()
-    if (!text || streaming) return
-    setInput('')
-    const newMessages: Message[] = [...messages, { role: 'user', content: text }]
-    setMessages(newMessages)
-    setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; setAskData(null); setAskChecked(new Set()); setAskOther(''); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
-    try {
-      const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, deepThink, webSearch }) })
-      if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
-      if (esRef.current) esRef.current.close()
-      const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
+  // Attach all SSE handlers to an EventSource. `baseMessages` is the conversation
+  // the final assistant message is appended to. Extracted so both send() and the
+  // on-reload resume (#8) share one code path.
+  function attachStream(es: EventSource, baseMessages: Message[]) {
       es.addEventListener('strategy', (e) => { const d = JSON.parse(e.data); pendingStrategy.current = { name: d.name, desc: d.description, code: d.code } })
       es.addEventListener('portfolio_card', (e) => { pendingCard.current = { type: 'portfolio', data: JSON.parse(e.data) } })
       es.addEventListener('picks_card', (e) => { pendingCard.current = { type: 'picks', data: JSON.parse(e.data) } })
       es.addEventListener('ask', (e) => { const d = JSON.parse(e.data); setAskData({ question: d.question, options: d.options || [], multiSelect: d.multiSelect || false }); setAskChecked(new Set()); setAskOther('') })
       es.addEventListener('confirm', (e) => {
-        try { const raw = JSON.parse(e.data); const d = raw.data || raw; const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d; if (parsed?.items?.length > 0) { setConfirmData(parsed); setConfirmStatus('pending'); setConfirmResult('') } } catch {}
+        try {
+          const raw = JSON.parse(e.data); const d = raw.data || raw
+          const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d
+          if (parsed?.items?.length > 0) {
+            setConfirmData(parsed); setConfirmStatus('pending'); setConfirmResult(''); setRememberConfirm(false)
+            // #7 Auto-execute when every action in this card was remembered for the session
+            const allRemembered = parsed.items.every(it => autoAcceptActionsRef.current.has(it.action))
+            if (allRemembered) { handleConfirmAccept(parsed, false) }
+          }
+        } catch {}
       })
       es.addEventListener('tool', (e) => {
-        const d = JSON.parse(e.data) as { name?: string; category?: ToolCategory }
+        const d = JSON.parse(e.data) as { name?: string; category?: ToolCategory; callId?: string }
         const name = d.name || ''
         if (!name) return
         const category: ToolCategory = d.category === 'analysis' || d.category === 'mutation' ? d.category : 'query'
         // A new tool call closes any open thinking segment and starts a tool step
         stampClosedElapsed(timelineRef.current)
-        timelineRef.current = [...timelineRef.current, { kind: 'tool', name, category, done: false }]
+        timelineRef.current = [...timelineRef.current, { kind: 'tool', name, category, done: false, ...(d.callId ? { callId: d.callId } : {}) }]
         pushTimeline()
       })
       es.addEventListener('tool_end', (e) => {
-        const d: SseEvent = JSON.parse(e.data)
-        const name = d.name || ''
-        // Find the most recent matching tool step and mark it done
-        for (let i = timelineRef.current.length - 1; i >= 0; i--) {
-          const s = timelineRef.current[i]
-          if (s.kind === 'tool' && s.name === name && !s.done) {
-            timelineRef.current[i] = { ...s, done: true }
-            break
-          }
-        }
-        pushTimeline()
+        const d = JSON.parse(e.data) as { name?: string; summary?: string; callId?: string }
+        finalizeToolStep(d.callId, d.name || '', { done: true, ...(d.summary ? { summary: d.summary } : {}) })
       })
       es.addEventListener('tool_fail', (e) => {
-        const d = JSON.parse(e.data) as { name?: string; error?: string }
-        const name = d.name || ''
-        const err = d.error || '工具执行失败'
-        for (let i = timelineRef.current.length - 1; i >= 0; i--) {
-          const s = timelineRef.current[i]
-          if (s.kind === 'tool' && s.name === name && !s.done) {
-            timelineRef.current[i] = { ...s, done: true, error: err }
-            break
-          }
-        }
-        pushTimeline()
+        const d = JSON.parse(e.data) as { name?: string; error?: string; callId?: string }
+        finalizeToolStep(d.callId, d.name || '', { done: true, error: d.error || '工具执行失败' })
       })
       es.addEventListener('token', (e) => { const d: SseEvent = JSON.parse(e.data); streamAccum.current += (d.msg || ''); setStreamText(streamAccum.current) })
       es.addEventListener('reasoning', (e) => {
@@ -423,7 +447,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           const codeMatch = raw.match(/```(?:python)?\s*\n(def decide\(ctx[^)]*\):[\s\S]*?)```/)
           if (codeMatch) { const nameMatch = raw.match(/(?:策略名称|策略)[：:]\s*(.+)/); msg.hasCode = true; msg.strategyName = nameMatch ? nameMatch[1].trim() : ''; msg.strategyCode = codeMatch[1].trim(); msg.strategyDesc = '' }
         }
-        setMessages([...newMessages, msg]); setStreaming(false); es.close(); esRef.current = null
+        setMessages([...baseMessages, msg]); setStreaming(false); es.close(); esRef.current = null
       })
       es.addEventListener('error', (e) => {
         pendingStrategy.current = null
@@ -432,15 +456,45 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           const raw = (e as MessageEvent).data
           if (raw) { const d: SseEvent = JSON.parse(raw); errMsg = d.msg || t.chat.errorUnknown }
         } catch {}
-        setMessages([...newMessages, { role: 'system', content: `⚠ ${errMsg}` }])
+        setMessages([...baseMessages, { role: 'system', content: `⚠ ${errMsg}` }])
         setStreaming(false); es.close(); esRef.current = null
       })
       es.onerror = () => {
         if (!streamAccum.current) {
-          setMessages([...newMessages, { role: 'system', content: `⚠ ${t.chat.errorNetwork}` }])
+          setMessages([...baseMessages, { role: 'system', content: `⚠ ${t.chat.errorNetwork}` }])
         }
         setStreaming(false); es.close(); esRef.current = null
       }
+  }
+
+  // #8 On mount, if a generation is already running server-side (e.g. the user
+  // reloaded mid-answer), resubscribe — the unified event buffer replays the
+  // whole turn so the live timeline/text resume instead of being lost.
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${BASE}/api/ai/status`, { credentials: 'include' }).then(r => r.json()).then(d => {
+      if (cancelled || !d?.active || streaming || esRef.current) return
+      setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []
+      const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
+      attachStream(es, gMessages)
+    }).catch(() => {})
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  async function send(textOverride?: string) {
+    const text = (textOverride !== undefined ? textOverride : input).trim()
+    if (!text || streaming) return
+    setInput('')
+    const newMessages: Message[] = [...messages, { role: 'user', content: text }]
+    setMessages(newMessages)
+    setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; setAskData(null); setAskChecked(new Set()); setAskOther(''); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
+    try {
+      const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, webSearch }) })
+      if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
+      if (esRef.current) esRef.current.close()
+      const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
+      attachStream(es, newMessages)
     } catch (e: unknown) { setStreamText(`${t.chat.errorPrefix} ${e instanceof Error ? e.message : String(e)}`); setStreaming(false) }
   }
 
@@ -453,6 +507,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     timelineRef.current.forEach((s, i) => {
       if (s.kind === 'thinking' && s._ts != null && s._elapsed == null) {
         timelineRef.current[i] = { ...s, _elapsed: Date.now() - s._ts }
+      }
+      // Close out any tool still spinning so reloaded history doesn't show an
+      // eternal "调用中…" — mark it done with an aborted note.
+      if (s.kind === 'tool' && !s.done) {
+        timelineRef.current[i] = { ...s, done: true, error: lang === 'en' ? 'stopped' : '已停止' }
       }
     })
     const partialTimeline = [...timelineRef.current]
@@ -468,10 +527,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   }
   function handleKeyDown(e: React.KeyboardEvent) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }
 
-  async function handleConfirmAccept() {
-    if (!confirmData?.items) return; setExecuting(true); const results: string[] = []
-    for (const item of confirmData.items) {
-      const itemName = item.label || confirmData.title
+  async function handleConfirmAccept(data?: ConfirmData, remember?: boolean) {
+    const cd = data || confirmData
+    if (!cd?.items) return; setExecuting(true); const results: string[] = []
+    for (const item of cd.items) {
+      const itemName = item.label || cd.title
       try {
         const body = item.body || {}; const form = new URLSearchParams()
         for (const [k, v] of Object.entries(body)) { if (v != null && v !== '') form.append(k, String(v)) }
@@ -483,6 +543,8 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         results.push(`✗ ${itemName}: ${message}`)
       }
     }
+    // Record opt-in: future cards whose actions are all remembered auto-execute.
+    if (remember) { for (const it of cd.items) autoAcceptActionsRef.current.add(it.action) }
     const failed = results.some(r => r.startsWith('✗'))
     setConfirmResult(results.join('\n'))
     setConfirmStatus(failed ? 'failed' : 'accepted'); setExecuting(false)
@@ -554,7 +616,9 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const inputBar = (
     <div className="flex items-end gap-2">
       <div className="flex items-center gap-0.5 pb-1">
-        <button onClick={() => setDeepThink(!deepThink)} className={`p-1.5 rounded-md transition-colors ${deepThink ? 'text-purple-500' : 'text-slate-400 hover:text-slate-500'}`} title={t.chat.deepThink}><Brain className="w-4 h-4" /></button>
+        {/* Deep-think toggle removed — thinking is now auto-enabled for real
+            requests via server-side smart routing, so tools fire reliably
+            without a manual switch. */}
         <button onClick={() => setWebSearch(!webSearch)} className={`p-1.5 rounded-md transition-colors ${webSearch ? 'text-sky-500' : 'text-slate-400 hover:text-slate-500'}`} title={t.chat.webSearch}><Globe className="w-4 h-4" /></button>
       </div>
       <textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
@@ -659,42 +723,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                   return null
                 })()
                 // Idle pulse only when nothing has streamed yet AND no tool is running
-                const showThinkingPending = deepThink && liveSteps.length === 0 && !after.trim() && !runningTool
-                const showGenericPending = !deepThink && liveSteps.length === 0 && !after.trim() && !runningTool
+                const showGenericPending = liveSteps.length === 0 && !after.trim() && !runningTool
                 return (<>
-                  {showThinkingPending && (
-                    <div className="flex items-center gap-1.5 text-[12px] text-purple-500 mb-1.5">
-                      <Brain className="w-3.5 h-3.5 animate-pulse" />
-                      <span className="font-medium">{t.chat.deepThinkingPending}</span>
-                      <span className="inline-flex gap-0.5 ml-0.5">
-                        <span className="w-1 h-1 rounded-full bg-purple-400 animate-bounce" />
-                        <span className="w-1 h-1 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0.15s' }} />
-                        <span className="w-1 h-1 rounded-full bg-purple-400 animate-bounce" style={{ animationDelay: '0.3s' }} />
-                      </span>
-                    </div>
-                  )}
-                  {runningTool && !after.trim() && (() => {
-                    const s = toolStyle(runningTool)
-                    const dotColor = runningTool.error
-                      ? 'bg-red-400'
-                      : runningTool.category === 'mutation'
-                      ? 'bg-amber-400'
-                      : runningTool.category === 'analysis'
-                      ? (runningTool.name === 'web_search' ? 'bg-sky-400' : 'bg-purple-400')
-                      : 'bg-slate-400'
-                    return (
-                      <div className={`flex items-center gap-1.5 text-[12px] mb-1.5 ${s.label}`}>
-                        <s.Icon className="w-3.5 h-3.5 animate-pulse" />
-                        <span className="font-medium">{localizeToolName(runningTool.name, lang)}</span>
-                        <span className="text-[10px] opacity-70">{lang === 'en' ? 'running…' : '调用中'}</span>
-                        <span className="inline-flex gap-0.5 ml-0.5">
-                          <span className={`w-1 h-1 rounded-full animate-bounce ${dotColor}`} />
-                          <span className={`w-1 h-1 rounded-full animate-bounce ${dotColor}`} style={{ animationDelay: '0.15s' }} />
-                          <span className={`w-1 h-1 rounded-full animate-bounce ${dotColor}`} style={{ animationDelay: '0.3s' }} />
-                        </span>
-                      </div>
-                    )
-                  })()}
+                  {/* The running tool renders inside TimelineRenderer (ToolStepDisplay
+                      shows the animated "调用中…" row) — no separate banner, so a tool
+                      call is never shown twice. */}
                   {liveSteps.length > 0 && <TimelineRenderer steps={liveSteps} done={reasoningDone} lang={lang} />}
                   {showGenericPending && (
                     <span className="inline-flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>
@@ -819,12 +852,18 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                 )
               })}
               {confirmStatus === 'pending' && (
-                <div className="flex gap-2 pt-1">
-                  <button onClick={handleConfirmAccept} disabled={executing} className="flex items-center gap-1 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors disabled:opacity-60">
-                    {executing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}Accept
-                  </button>
-                  <button onClick={() => setConfirmStatus('refused')} disabled={executing} className="flex items-center gap-1 px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors"><X className="w-3.5 h-3.5" />Refuse</button>
-                </div>
+                <>
+                  <div className="flex gap-2 pt-1">
+                    <button onClick={() => handleConfirmAccept(undefined, rememberConfirm)} disabled={executing} className="flex items-center gap-1 px-4 py-2 rounded-lg bg-emerald-600 text-white text-xs font-medium hover:bg-emerald-700 transition-colors disabled:opacity-60">
+                      {executing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}{t.chat.accept}
+                    </button>
+                    <button onClick={() => setConfirmStatus('refused')} disabled={executing} className="flex items-center gap-1 px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors"><X className="w-3.5 h-3.5" />{t.chat.refuse}</button>
+                  </div>
+                  <label className="flex items-center gap-1.5 text-[10px] text-slate-400 cursor-pointer select-none pt-0.5">
+                    <input type="checkbox" checked={rememberConfirm} onChange={e => setRememberConfirm(e.target.checked)} className="w-3 h-3 accent-emerald-600" />
+                    {t.chat.autoConfirmSession}
+                  </label>
+                </>
               )}
               {confirmStatus === 'accepted' && <p className="text-xs text-emerald-600 font-medium">✓ 已完成{confirmData.items.length > 1 ? ` ${confirmData.items.length} 项` : ''}</p>}
               {confirmStatus === 'failed' && <p className="text-xs text-red-500 whitespace-pre-wrap">{confirmResult || '执行失败'}</p>}

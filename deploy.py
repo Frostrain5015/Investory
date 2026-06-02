@@ -57,10 +57,15 @@ def build_jar():
     print("Building JAR ...")
     env = os.environ.copy()
     env["JAVA_HOME"] = r"E:\Java\jdk-17"
+    # `clean` is essential: Maven's process-resources copies the Vite output into
+    # target/classes/static but never deletes stale chunks, so a plain `package`
+    # lets every past build's hashed assets pile up in the JAR (it had grown to
+    # ~80 MB / 480+ JS files). `clean package` rebuilds target from scratch, so
+    # the JAR carries only the current build's assets.
     r = subprocess.run(
         [r"E:\Maven\apache-maven-3.9.16\bin\mvn.cmd",
          "-f", r"d:\Java Projects\investory\backend\pom.xml",
-         "package", "-DskipTests"],
+         "clean", "package", "-DskipTests"],
         env=env, capture_output=True, text=True
     )
     if r.returncode != 0:

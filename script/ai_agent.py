@@ -64,19 +64,54 @@ def _should_use_web_search(messages: list) -> bool:
     text = str(last_user.get("content", "")).lower()
     return any(k.lower() in text for k in _WEB_SEARCH_TRIGGERS)
 
+# Pure smalltalk that genuinely does NOT need a tool. ONLY these are routed to
+# the fast model. Everything else (stock names, watchlist/follow, transactions,
+# analysis…) goes to the full model so it reliably calls tools. The earlier
+# keyword/symbol heuristic let cases like '把小鹏汽车加入自选' and '小鹏汽车怎么样'
+# fall through to the lazy fast model, which then skipped ask_user and answered
+# with prose (no card) — the exact bug reported.
+_CHITCHAT_TOKENS = [
+    "你好", "您好", "嗨", "哈喽", "在吗", "在不在", "谢谢", "感谢", "多谢", "辛苦",
+    "早上好", "早安", "午安", "晚安", "晚上好", "下午好", "再见", "拜拜", "好的", "好滴",
+    "收到", "明白", "了解", "没事", "嗯", "哦", "ok", "okay", "好", "hi", "hello",
+    "hey", "thanks", "thank you", "bye", "yes", "no",
+]
+
+def _is_trivial_chitchat(text: str) -> bool:
+    """True only for short, obviously non-actionable greetings/acknowledgements."""
+    t = text.strip().lower()
+    if not t or len(t) > 16:
+        return False
+    return any(t == k or t.startswith(k) for k in _CHITCHAT_TOKENS)
+
 def _is_complex_query(messages: list) -> bool:
-    """Return True if the latest user message warrants the full model."""
+    """Return True (→ full model) for anything but obvious chit-chat.
+    Inverted on purpose: the fast model (qwen-plus) is noticeably lazier about
+    function calling, the root of '工具调用不积极'. We only trade TTFT for the
+    fast model on pure smalltalk; every real request gets the tool-reliable
+    full model."""
     last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     if not last_user:
         return True
     text = str(last_user.get("content", ""))
-    if any(k in text for k in _COMPLEX_SIGNALS):
-        return True
-    # Transaction write operations need function calling — force full model
-    if any(k in text for k in _TRANSACTION_WRITE_SIGNALS):
-        return True
-    # Long messages almost always need thorough reasoning
-    return len(text) > 60
+    return not _is_trivial_chitchat(text)
+
+def _read_answer_with_timeout(timeout_s: float) -> str:
+    """Read one line from stdin, waiting at most timeout_s seconds.
+    Returns "" on timeout. Uses select() on POSIX (where the server runs);
+    falls back to a plain blocking readline where select-on-stdin isn't
+    supported (e.g. Windows pipes), so behaviour there is unchanged."""
+    try:
+        import select
+        if hasattr(select, "select") and not sys.platform.startswith("win"):
+            ready, _, _ = select.select([sys.stdin], [], [], timeout_s)
+            if not ready:
+                return ""
+            return sys.stdin.readline().strip()
+    except Exception:
+        pass
+    return sys.stdin.readline().strip()
+
 
 def _is_confirm_tool(name: str) -> bool:
     return name in _CONFIRM_TOOL_NAMES
@@ -119,6 +154,7 @@ def build_system_prompt(kb: dict) -> str:
 {safety_text}
 
 【工具调用规则】
+- ⚠ 数据铁律（最高优先级，覆盖所有数据类问题）：凡涉及任何具体数据——个股行情/评分/基本面、持仓、盈亏、交易、回测、市场环境、自选、新闻——必须先调用对应工具拿真实数据再回答。持仓画像和长期记忆只作背景参考，严禁据此直接给出价格、涨跌、评分、权重等数字结论。宁可多调一次工具，也不要凭记忆或画像编造数字。不确定该用哪个工具时，先 search_stocks / get_portfolio 起步。
 - ⚠ 策略生成铁律：用户要求写策略/生成策略/构建策略/设计策略时，第一轮对话必须且只能调用 generate_strategy 工具，不得输出任何文字。错误示范：先说"好的我来生成"再调用工具。正确示范：直接调用工具，参数包含完整Python代码。工具调用成功后，再简短告知用户"已生成"。
 - 用户提到某个策略时，先用 list_strategies 查找，再 get_strategy 获取完整规则
 - 用户问组合问题时：先调 get_portfolio 拿持仓；判断市场环境用 get_market_regime；个股深度分析用 get_factor_scores
@@ -1427,8 +1463,15 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         is_multi = args.get("multiSelect", False)
         q = {"question": args.get("question", ""), "options": args.get("options", []), "multiSelect": bool(is_multi)}
         print(f"[ASK] {json.dumps(q, ensure_ascii=False)}", flush=True)
-        # Block waiting for the user's answer from Java via stdin.
-        answer = sys.stdin.readline().strip()
+        # Wait for the user's answer from Java via stdin — but NOT forever.
+        # If the card is missed / the user navigates away, an unbounded readline
+        # would hang this process (and the whole turn) until the 10-min process
+        # kill, leaving the frontend stuck in `streaming` with input disabled.
+        # A bounded wait lets the turn end ([DONE]) so the UI recovers.
+        answer = _read_answer_with_timeout(240)
+        if not answer:
+            return {"selected": "", "timed_out": True,
+                    "note": "用户未在限期内通过选择卡片作答。不要再调用 ask_user，请用一句话直接请用户在对话框回复，然后结束本轮。"}
         return {"selected": answer}
     elif name == "get_portfolio":
         return tool_get_portfolio(portfolio_id)
@@ -1796,29 +1839,101 @@ def _tool_timeout(name: str) -> int:
     return _TOOL_TIMEOUTS.get(name, 25)
 
 
-def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0) -> str:
-    # Emit the raw tool name + taxonomy category so the frontend can pick the
-    # right icon/colour (query=gray, analysis=purple, mutation=amber). Pair
-    # with [TOOL_END] / [TOOL_FAIL] for completed/failed state.
-    import time as _time
-    print(f"[TOOL] {name}\t{_tool_category(name)}", flush=True)
+def _tool_summary(name: str, result: object) -> str:
+    """Derive a short one-line result digest for the timeline (e.g. "8 只", "3 条",
+    "谨慎 5/10"). Best-effort and must never raise; returns "" when nothing useful.
+    The string must not contain tab/newline — it rides the tab-framed [TOOL_END]."""
+    try:
+        if isinstance(result, list):
+            return f"{len(result)} 条" if result else "无结果"
+        if not isinstance(result, dict):
+            return ""
+        if result.get("error"):
+            return ""  # failure path is handled by [TOOL_FAIL]
+        if name in ("get_portfolio",):
+            n = result.get("count")
+            return f"{n} 只持仓" if n is not None else ""
+        if name in ("search_stocks", "web_search"):
+            n = result.get("count")
+            if n is None and isinstance(result.get("results"), list):
+                n = len(result["results"])
+            return f"{n} 条" if n is not None else ""
+        if name == "get_market_regime":
+            r, sc = result.get("regime"), result.get("score")
+            return f"{r} {sc}/10" if r else ""
+        if name == "get_stock_price":
+            p, c = result.get("price"), result.get("changePct")
+            if p is None: return "无价格"
+            return f"{p} ({c:+.2f}%)" if isinstance(c, (int, float)) else str(p)
+        if name in ("get_factor_scores", "get_portfolio_analysis"):
+            sc = result.get("total_score", result.get("portfolio_score"))
+            return f"综合 {sc}" if sc is not None else ""
+        if name == "get_world_news":
+            n = result.get("count")
+            return f"{n} 条" if n is not None else ""
+        if name == "get_daily_picks":
+            picks = result.get("picks")
+            return f"{len(picks)} 只" if isinstance(picks, list) else ""
+        if name == "run_backtest":
+            tr = result.get("totalReturnPct")
+            return f"收益 {tr:+.1f}%" if isinstance(tr, (int, float)) else "完成"
+        if name == "get_watchlist":
+            n = result.get("count")
+            return f"{n} 只自选" if n is not None else ""
+        if name in ("get_transactions", "get_backtests", "list_strategies"):
+            items = result if isinstance(result, list) else result.get("points")
+            return f"{len(items)} 条" if isinstance(items, list) else ""
+        # Generic fallback: a top-level count if present
+        n = result.get("count")
+        return f"{n} 条" if isinstance(n, int) else ""
+    except Exception:
+        return ""
+
+
+import threading as _threading
+_TOOL_LOG_LOCK = _threading.Lock()
+
+def _log_tool(name: str, latency_ms: int, ok: bool, extra: str = "") -> None:
+    """Append one structured line per tool call to ai_tools.log for observability
+    (we were debugging tool issues blind). Must never raise. NOTE: this goes to a
+    FILE, not stdout/stderr — those are the agent protocol channel that Java
+    scrapes, so any stray line there would surface to the user as chat text."""
+    try:
+        import datetime
+        line = (f"{datetime.datetime.now().isoformat(timespec='seconds')}\t{name}\t"
+                f"{latency_ms}ms\t{'ok' if ok else 'err'}\t{extra[:160]}\n")
+        with _TOOL_LOG_LOCK:
+            with open(SCRIPT_DIR / "ai_tools.log", "a", encoding="utf-8") as f:
+                f.write(line)
+    except Exception:
+        pass
+
+
+def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0, call_id: str = "") -> str:
+    # Protocol: [TOOL] <name>\t<category>\t<call_id>. call_id is the model's own
+    # tool-call id (à la Claude Code's tool_use_id); it pairs this start with its
+    # [TOOL_END]/[TOOL_FAIL] so parallel calls of the SAME tool can't cross-wire
+    # the way the old name-only matching did.
+    import time as _time, uuid as _uuid
+    cid = call_id or _uuid.uuid4().hex[:8]
+    print(f"[TOOL] {name}\t{_tool_category(name)}\t{cid}", flush=True)
     t0 = _time.monotonic()
     try:
         result = _run_tool(name, args, portfolio_id, user_id)
         result = _trim_result(name, result)
-        # For instant tools (sub-100ms) the frontend never gets to render
-        # the "running" state before [TOOL_END] arrives. Pad to a minimum
-        # ~350ms so the user can see each tool fire in the timeline.
-        elapsed = _time.monotonic() - t0
-        if elapsed < 0.35:
-            _time.sleep(0.35 - elapsed)
-        print(f"[TOOL_END] {name}", flush=True)
+        latency = int((_time.monotonic() - t0) * 1000)
+        # [TOOL_END] <call_id>\t<name>\t<summary> — name kept for backward-compat
+        # fallback matching; summary is the short result digest shown after the label.
+        summary = _tool_summary(name, result).replace("\t", " ").replace("\n", " ")
+        _log_tool(name, latency, True, summary)
+        print(f"[TOOL_END] {cid}\t{name}\t{summary}", flush=True)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
+        latency = int((_time.monotonic() - t0) * 1000)
         short = str(e)[:200].replace("\n", " ").replace("\t", " ")
-        # [TOOL_FAIL] <name>\t<short message> — tab separates name from message
-        # so it survives line-based stdout framing.
-        print(f"[TOOL_FAIL] {name}\t{short}", flush=True)
+        # [TOOL_FAIL] <call_id>\t<name>\t<short message>
+        _log_tool(name, latency, False, short)
+        print(f"[TOOL_FAIL] {cid}\t{name}\t{short}", flush=True)
         return json.dumps({"error": f"{name} 失败: {short}"}, ensure_ascii=False)
 
 
@@ -1842,6 +1957,66 @@ def _needs_proxy(api_base: str) -> bool:
     return True
 
 
+# ── Dynamic tool subsetting (#4) ─────────────────────────────────────────
+# Sending all ~35 tools every call costs tokens and muddies the model's choice.
+# We keep every read/analysis tool always available, and only surface the
+# write-confirm tools when there's clear write intent, and the heavy
+# strategy-generation tools when there's strategy/backtest intent. Conservative
+# on purpose: read tools are never withheld, so proactiveness can't regress.
+_WRITE_CONFIRM_TOOLS = {
+    "confirm_add_watchlist", "confirm_remove_watchlist", "confirm_create_transaction",
+    "confirm_update_transaction", "confirm_delete_transaction", "confirm_bulk_create",
+    "confirm_bulk_update", "confirm_bulk_delete",
+}
+_STRATEGY_WRITE_TOOLS = {"generate_strategy", "run_backtest", "suggest_strategy_optimizations"}
+_WRITE_INTENT = [
+    "买", "卖", "加仓", "减仓", "清仓", "建仓", "增持", "减持", "补仓", "交易", "记录",
+    "添加", "新增", "删除", "修改", "编辑", "更改", "调整", "分红", "入金", "出金",
+    "转入", "转出", "自选", "关注", "收藏", "加入", "移除", "盯盘", "持有",
+    "buy", "sell", "add", "delete", "remove", "update", "edit", "watchlist",
+]
+_STRATEGY_INTENT = [
+    "策略", "回测", "调参", "选股", "信号", "均线", "指标", "因子模型",
+    "backtest", "strategy", "optimi",
+]
+
+def _select_tools(messages: list, expose_web: bool) -> list:
+    """Return the OpenAI-format tool subset appropriate to the latest message."""
+    all_names = {t["function"]["name"] for t in TOOLS}
+    keep = all_names - _WRITE_CONFIRM_TOOLS - _STRATEGY_WRITE_TOOLS
+    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    text = str(last_user.get("content", "")).lower() if last_user else ""
+    if any(k.lower() in text for k in _WRITE_INTENT):
+        keep |= _WRITE_CONFIRM_TOOLS
+    if any(k.lower() in text for k in _STRATEGY_INTENT):
+        keep |= _STRATEGY_WRITE_TOOLS
+    if not expose_web:
+        keep.discard("web_search")
+    return [t for t in TOOLS if t["function"]["name"] in keep]
+
+
+# ── Cross-turn tool-result context (#1) ──────────────────────────────────
+# The frontend re-sends prior *text*, but the model otherwise forgets what
+# tools returned last turn. We emit a compact digest of this turn's tool
+# results as a [CONTEXT] line; Java persists it and re-injects it next turn so
+# the assistant can reference "the portfolio you just pulled" without re-querying.
+_CONTEXT_SKIP_TOOLS = _WRITE_CONFIRM_TOOLS | {"ask_user", "remember", "forget"}
+
+def _emit_context(gathered: dict) -> None:
+    if not gathered:
+        return
+    try:
+        compact = {}
+        for k, v in list(gathered.items())[-8:]:
+            compact[k] = v[:600] if isinstance(v, str) else v
+        blob = json.dumps(compact, ensure_ascii=False)
+        if len(blob) > 2500:
+            blob = blob[:2500]
+        print(f"[CONTEXT] {blob}", flush=True)
+    except Exception:
+        pass
+
+
 def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0, web_search: bool = False):
     from openai import OpenAI
     import httpx
@@ -1852,23 +2027,31 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     if proxy_url and _needs_proxy(api_base):
         kwargs["http_client"] = httpx.Client(proxy=proxy_url)
     client = OpenAI(**kwargs)
-    max_tokens = 4096 if deep_think else 1024
 
-    # DashScope / Qwen3: disable thinking mode by default to eliminate hidden
-    # chain-of-thought overhead before the first token.  Deep-think mode re-enables
-    # it so the model can use its native reasoning chain.
     is_dashscope = bool(api_base and ("dashscope" in api_base or "aliyuncs" in api_base))
-    extra_body = {"enable_thinking": True} if (is_dashscope and deep_think) else {}
 
-    # Route simple queries to the fast model to minimise TTFT; complex analysis
-    # stays on the configured full model.  Deep-think always uses the full model.
+    # ── Thinking & model routing (no manual deep-think toggle needed) ──────
+    # Qwen3 (qwen-plus) is markedly more reliable at *calling tools* when its
+    # native thinking mode is on. With it off, it tends to answer in prose and
+    # skip function calls entirely — the reported "不开深度思考怎么都触发不了".
+    # So: enable thinking for every real (non-chit-chat) request automatically.
+    # Pure smalltalk stays on the fast, no-thinking path for low latency.
+    is_complex = _is_complex_query(messages)
+    want_thinking = is_dashscope and (deep_think or is_complex)
+    max_tokens = 4096 if (deep_think or want_thinking) else 1024
+    # Explicitly pin enable_thinking both ways so we never inherit an ambiguous
+    # server-side default that silently suppresses tool calls.
+    extra_body = {"enable_thinking": bool(want_thinking)} if is_dashscope else {}
+
+    # Only obvious chit-chat is routed to the fast model; real requests stay on
+    # the full configured model (which, with thinking on, calls tools reliably).
     effective_model = model
-    if is_dashscope and not deep_think and not _is_complex_query(messages):
+    if is_dashscope and not deep_think and not is_complex:
         effective_model = DASHSCOPE_FAST_MODEL
 
-    # Filter web_search tool based on the toggle + heuristic
+    # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
-    effective_tools = TOOLS if expose_web else [t for t in TOOLS if t["function"]["name"] != "web_search"]
+    effective_tools = _select_tools(messages, expose_web)
 
     def _stream(msgs):
         return client.chat.completions.create(
@@ -1893,9 +2076,6 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         if "tool_call_id" in m: entry["tool_call_id"] = m["tool_call_id"]
         formatted.append(entry)
 
-    # Always stream first. If tool calls appear mid-stream, collect and handle.
-    stream = _stream(formatted)
-
     def _emit_delta(delta):
         # Reasoning content (DeepSeek-reasoner, Qwen3 with enable_thinking, GLM-Zero, Moonshot k1.5, etc.)
         # Escape backslash + newline so each chunk becomes exactly one line frame —
@@ -1908,26 +2088,34 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         if delta.content:
             sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
 
-    tool_calls = {}  # idx -> {id, name, args}
-    has_tools = False
-    for chunk in stream:
-        if not chunk.choices: continue
-        delta = chunk.choices[0].delta
-        if delta.tool_calls:
-            has_tools = True
-            for tc in delta.tool_calls:
-                idx = tc.index
-                if idx not in tool_calls:
-                    tool_calls[idx] = {"id": "", "name": "", "args": ""}
-                if tc.id: tool_calls[idx]["id"] = tc.id
-                if tc.function:
-                    if tc.function.name: tool_calls[idx]["name"] += tc.function.name
-                    if tc.function.arguments: tool_calls[idx]["args"] += tc.function.arguments
-        else:
-            _emit_delta(delta)
+    def _consume(stream):
+        """Read a streamed completion: emit text/reasoning deltas, accumulate any
+        tool-call fragments. Returns (tool_calls_dict, has_tools). Single source of
+        truth for the chunk loop that used to be copy-pasted three times (#5)."""
+        tcs, has = {}, False
+        for chunk in stream:
+            if not chunk.choices: continue
+            delta = chunk.choices[0].delta
+            if delta.tool_calls:
+                has = True
+                for tc in delta.tool_calls:
+                    idx = tc.index
+                    if idx not in tcs:
+                        tcs[idx] = {"id": "", "name": "", "args": ""}
+                    if tc.id: tcs[idx]["id"] = tc.id
+                    if tc.function:
+                        if tc.function.name: tcs[idx]["name"] += tc.function.name
+                        if tc.function.arguments: tcs[idx]["args"] += tc.function.arguments
+            else:
+                _emit_delta(delta)
+        return tcs, has
+
+    # Always stream first. If tool calls appear mid-stream, collect and handle.
+    tool_calls, has_tools = _consume(_stream(formatted))
 
     total_tool_calls = 0
     web_search_count = 0
+    gathered = {}  # tool name -> latest result JSON, replayed next turn via [CONTEXT] (#1)
     while has_tools:
         sorted_tools = [tool_calls[i] for i in sorted(tool_calls)]
         formatted.append({"role": "assistant", "content": None, "tool_calls": [
@@ -1941,7 +2129,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         if ask_tool:
             try: ask_args = json.loads(ask_tool["args"])
             except: ask_args = {}
-            result_json = execute_tool(ask_tool["name"], ask_args, portfolio_id, user_id)
+            result_json = execute_tool(ask_tool["name"], ask_args, portfolio_id, user_id, ask_tool["id"])
             formatted.append({"role": "tool", "tool_call_id": ask_tool["id"],
                                "content": result_json})
             # Remove ask_user from this round so remaining tools can run in the next
@@ -1949,24 +2137,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             sorted_tools = [t for t in sorted_tools if t["name"] != "ask_user"]
             if not sorted_tools:
                 # No other tools this round — stream next response
-                stream = _stream(formatted)
-                tool_calls = {}
-                has_tools = False
-                for chunk in stream:
-                    if not chunk.choices: continue
-                    delta = chunk.choices[0].delta
-                    if delta.tool_calls:
-                        has_tools = True
-                        for tc in delta.tool_calls:
-                            idx = tc.index
-                            if idx not in tool_calls:
-                                tool_calls[idx] = {"id": "", "name": "", "args": ""}
-                            if tc.id: tool_calls[idx]["id"] = tc.id
-                            if tc.function:
-                                if tc.function.name: tool_calls[idx]["name"] += tc.function.name
-                                if tc.function.arguments: tool_calls[idx]["args"] += tc.function.arguments
-                    else:
-                        _emit_delta(delta)
+                tool_calls, has_tools = _consume(_stream(formatted))
                 continue  # back to while has_tools
 
         # Split tools: those within limit run in parallel, excess get error.
@@ -2002,41 +2173,29 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                 for t in runnable:
                     try: args = json.loads(t["args"])
                     except: args = {}
-                    futs[executor.submit(execute_tool, t["name"], args, portfolio_id, user_id)] = (t["id"], t["name"])
+                    # Pass the model's tool-call id as the timeline call_id (#3)
+                    futs[executor.submit(execute_tool, t["name"], args, portfolio_id, user_id, t["id"])] = (t["id"], t["name"])
                 for fut, (tid, tname) in futs.items():
                     try:
                         results_map[tid] = fut.result(timeout=tool_timeouts_map[tid])
                     except concurrent.futures.TimeoutError:
-                        # Surface timeout into the timeline AND the model context
-                        print(f"[TOOL_FAIL] {tname}\t工具执行超时（>{tool_timeouts_map[tid]}s）", flush=True)
+                        # [TOOL_FAIL] <call_id>\t<name>\t<msg> — paired by id (#3)
+                        print(f"[TOOL_FAIL] {tid}\t{tname}\t工具执行超时（>{tool_timeouts_map[tid]}s）", flush=True)
                         results_map[tid] = json.dumps({"error": "工具执行超时"}, ensure_ascii=False)
             for t in runnable:
                 formatted.append({"role": "tool", "tool_call_id": t["id"], "content": results_map[t["id"]]})
+                if t["name"] not in _CONTEXT_SKIP_TOOLS:
+                    gathered[t["name"]] = results_map[t["id"]]
             total_tool_calls += len(runnable)
             if any(_is_confirm_tool(t["name"]) and _confirmation_was_sent(results_map.get(t["id"], "")) for t in runnable):
+                _emit_context(gathered)
                 print("\n[DONE]", flush=True)
                 return
 
         # Call again — may produce more tool calls or final content
-        stream = _stream(formatted)
-        tool_calls = {}
-        has_tools = False
-        for chunk in stream:
-            if not chunk.choices: continue
-            delta = chunk.choices[0].delta
-            if delta.tool_calls:
-                has_tools = True
-                for tc in delta.tool_calls:
-                    idx = tc.index
-                    if idx not in tool_calls:
-                        tool_calls[idx] = {"id": "", "name": "", "args": ""}
-                    if tc.id: tool_calls[idx]["id"] = tc.id
-                    if tc.function:
-                        if tc.function.name: tool_calls[idx]["name"] += tc.function.name
-                        if tc.function.arguments: tool_calls[idx]["args"] += tc.function.arguments
-            else:
-                _emit_delta(delta)
+        tool_calls, has_tools = _consume(_stream(formatted))
 
+    _emit_context(gathered)
     print("\n[DONE]", flush=True)
 
 
@@ -2059,9 +2218,9 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
             role = "user"
         formatted.append({"role": role, "content": m.get("content", "")})
 
-    # Filter web_search tool based on the toggle + heuristic
+    # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
-    src_tools = TOOLS if expose_web else [t for t in TOOLS if t["function"]["name"] != "web_search"]
+    src_tools = _select_tools(messages, expose_web)
 
     # Convert OpenAI tool format → Anthropic format
     anthropic_tools = [
@@ -2076,6 +2235,7 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
 
     total_tool_calls = 0
     web_search_count = 0
+    gathered = {}  # tool name -> latest result JSON, replayed next turn via [CONTEXT] (#1)
 
     while True:
         max_tokens = 8192 if deep_think else 1024
@@ -2132,7 +2292,7 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
         # After it returns, the answer is injected as tool_result and the loop continues.
         ask_tool = next((tu for tu in tool_uses if tu.name == "ask_user"), None)
         if ask_tool:
-            result_json = execute_tool(ask_tool.name, ask_tool.input, portfolio_id, user_id)
+            result_json = execute_tool(ask_tool.name, ask_tool.input, portfolio_id, user_id, ask_tool.id)
             formatted.append({"role": "user", "content": [{
                 "type": "tool_result", "tool_use_id": ask_tool.id,
                 "content": result_json,
@@ -2160,16 +2320,20 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
 
         if runnable:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(runnable)) as executor:
-                futs = {executor.submit(execute_tool, tu.name, tu.input, portfolio_id, user_id): (tu.id, tu.name)
+                # Pass the model's tool_use id as the timeline call_id (#3)
+                futs = {executor.submit(execute_tool, tu.name, tu.input, portfolio_id, user_id, tu.id): (tu.id, tu.name)
                         for tu in runnable}
                 for fut, (tid, tname) in futs.items():
                     timeout_s = _tool_timeout(tname)
                     try:
                         results_map[tid] = fut.result(timeout=timeout_s)
                     except concurrent.futures.TimeoutError:
-                        print(f"[TOOL_FAIL] {tname}\t工具执行超时（>{timeout_s}s）", flush=True)
+                        print(f"[TOOL_FAIL] {tid}\t{tname}\t工具执行超时（>{timeout_s}s）", flush=True)
                         results_map[tid] = json.dumps({"error": "工具执行超时"}, ensure_ascii=False)
             total_tool_calls += len(runnable)
+            for tu in runnable:
+                if tu.name not in _CONTEXT_SKIP_TOOLS:
+                    gathered[tu.name] = results_map.get(tu.id, "")
 
         # Append tool results in original order
         formatted.append({"role": "user", "content": [
@@ -2177,9 +2341,11 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
             for tu in tool_uses
         ]})
         if any(_is_confirm_tool(tu.name) and _confirmation_was_sent(results_map.get(tu.id, "")) for tu in runnable):
+            _emit_context(gathered)
             print("\n[DONE]", flush=True)
             return
 
+    _emit_context(gathered)
     print("\n[DONE]", flush=True)
 
 
