@@ -13,6 +13,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import java.io.IOException;
 
 /**
  * MCP（Model Context Protocol）Streamable HTTP 端点。
@@ -82,21 +85,26 @@ public class McpController {
 
     /**
      * GET /mcp：SSE 传输（Streamable HTTP 可选 GET）。
-     * WorkBuddy 等客户端先探测 GET(SSE)，再回退到 POST(streamableHttp)。
-     * 无状态服务不推事件，但需返回合法 SSE 响应避免客户端误判。
+     * WorkBuddy 等客户端先探测 GET(SSE) 建立通知通道，再通过 POST 发 JSON-RPC。
+     * 使用 SseEmitter 保持连接存活，发送 endpoint 事件后等待客户端后续 POST 请求。
      */
     @GetMapping(value = "/mcp", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public ResponseEntity<?> get(HttpServletRequest req) {
+    public ResponseEntity<SseEmitter> get(HttpServletRequest req) {
         String token = bearer(req);
         if (token == null || tokenDao.resolveToken(token) == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .header("WWW-Authenticate", wwwAuthenticate(req)).build();
         }
-        // 返回合法 SSE，告知客户端该端点仅支持 POST JSON-RPC
-        String sseBody = "event: endpoint\ndata: " + baseUrl(req) + contextPath + "/mcp\n\n";
+        SseEmitter emitter = new SseEmitter(300_000L); // 5 min timeout
+        try {
+            emitter.send(SseEmitter.event().name("endpoint")
+                    .data(baseUrl(req) + contextPath + "/mcp"));
+        } catch (IOException e) {
+            emitter.completeWithError(e);
+        }
         return ResponseEntity.ok()
                 .header("Cache-Control", "no-cache")
-                .body(sseBody);
+                .body(emitter);
     }
 
     // ── JSON-RPC 方法实现 ─────────────────────────────────────────────────
