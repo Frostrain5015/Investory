@@ -10,6 +10,7 @@ import { ConfirmProvider } from '@/hooks/use-confirm'
 import { I18nProvider, useT } from '@/i18n/I18nContext'
 import Layout from '@/components/Layout'
 import TitleBar from '@/components/TitleBar'
+import ErrorBoundary from '@/components/ErrorBoundary'
 
 // Light pages: eager-loaded (critical path)
 import Hero from '@/pages/Hero'
@@ -67,6 +68,7 @@ export default function App() {
           <ToastProvider>
           <NotificationBubbleProvider>
           <ConfirmProvider>
+          <ErrorBoundary>
           <Routes>
             <Route path="/" element={<PublicRoute><Hero /></PublicRoute>} />
             <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
@@ -90,6 +92,7 @@ export default function App() {
             </Route>
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
+          </ErrorBoundary>
           </ConfirmProvider>
           </NotificationBubbleProvider>
           </ToastProvider>
