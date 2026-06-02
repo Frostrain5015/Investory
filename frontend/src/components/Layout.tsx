@@ -179,7 +179,7 @@ export default function Layout() {
           <LangSwitcher />
         </header>
         <UpdateBanner />
-        <main className="flex-1 overflow-auto">
+        <main className="flex-1 overflow-auto" style={{ scrollbarGutter: 'stable' }}>
           <Outlet />
         </main>
       </div>

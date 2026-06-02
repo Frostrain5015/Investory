@@ -50,10 +50,10 @@ function PageTransition({ children }: { children: React.ReactNode }) {
     <Suspense fallback={<LoadingScreen />}>
       <motion.div
         key={location.pathname}
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2, ease: 'easeOut' }}
-        style={{ height: '100%' }}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.15, ease: 'easeOut' }}
+        className="h-full"
       >
         {children}
       </motion.div>

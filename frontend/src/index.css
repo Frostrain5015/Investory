@@ -11,6 +11,11 @@ body {
   overflow-wrap: break-word;
 }
 
+/* Reserve scrollbar space — prevents content shift when scrollbar appears */
+html {
+  scrollbar-gutter: stable;
+}
+
 @keyframes breath-gradient {
   0%, 100% { filter: brightness(1); }
   50% { filter: brightness(1.15); }

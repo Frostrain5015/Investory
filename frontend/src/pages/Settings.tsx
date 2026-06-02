@@ -151,7 +151,7 @@ export default function Settings() {
   const aiSummary = isDefaultAi ? '默认' : `${AI_PRESETS[aiProvider]?.label ?? aiProvider} · ${aiModel || '未配置'}`
 
   return (
-    <div className="overflow-auto h-full bg-slate-50 dark:bg-slate-950">
+    <div className="overflow-auto h-full bg-slate-50 dark:bg-slate-950" style={{ scrollbarGutter: 'stable' }}>
       <div className="max-w-lg mx-auto px-4 sm:px-6 pb-16">
 
         {/* ── Header ───────────────────────────────────────────────── */}
