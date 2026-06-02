@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useSettings, type BaseCurrency } from '@/hooks/use-settings'
 import { useTheme } from '@/hooks/use-theme'
 import { useT } from '@/i18n/I18nContext'
 import { useToast } from '@/components/Toast'
 import {
   Sun, Moon, Monitor, Globe, Bot, Plug,
-  ChevronRight, Copy, Download,
+  ChevronRight, Copy, Download, Trash2, ExternalLink,
 } from 'lucide-react'
 import Modal, { ModalRow } from '@/components/Modal'
-import { BASE } from '@/services/api'
+import { BASE, getMcpTokens, revokeMcpToken, type McpTokenInfo } from '@/services/api'
 import { motion } from 'framer-motion'
 
 // ── Primitives ──────────────────────────────────────────────────────────
@@ -131,16 +131,18 @@ export default function Settings() {
   const mcpUrl = `${window.location.origin}${BASE}/mcp`
   const [mcpToken, setMcpToken] = useState('')
   const [mcpGenerating, setMcpGenerating] = useState(false)
+  const [mcpTokens, setMcpTokens] = useState<McpTokenInfo[]>([])
   const [mcpHasActive, setMcpHasActive] = useState(false)
 
-  // 启动时查询已有 token 状态
-  useEffect(() => {
-    fetch(`${BASE}/api/mcp/tokens`, { credentials: 'include' })
-      .then(r => r.json()).then(d => {
-        const tokens = d.tokens as Array<{ revoked: number }> | undefined
-        if (tokens?.some(t => !t.revoked)) setMcpHasActive(true)
-      }).catch(() => {})
+  const refreshMcpTokens = useCallback(() => {
+    getMcpTokens().then(d => {
+      setMcpTokens(d.tokens)
+      setMcpHasActive(d.tokens.some(t => !t.revoked))
+    }).catch(() => {})
   }, [])
+
+  // 启动时查询已有 token 状态
+  useEffect(() => { refreshMcpTokens() }, [refreshMcpTokens])
 
   // ── Card status summaries ─────────────────────────────────────────────
   const themeLabel = { system: t.settings.themeSystem, light: t.settings.themeLight, dark: t.settings.themeDark }[pref]
@@ -188,12 +190,34 @@ export default function Settings() {
             summary={mcpHasActive ? '已连接' : '未配置'}
             onClick={() => setOpen('mcp')}
           />
-        </div>
 
-        {/* ── Auth note ────────────────────────────────────────────── */}
-        <p className="text-[11px] text-slate-400 dark:text-slate-600 text-center mt-8">
-          账户安全与登录由 Frost ID 统一管理
-        </p>
+          <motion.a
+            href="https://116.62.179.231:4443"
+            target="_blank" rel="noopener noreferrer"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.32, duration: 0.3, ease: 'easeOut' }}
+            className="group flex items-center gap-4 p-5 rounded-2xl
+                       bg-white dark:bg-slate-900
+                       border border-slate-200 dark:border-slate-800
+                       hover:border-slate-300 dark:hover:border-slate-700
+                       hover:shadow-sm transition-all duration-200
+                       cursor-pointer w-full no-underline"
+          >
+            <div className="flex items-center justify-center w-10 h-10 rounded-xl
+                            bg-slate-100 dark:bg-slate-800
+                            text-slate-600 dark:text-slate-400
+                            group-hover:bg-slate-200 dark:group-hover:bg-slate-700
+                            transition-colors shrink-0">
+              <ExternalLink className="w-5 h-5" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">Frost ID</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">账户安全管理 · 密码修改 · 设备管理</p>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-300 dark:text-slate-600 group-hover:text-slate-500 transition-colors shrink-0" />
+          </motion.a>
+        </div>
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════
@@ -296,7 +320,7 @@ export default function Settings() {
 
       {/* ── MCP 接入 ─────────────────────────────────────────────────── */}
       <Modal open={open === 'mcp'} onClose={() => setOpen(null)} title="MCP 接入">
-        <div className="space-y-4">
+        <div className="space-y-5">
           {/* Endpoint */}
           <div>
             <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-1.5">{t.settings.mcpConnector}</p>
@@ -309,14 +333,36 @@ export default function Settings() {
             </div>
           </div>
 
-          {/* Token */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">{t.settings.mcpToken}</p>
-              {mcpToken && (
-                <span className="text-[10px] text-green-600 dark:text-green-400 font-medium">已生成</span>
-              )}
+          {/* Active tokens list */}
+          {mcpTokens.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400 mb-2">已生成的令牌</p>
+              <div className="space-y-1.5">
+                {mcpTokens.filter(tk => !tk.revoked).map(tk => (
+                  <div key={tk.id} className="flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 text-xs">
+                    <span className="flex-1 text-slate-700 dark:text-slate-300 truncate font-mono">{tk.label}</span>
+                    <span className="text-[10px] text-slate-400 shrink-0">
+                      {tk.last_used_at
+                        ? new Date(tk.last_used_at).toLocaleDateString()
+                        : new Date(tk.created_at).toLocaleDateString()}
+                    </span>
+                    <button onClick={async () => {
+                      await revokeMcpToken(tk.id)
+                      refreshMcpTokens()
+                      toast('令牌已撤销', true)
+                    }}
+                      className="flex items-center justify-center w-7 h-7 rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors cursor-pointer shrink-0"
+                      title="撤销令牌">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </div>
+          )}
+
+          {/* Generate new token */}
+          <div>
             {!mcpToken ? (
               <button disabled={mcpGenerating} onClick={async () => {
                 setMcpGenerating(true)
@@ -328,6 +374,7 @@ export default function Settings() {
                   const data = await res.json()
                   if (data.error) { toast(data.error, false); return }
                   setMcpToken(data.token)
+                  refreshMcpTokens()
                 } finally { setMcpGenerating(false) }
               }} className="w-full h-10 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-sm font-medium hover:bg-slate-800 dark:hover:bg-white transition-colors disabled:opacity-50 cursor-pointer">
                 {mcpGenerating ? '生成中...' : t.settings.mcpGenerate}

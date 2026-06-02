@@ -4,6 +4,7 @@ import { usePortfolioPreload } from '@/hooks/use-portfolio-preload'
 import { useMorningGreeting } from '@/hooks/use-morning-greeting'
 import { useT } from '@/i18n/I18nContext'
 import LangSwitcher from '@/components/LangSwitcher'
+import { motion } from 'framer-motion'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
   LogOut, TrendingUp, User, Search, Menu, Shield, FlaskConical
@@ -73,7 +74,8 @@ export default function Layout() {
   const sidebar = (
     <aside className="w-60 flex flex-col bg-slate-900 text-slate-300 shrink-0 h-full">
       <a href={`${import.meta.env.BASE_URL}dashboard`} onClick={() => setSidebarOpen(false)} className="flex items-center gap-3 px-5 h-16 border-b border-slate-800">
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #863bff, #47bfff)' }}>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+          style={{ background: 'linear-gradient(135deg, #863bff, #47bfff)', animation: 'breath-gradient 3s ease-in-out infinite' }}>
           <TrendingUp className="w-5 h-5 text-white" />
         </div>
         <span className="text-lg font-bold text-white tracking-tight">Investory</span>
@@ -82,15 +84,39 @@ export default function Layout() {
         {navItems.map(({ to, icon: Icon, label }) => (
           <NavLink key={to} to={to} onClick={() => setSidebarOpen(false)}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive ? 'bg-slate-800 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`} >
-            <Icon className="w-4 h-4" />{label}
+              `relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive ? 'text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800/50'}`} >
+            {({ isActive }) => (
+              <>
+                {isActive && (
+                  <motion.div
+                    layoutId="nav-highlight"
+                    className="absolute inset-0 bg-slate-800 rounded-xl"
+                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                  />
+                )}
+                <Icon className="w-4 h-4 relative z-10" />
+                <span className="relative z-10">{label}</span>
+              </>
+            )}
           </NavLink>
         ))}
         {isAdmin && (
           <NavLink to="/admin" onClick={() => setSidebarOpen(false)}
             className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive ? 'bg-amber-800 text-amber-200' : 'text-amber-500 hover:text-amber-300 hover:bg-slate-800/50'}`} >
-            <Shield className="w-4 h-4" />{t.admin.title}
+              `relative flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${isActive ? 'text-amber-200' : 'text-amber-500 hover:text-amber-300 hover:bg-slate-800/50'}`} >
+            {({ isActive }) => (
+              <>
+                {isActive && (
+                  <motion.div
+                    layoutId="nav-highlight"
+                    className="absolute inset-0 bg-slate-800 rounded-xl"
+                    transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                  />
+                )}
+                <Shield className="w-4 h-4 relative z-10" />
+                <span className="relative z-10">{t.admin.title}</span>
+              </>
+            )}
           </NavLink>
         )}
       </nav>

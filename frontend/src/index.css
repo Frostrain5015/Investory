@@ -11,6 +11,11 @@ body {
   overflow-wrap: break-word;
 }
 
+@keyframes breath-gradient {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.15); }
+}
+
 /* Prevent text from collapsing into single-char-per-line on narrow mobile containers */
 h1, h2, h3, h4, h5, h6, p, span, a, th, td, label, button, li,
 [class*="text-"] {

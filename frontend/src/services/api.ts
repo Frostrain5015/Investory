@@ -282,6 +282,25 @@ export function getBacktestCompare(ids: number[]): Promise<CompareResult[]> {
 
 export function refreshPortfolio(): Promise<StatusResponse> { return request('/api/portfolio/refresh', { method: 'POST' }) }
 
+// ── MCP Tokens ──────────────────────────────────────────────────────────
+
+export interface McpTokenInfo {
+  id: number
+  label: string
+  audience: string | null
+  created_at: string
+  last_used_at: string | null
+  revoked: number
+}
+
+export function getMcpTokens(): Promise<{ tokens: McpTokenInfo[]; count: number }> {
+  return request('/api/mcp/tokens')
+}
+
+export function revokeMcpToken(id: number): Promise<StatusResponse> {
+  return request(`/api/mcp/tokens/${id}`, { method: 'DELETE' })
+}
+
 // ── StockSage Alpha ────────────────────────────────────────────────────────
 
 export function getFactorScores(symbols: string[]): Promise<FactorScoresResponse> {
