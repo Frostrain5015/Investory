@@ -33,6 +33,7 @@ public class PortfolioController {
     @Autowired private PortfolioAnalysisService analysisService;
     @Autowired private AuthService authService;
     @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbc;
+    @Autowired private PortfolioValueCalculator valueCalculator;
 
     /**
      * 从 Session 中读取当前用户的活跃组合 ID
@@ -291,5 +292,18 @@ public class PortfolioController {
         long pid = getPortfolioId(req);
         // 直接查询 cash_balances 表，返回该组合所有货币的余额记录
         return Map.of("balances", jdbc.queryForList("SELECT currency, amount FROM cash_balances WHERE portfolio_id=?", pid));
+    }
+
+    /** 手动触发指定组合的净值回填（需登录）。 */
+    @GetMapping("/admin/backfill")
+    public Map<String, Object> adminBackfill(@RequestParam long portfolioId,
+                                              @RequestParam(required = false) String fromDate,
+                                              HttpServletRequest req) {
+        Long userId = (Long) req.getSession().getAttribute("userId");
+        if (userId == null) return Map.of("error", "Not logged in");
+        java.time.LocalDate from = fromDate != null ? java.time.LocalDate.parse(fromDate)
+                : java.time.LocalDate.now().minusYears(5);
+        valueCalculator.backfillFrom(portfolioId, from);
+        return Map.of("status", "ok", "portfolioId", portfolioId, "fromDate", from.toString());
     }
 }
