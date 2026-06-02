@@ -34,9 +34,13 @@ public class AiApiController {
     @Value("${ai.default.key:}")
     private String defaultKey;
 
-    private static final String DEFAULT_PROVIDER = "bailian";
+    private static final String DEFAULT_PROVIDER = "openai_compat";
     private static final String DEFAULT_MODEL   = "qwen-plus-latest";
     private static final String DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+
+    private boolean isSupportedProvider(String provider) {
+        return DEFAULT_PROVIDER.equals(provider) || "anthropic".equals(provider);
+    }
 
     @Autowired
     public AiApiController(AiSessionManager session, JdbcTemplate jdbc,
@@ -69,15 +73,19 @@ public class AiApiController {
                 Map<String, Object> row = rows.get(0);
                 String savedKey = (String) row.get("api_key");
                 if (savedKey != null && !savedKey.isBlank()) {
+                    String savedProvider = row.getOrDefault("provider", DEFAULT_PROVIDER).toString();
+                    if (!isSupportedProvider(savedProvider)) {
+                        return Map.of("error", "请先在设置页重新选择 API 格式");
+                    }
                     aiKey = savedKey;
-                    aiProvider = row.getOrDefault("provider", DEFAULT_PROVIDER).toString();
+                    aiProvider = savedProvider;
                     aiModel = row.getOrDefault("model", DEFAULT_MODEL).toString();
                     aiBaseUrl = row.getOrDefault("base_url", DEFAULT_BASE_URL).toString();
                 }
             }
         }
 
-        final String provider = "anthropic".equals(aiProvider) ? "anthropic" : "openai".equals(aiProvider) ? "openai" : "openai_compat";
+        final String provider = "anthropic".equals(aiProvider) ? "anthropic" : "openai_compat";
         final String key = aiKey;
         final String baseUrl = aiBaseUrl;
         final boolean deepThink = Boolean.TRUE.equals(body.get("deepThink"));
@@ -319,10 +327,13 @@ public class AiApiController {
                 Map<String, Object> row = rows.get(0);
                 String savedKey = (String) row.get("api_key");
                 if (savedKey != null && !savedKey.isBlank()) {
-                    aiKey = savedKey;
-                    aiProvider = row.getOrDefault("provider", DEFAULT_PROVIDER).toString();
-                    aiModel = row.getOrDefault("model", DEFAULT_MODEL).toString();
-                    aiBaseUrl = row.getOrDefault("base_url", DEFAULT_BASE_URL).toString();
+                    String savedProvider = row.getOrDefault("provider", DEFAULT_PROVIDER).toString();
+                    if (isSupportedProvider(savedProvider)) {
+                        aiKey = savedKey;
+                        aiProvider = savedProvider;
+                        aiModel = row.getOrDefault("model", DEFAULT_MODEL).toString();
+                        aiBaseUrl = row.getOrDefault("base_url", DEFAULT_BASE_URL).toString();
+                    }
                 }
             }
         }

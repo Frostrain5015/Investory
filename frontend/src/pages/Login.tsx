@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
 import { useT } from '@/i18n/I18nContext'
+import { getFrostIdLoginUrl } from '@/services/api'
 import { TrendingUp } from 'lucide-react'
 
 const FROST_ACCENT = '#7176aa'
@@ -13,6 +14,7 @@ export default function Login() {
   const { positiveHex } = useSettings()
   const { t } = useT()
   const navigate = useNavigate()
+  const frostIdLoginUrl = getFrostIdLoginUrl()
 
   // Auto-redirect if session is still valid
   useEffect(() => {
@@ -44,7 +46,7 @@ export default function Login() {
 
         <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6">
           <a
-            href={import.meta.env.BASE_URL + 'oauth/frost-id/login'}
+            href={frostIdLoginUrl}
             className="flex items-center justify-center gap-3 w-full h-12 rounded-xl text-sm font-medium transition-all duration-200"
             style={{
               backgroundColor: FROST_ACCENT,

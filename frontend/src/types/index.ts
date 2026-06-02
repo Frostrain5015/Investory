@@ -488,6 +488,13 @@ export interface AiSettings {
   hasKey: boolean
 }
 
+export interface AiModelsResponse {
+  status?: string
+  models?: string[]
+  count?: number
+  error?: string
+}
+
 export interface AiChatRequest {
   messages: { role: string; content: string }[]
   deepThink?: boolean

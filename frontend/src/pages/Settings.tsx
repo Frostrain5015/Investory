@@ -6,9 +6,10 @@ import { useToast } from '@/components/Toast'
 import {
   Sun, Moon, Monitor, Globe, Bot, Plug,
   ChevronRight, Copy, Download, Trash2, ExternalLink,
+  RefreshCw,
 } from 'lucide-react'
 import Modal, { ModalRow } from '@/components/Modal'
-import { BASE, getMcpTokens, revokeMcpToken, type McpTokenInfo } from '@/services/api'
+import { BASE, aiListModels, getMcpTokens, revokeMcpToken, type McpTokenInfo } from '@/services/api'
 import { motion } from 'framer-motion'
 
 // ── Primitives ──────────────────────────────────────────────────────────
@@ -25,7 +26,7 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
 }
 
 function Segments<T extends string>({ value, options, onChange }: {
-  value: T; options: { value: T; label: string; icon?: React.ReactNode }[]; onChange: (v: T) => void
+  value: T | ''; options: { value: T; label: string; icon?: React.ReactNode }[]; onChange: (v: T) => void
 }) {
   return (
     <div className="flex gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl">
@@ -43,6 +44,14 @@ function Segments<T extends string>({ value, options, onChange }: {
 }
 
 const inputCls = 'w-full h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 transition placeholder:text-slate-400'
+const DEFAULT_OPENAI_COMPAT_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+const DEFAULT_OPENAI_COMPAT_MODEL = 'qwen-plus-latest'
+
+type ApiFormat = 'openai_compat' | 'anthropic'
+
+function isApiFormat(value: string): value is ApiFormat {
+  return value === 'openai_compat' || value === 'anthropic'
+}
 
 // ── Cards ───────────────────────────────────────────────────────────────
 
@@ -101,30 +110,45 @@ export default function Settings() {
   }
 
   // ── AI state ──────────────────────────────────────────────────────────
-  const [aiProvider, setAiProvider] = useState('bailian')
+  const [aiProvider, setAiProvider] = useState<ApiFormat | ''>('openai_compat')
+  const [aiLegacyProvider, setAiLegacyProvider] = useState('')
   const [aiKey, setAiKey] = useState('')
-  const [aiBaseUrl, setAiBaseUrl] = useState('')
-  const [aiModel, setAiModel] = useState('')
+  const [aiBaseUrl, setAiBaseUrl] = useState(DEFAULT_OPENAI_COMPAT_BASE_URL)
+  const [aiModel, setAiModel] = useState(DEFAULT_OPENAI_COMPAT_MODEL)
+  const [aiModels, setAiModels] = useState<string[]>([])
+  const [aiModelsLoading, setAiModelsLoading] = useState(false)
+  const [aiModelsError, setAiModelsError] = useState('')
   const [aiHasKey, setAiHasKey] = useState(false)
+  const [aiMode, setAiMode] = useState<'default' | 'custom'>('default')
 
   useEffect(() => {
     fetch(`${BASE}/api/ai/settings`, { credentials: 'include' })
       .then(r => r.json()).then(d => {
-        if (d.provider) setAiProvider(d.provider)
+        if (d.provider) {
+          if (isApiFormat(d.provider)) {
+            setAiProvider(d.provider)
+            setAiLegacyProvider('')
+          } else {
+            setAiProvider('')
+            setAiLegacyProvider(d.provider)
+          }
+        }
         if (d.model) setAiModel(d.model)
         if (d.baseUrl) setAiBaseUrl(d.baseUrl)
-        if (d.hasKey) setAiHasKey(true)
+        if (d.hasKey) { setAiHasKey(true); setAiMode('custom') }
       }).catch(() => {})
   }, [])
 
-  const AI_PRESETS: Record<string, { label: string; baseUrl: string; model: string }> = {
-    bailian:   { label: t.settings.presetBailian, baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-    openai:    { label: 'OpenAI',  baseUrl: '', model: 'gpt-4o-mini' },
-    deepseek:  { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-flash' },
-    moonshot:  { label: 'Moonshot', baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k' },
-    zhipu:     { label: t.settings.presetZhipu,  baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-flash' },
-    anthropic: { label: 'Anthropic', baseUrl: '', model: 'claude-haiku-4-5' },
-    custom:    { label: t.settings.presetCustom, baseUrl: '', model: '' },
+  const AI_FORMAT_OPTIONS: { value: ApiFormat; label: string }[] = [
+    { value: 'openai_compat', label: 'OpenAI兼容' },
+    { value: 'anthropic', label: 'Anthropic' },
+  ]
+  const aiFormatLabel = aiProvider ? AI_FORMAT_OPTIONS.find(o => o.value === aiProvider)?.label ?? aiProvider : '未选择 API 格式'
+
+  function resetAiModelSelection() {
+    setAiModel('')
+    setAiModels([])
+    setAiModelsError('')
   }
 
   // ── MCP state ─────────────────────────────────────────────────────────
@@ -147,8 +171,36 @@ export default function Settings() {
   // ── Card status summaries ─────────────────────────────────────────────
   const themeLabel = { system: t.settings.themeSystem, light: t.settings.themeLight, dark: t.settings.themeDark }[pref]
   const schemeLabel = colorScheme === 'cn' ? '红涨绿跌' : '绿涨红跌'
-  const isDefaultAi = aiProvider === 'bailian' && aiModel === 'qwen-plus' && !aiHasKey
-  const aiSummary = isDefaultAi ? '默认' : `${AI_PRESETS[aiProvider]?.label ?? aiProvider} · ${aiModel || '未配置'}`
+  const isDefaultAi = aiMode === 'default'
+  const aiSummary = isDefaultAi ? '默认' : `${aiFormatLabel} · ${aiModel || '未选择模型'}`
+
+  async function fetchAiModels() {
+    if (!aiProvider) {
+      toast('请选择 API 格式', false)
+      return
+    }
+    setAiModelsLoading(true)
+    setAiModelsError('')
+    try {
+      const data = await aiListModels({ provider: aiProvider, baseUrl: aiBaseUrl, apiKey: aiKey })
+      if (data.error) {
+        setAiModels([])
+        setAiModelsError(data.error)
+        toast(data.error, false)
+        return
+      }
+      const models = data.models ?? []
+      setAiModels(models)
+      if (aiModel && !models.includes(aiModel)) setAiModel('')
+      toast(`获取到 ${models.length} 个模型`, true)
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
+      setAiModelsError(message)
+      toast(message, false)
+    } finally {
+      setAiModelsLoading(false)
+    }
+  }
 
   return (
     <div className="overflow-auto h-full bg-slate-50 dark:bg-slate-950" style={{ scrollbarGutter: 'stable' }}>
@@ -261,61 +313,87 @@ export default function Settings() {
 
       {/* ── 观澜 ─────────────────────────────────────────────────── */}
       <Modal open={open === 'ai'} onClose={() => setOpen(null)} title="观澜">
-        <ModalRow label={t.settings.aiProvider}>
-          <select value={aiProvider} onChange={e => {
-            const p = e.target.value; setAiProvider(p)
-            const preset = AI_PRESETS[p]
-            if (preset && p !== 'custom') { setAiBaseUrl(preset.baseUrl); setAiModel(preset.model) }
-          }} className={`${inputCls} w-44`}>
-            {Object.entries(AI_PRESETS).map(([key, p]) => (
-              <option key={key} value={key}>{p.label}</option>
-            ))}
-          </select>
-        </ModalRow>
+        {/* Mode toggle */}
+        <div className="w-fit pb-3 border-b border-slate-100 dark:border-slate-800 mb-3">
+          <Segments value={aiMode} onChange={v => setAiMode(v as 'default' | 'custom')} options={[
+            { value: 'default', label: '默认' },
+            { value: 'custom', label: '自定义' },
+          ]} />
+        </div>
 
-        <ModalRow label={t.settings.aiApiKey}>
-          <input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)}
-            placeholder={aiHasKey ? t.settings.aiKeyPlaceholder : t.settings.aiApiKey}
-            className={`${inputCls} w-52`} />
-        </ModalRow>
-
-        {aiProvider === 'custom' && (
-          <ModalRow label={t.settings.aiBaseUrl}>
-            <input type="text" value={aiBaseUrl} onChange={e => setAiBaseUrl(e.target.value)}
-              placeholder={t.settings.aiBaseUrl} className={`${inputCls} w-52`} />
+        {aiMode === 'custom' && (
+          <ModalRow label="API 格式" desc={aiLegacyProvider ? `检测到旧配置「${aiLegacyProvider}」，请重新选择调用格式` : undefined}>
+            <Segments<ApiFormat> value={aiProvider} onChange={v => {
+              setAiProvider(v)
+              setAiLegacyProvider('')
+              if (!aiBaseUrl) setAiBaseUrl(v === 'openai_compat' ? DEFAULT_OPENAI_COMPAT_BASE_URL : 'https://api.anthropic.com')
+              resetAiModelSelection()
+            }} options={AI_FORMAT_OPTIONS} />
           </ModalRow>
         )}
 
-        <ModalRow label={t.settings.aiModel}>
-          <input type="text" value={aiModel} onChange={e => setAiModel(e.target.value)}
-            placeholder={t.settings.aiModel} className={`${inputCls} w-52`} />
-        </ModalRow>
+        {aiMode === 'custom' && (
+          <><div className="py-3 border-b border-slate-100 dark:border-slate-800">
+          <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">{t.settings.aiApiKey}</p>
+          <input type="password" value={aiKey} onChange={e => setAiKey(e.target.value)}
+            placeholder={aiHasKey ? t.settings.aiKeyPlaceholder : t.settings.aiApiKey}
+            className={inputCls} />
+        </div>
+
+        <div className="py-3 border-b border-slate-100 dark:border-slate-800">
+          <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">{t.settings.aiBaseUrl}</p>
+          <input type="text" value={aiBaseUrl} onChange={e => {
+            setAiBaseUrl(e.target.value)
+            resetAiModelSelection()
+          }} placeholder={aiProvider === 'anthropic' ? 'https://api.anthropic.com' : t.settings.aiBaseUrl}
+            className={inputCls} />
+        </div></>
+        )}
+
+        {aiMode === 'custom' && (
+          <div className="py-3 border-b border-slate-100 dark:border-slate-800">
+            <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">{t.settings.aiModel}</p>
+            <div className="flex items-center gap-2">
+              <select value={aiModel} onChange={e => setAiModel(e.target.value)}
+                disabled={aiModels.length === 0}
+                className={`${inputCls} flex-1 disabled:opacity-60`}>
+                {aiModels.length === 0 ? (
+                  <option value={aiModel}>{aiModel || '请先获取模型列表'}</option>
+                ) : (
+                  <>
+                    <option value="">选择模型</option>
+                    {aiModels.map(model => <option key={model} value={model}>{model}</option>)}
+                  </>
+                )}
+              </select>
+              <button onClick={fetchAiModels} disabled={aiModelsLoading || !aiProvider || !(aiKey || aiHasKey)}
+                className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer shrink-0">
+                <RefreshCw className={`w-3.5 h-3.5 ${aiModelsLoading ? 'animate-spin' : ''}`} />
+                获取
+              </button>
+            </div>
+            {aiModelsError && <p className="mt-1 text-[11px] text-red-500">{aiModelsError}</p>}
+          </div>
+        )}
 
         <div className="flex gap-2 pt-4">
-          <button onClick={async () => {
-            const body: Record<string, string> = { provider: aiProvider, model: aiModel, baseUrl: aiBaseUrl }
-            if (aiKey) body.apiKey = aiKey
-            const res = await fetch(`${BASE}/api/ai/settings`, {
-              method: 'POST', credentials: 'include',
-              headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
-            })
-            const data = await res.json()
-            if (data.error) { toast(data.error, false); return }
-            if (aiKey) setAiHasKey(true)
-            toast(t.settings.aiSaveSuccess, true)
-          }} className="flex-1 h-10 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-sm font-medium hover:bg-slate-800 dark:hover:bg-white transition-colors cursor-pointer">
-            {t.settings.aiSaveBtn}
-          </button>
-          <button onClick={async () => {
-            const res = await fetch(`${BASE}/api/ai/settings`, { method: 'DELETE', credentials: 'include' })
-            const data = await res.json()
-            if (data.error) { toast(data.error, false); return }
-            setAiProvider('bailian'); setAiKey(''); setAiBaseUrl(''); setAiModel('qwen-plus'); setAiHasKey(false)
-            toast(t.settings.aiResetSuccess, true)
-          }} className="px-4 h-10 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors cursor-pointer">
-            {t.settings.aiResetBtn}
-          </button>
-        </div>
+            <button onClick={async () => {
+              if (!aiProvider) { toast('请先选择 API 格式', false); return }
+              if (!aiModel) { toast('请先获取并选择模型', false); return }
+              const body: Record<string, string> = { provider: aiProvider, model: aiModel, baseUrl: aiBaseUrl }
+              if (aiKey) body.apiKey = aiKey
+              const res = await fetch(`${BASE}/api/ai/settings`, {
+                method: 'POST', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+              })
+              const data = await res.json()
+              if (data.error) { toast(data.error, false); return }
+              if (aiKey) setAiHasKey(true)
+              toast(t.settings.aiSaveSuccess, true)
+            }} className="flex-1 h-10 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-sm font-medium hover:bg-slate-800 dark:hover:bg-white transition-colors cursor-pointer">
+              {t.settings.aiSaveBtn}
+            </button>
+          </div>
       </Modal>
 
       {/* ── MCP 接入 ─────────────────────────────────────────────────── */}

@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -78,7 +79,9 @@ public class OAuthController {
     // ── 步骤 1：重定向到 Frost ID ──────────────────────────────────────────────
 
     @GetMapping("/oauth/frost-id/login")
-    public String frostIdLogin(HttpServletRequest req) throws Exception {
+    public String frostIdLogin(
+            @RequestParam(value = "return_to", required = false) String returnTo,
+            HttpServletRequest req) throws Exception {
         String verifier = generateCodeVerifier();
         String challenge = generateCodeChallenge(verifier);
         String state     = generateState();
@@ -86,6 +89,12 @@ public class OAuthController {
         HttpSession session = req.getSession(true);
         session.setAttribute("frostid_verifier", verifier);
         session.setAttribute("frostid_state",    state);
+        String safeReturnTo = sanitizeReturnTo(returnTo);
+        if (safeReturnTo != null) {
+            session.setAttribute("frostid_return_to", safeReturnTo);
+        } else {
+            session.removeAttribute("frostid_return_to");
+        }
 
         String params = String.join("&",
                 "response_type=code",
@@ -102,7 +111,7 @@ public class OAuthController {
 
     // ── 步骤 2：回调处理 ──────────────────────────────────────────────────────
 
-    @GetMapping("/oauth/frost-id/callback")
+    @GetMapping(value = "/oauth/frost-id/callback", produces = MediaType.TEXT_HTML_VALUE)
     @ResponseBody
     public String frostIdCallback(
             @RequestParam String code,
@@ -176,10 +185,16 @@ public class OAuthController {
             Object pending = session.getAttribute("mcp_pending_authorize");
             if (pending instanceof String pendingUrl && !pendingUrl.isBlank()) {
                 session.removeAttribute("mcp_pending_authorize");
-                return "<script>window.location.href='" + pendingUrl.replace("'", "%27") + "'</script>";
+                return redirectScript(pendingUrl);
             }
 
-            return "<script>window.location.href='" + req.getContextPath() + "/dashboard'</script>";
+            Object returnTo = session.getAttribute("frostid_return_to");
+            if (returnTo instanceof String returnToUrl && !returnToUrl.isBlank()) {
+                session.removeAttribute("frostid_return_to");
+                return redirectScript(returnToUrl);
+            }
+
+            return redirectScript(req.getContextPath() + "/dashboard");
 
         } catch (Exception e) {
             return "error: " + e.getMessage();
@@ -242,5 +257,36 @@ public class OAuthController {
 
     private static String urlEncode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    private String sanitizeReturnTo(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            URI uri = URI.create(value);
+            String host = uri.getHost();
+            String scheme = uri.getScheme();
+            int port = uri.getPort();
+            boolean localHost = "127.0.0.1".equals(host) || "localhost".equalsIgnoreCase(host);
+            boolean http = "http".equalsIgnoreCase(scheme);
+            if (localHost && http && port == 18256) {
+                return uri.toString();
+            }
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
+        return null;
+    }
+
+    private String redirectScript(String url) {
+        return "<script>window.location.replace(" + jsString(url) + ")</script>";
+    }
+
+    private String jsString(String value) {
+        return "\"" + value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("<", "\\u003C")
+                .replace(">", "\\u003E")
+                .replace("&", "\\u0026") + "\"";
     }
 }

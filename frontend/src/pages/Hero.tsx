@@ -6,11 +6,13 @@ import HeroParticles from '@/components/HeroParticles'
 import HeroMatrix from '@/components/HeroMatrix'
 import { useT } from '@/i18n/I18nContext'
 import LangSwitcher from '@/components/LangSwitcher'
+import { getFrostIdLoginUrl } from '@/services/api'
 
 export default function Hero() {
   const { t } = useT()
   const { authenticated, isAdmin } = useAuth()
   const nav = useNavigate()
+  const frostIdLoginUrl = getFrostIdLoginUrl()
 
   // Auto-redirect if already authenticated (session still valid = "auto-login")
   useEffect(() => {
@@ -66,7 +68,7 @@ export default function Hero() {
               className="flex flex-col items-center gap-3"
             >
               <a
-                href={import.meta.env.BASE_URL + 'oauth/frost-id/login'}
+                href={frostIdLoginUrl}
                 className="flex items-center justify-center gap-2.5 h-11 px-8 rounded-xl text-sm font-medium transition-all duration-200 shadow-lg"
                 style={{
                   background: 'rgba(113, 118, 170, 0.15)',

@@ -14,6 +14,24 @@ import type {
 
 export const BASE = import.meta.env.VITE_API_BASE || '/investory'
 
+function joinUrl(base: string, path: string) {
+  return `${base.replace(/\/$/, '')}/${path.replace(/^\//, '')}`
+}
+
+function appRouteUrl(path: string) {
+  const routerBase = import.meta.env.VITE_BASE || import.meta.env.BASE_URL || '/'
+  const normalizedBase = routerBase === '.' || routerBase === './' ? '/' : routerBase
+  return new URL(joinUrl(normalizedBase, path), window.location.origin).toString()
+}
+
+export function getFrostIdLoginUrl() {
+  const url = new URL(joinUrl(BASE, '/oauth/frost-id/login'), window.location.origin)
+  if (window.electronAPI?.isDesktop) {
+    url.searchParams.set('return_to', appRouteUrl('/dashboard'))
+  }
+  return url.toString()
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + url, { credentials: 'include', ...options })
   if (res.status === 401) {
@@ -260,6 +278,9 @@ export function aiStream(): EventSource { return new EventSource(`${BASE}/api/ai
 export function aiGetSettings(): Promise<AiSettings> { return request('/api/ai/settings') }
 export function aiSaveSettings(data: Partial<AiSettings> & { apiKey?: string }): Promise<StatusResponse> {
   return request('/api/ai/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+}
+export function aiListModels(data: { provider: string; baseUrl?: string; apiKey?: string }): Promise<import('@/types').AiModelsResponse> {
+  return request('/api/ai/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
 }
 
 // ── Market ────────────────────────────────────────────────────────────────

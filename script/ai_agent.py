@@ -36,6 +36,17 @@ _TRANSACTION_WRITE_SIGNALS = [
     "buy", "sell", "add", "delete", "remove", "update", "edit",
 ]
 
+_CONFIRM_TOOL_NAMES = {
+    "confirm_add_watchlist",
+    "confirm_remove_watchlist",
+    "confirm_create_transaction",
+    "confirm_update_transaction",
+    "confirm_delete_transaction",
+    "confirm_bulk_create",
+    "confirm_bulk_update",
+    "confirm_bulk_delete",
+}
+
 # Keywords that signal the user is asking about current events / news / external info
 # — i.e. web search should fire even without the explicit toggle.
 _WEB_SEARCH_TRIGGERS = [
@@ -66,6 +77,16 @@ def _is_complex_query(messages: list) -> bool:
         return True
     # Long messages almost always need thorough reasoning
     return len(text) > 60
+
+def _is_confirm_tool(name: str) -> bool:
+    return name in _CONFIRM_TOOL_NAMES
+
+def _confirmation_was_sent(result_text: str) -> bool:
+    try:
+        data = json.loads(result_text)
+        return isinstance(data, dict) and data.get("status") == "confirmation_sent"
+    except Exception:
+        return False
 
 
 def load_knowledge_base() -> dict:
@@ -104,11 +125,13 @@ def build_system_prompt(kb: dict) -> str:
 - 用户表达出明确且稳定的投资偏好时（例如"我不碰科技股""我做日内T+0""我只买宽基ETF""我能承受最大20%回撤"），主动调用 remember 工具保存到长期记忆
 - 连续工具调用上限 20 次。超出则基于已有数据分析，告知用户还缺什么
 - ⚠ 交易写入铁律（最高优先级）：凡用户要求买入/卖出/入金/出金/分红/删除/修改交易 → 参数齐全后只允许做一件事：调用 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction。严禁用任何文字代替函数调用——即使只说一句"好的请确认"也是严重违规。
+- ⚠ 交互卡片铁律：凡调用 ask_user 或任何 confirm_* 工具，UI 会生成选择/确认卡片；调用成功后不得再用正文复述卡片标题、条目、按钮或"请点击确认"，直接结束本轮等待用户操作。
 
 【回复规则】
 - 每次不超过 3 句。涉及策略代码、风险展开、多空对比时可适度延长，但不堆词
 - 有部分数据但不完整时，先分享已有的，再说"以上信息不完整"
 - 没有数据时直说"没有相关数据"，不说"不确定"这种模糊词
+- 工具时间线和结构化卡片已经展示的信息，正文不要逐项复述；只补充卡片没有承载的结论、风险或下一步。
 - 不带表情，不带感叹号
 - 不使用绝对化表述（稳赚/必涨/保本/零风险）
 - 涉及方向性判断时同时说明对应的风险情景
@@ -1220,7 +1243,7 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}}
     }},
     {"type": "function", "function": {
-        "name": "confirm_add_watchlist", "description": "【必须调用】添加股票到自选列表并弹出确认按钮。用户说'加自选''关注''添加自选'时调用。先调用search_stocks获取stockId。调用后弹出 Accept/Refuse 按钮。",
+        "name": "confirm_add_watchlist", "description": "【必须调用】添加股票到自选列表并弹出确认按钮。用户说'加自选''关注''添加自选'时调用。先调用search_stocks获取stockId。调用成功后不要输出正文，等待用户在 UI 确认。",
         "parameters": {"type": "object", "properties": {
             "stockId": {"type": "integer", "description": "股票ID（从search_stocks获取）"},
             "symbol": {"type": "string", "description": "股票代码，用于展示"},
@@ -1228,14 +1251,14 @@ TOOLS = [
         }, "required": ["stockId"]}
     }},
     {"type": "function", "function": {
-        "name": "confirm_remove_watchlist", "description": "【必须调用】从自选列表移除股票并弹出确认按钮。用户说'删自选''取消关注''移除自选'时调用。先调用get_watchlist获取列表。",
+        "name": "confirm_remove_watchlist", "description": "【必须调用】从自选列表移除股票并弹出确认按钮。用户说'删自选''取消关注''移除自选'时调用。先调用get_watchlist获取列表。调用成功后不要输出正文，等待用户在 UI 确认。",
         "parameters": {"type": "object", "properties": {
             "ids": {"type": "array", "items": {"type": "integer"}, "description": "要移除的watchlist项ID列表"}
         }, "required": ["ids"]}
     }},
     # C: Transaction write tools — confirmation required
     {"type": "function", "function": {
-        "name": "confirm_create_transaction", "description": "【必须调用】创建交易记录并弹出用户确认按钮。当用户要求买入/卖出/添加分红/转入转出资金时必须调用此工具。调用后会弹出 Accept/Refuse 按钮让用户在 UI 上点击确认。不要在文字中询问'确认吗'——直接用此工具。type: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT。所有参数必须从对话中完整提取，缺失先反问。",
+        "name": "confirm_create_transaction", "description": "【必须调用】创建交易记录并弹出用户确认按钮。当用户要求买入/卖出/添加分红/转入转出资金时必须调用此工具。调用后会弹出 Accept/Refuse 按钮让用户在 UI 上点击确认。不要在文字中询问'确认吗'，调用成功后不要输出正文。type: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT。所有参数必须从对话中完整提取，缺失先反问。",
         "parameters": {"type": "object", "properties": {
             "stockId": {"type": "integer", "description": "股票ID（从search_stocks或持仓中查询）"},
             "type": {"type": "string", "description": "交易类型: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT"},
@@ -1249,7 +1272,7 @@ TOOLS = [
         }, "required": ["stockId", "type", "shares", "price", "tradeDate", "currency"]}
     }},
     {"type": "function", "function": {
-        "name": "confirm_update_transaction", "description": "【必须调用】编辑交易记录并弹出确认按钮。用户要求修改交易时调用。先调用get_transactions查询现有记录获取id。调用后弹出 Accept/Refuse 按钮。",
+        "name": "confirm_update_transaction", "description": "【必须调用】编辑交易记录并弹出确认按钮。用户要求修改交易时调用。先调用get_transactions查询现有记录获取id。调用成功后不要输出正文，等待用户在 UI 确认。",
         "parameters": {"type": "object", "properties": {
             "id": {"type": "integer", "description": "交易记录ID，从get_transactions获取"},
             "stockId": {"type": "integer"}, "type": {"type": "string"},
@@ -1260,25 +1283,25 @@ TOOLS = [
         }, "required": ["id"]}
     }},
     {"type": "function", "function": {
-        "name": "confirm_delete_transaction", "description": "【必须调用】删除交易记录并弹出确认按钮。用户要求删除交易时调用。先调用get_transactions查询现有记录获取id。调用后弹出 Accept/Refuse 按钮。",
+        "name": "confirm_delete_transaction", "description": "【必须调用】删除交易记录并弹出确认按钮。用户要求删除交易时调用。先调用get_transactions查询现有记录获取id。调用成功后不要输出正文，等待用户在 UI 确认。",
         "parameters": {"type": "object", "properties": {
             "ids": {"type": "array", "items": {"type": "integer"}, "description": "要删除的交易ID列表"}
         }, "required": ["ids"]}
     }},
     {"type": "function", "function": {
-        "name": "confirm_bulk_create", "description": "批量创建多笔交易。需用户确认后才执行。每笔交易的参数必须完整。",
+        "name": "confirm_bulk_create", "description": "批量创建多笔交易。需用户确认后才执行。每笔交易的参数必须完整。调用成功后不要输出正文，等待用户在 UI 确认。",
         "parameters": {"type": "object", "properties": {
             "transactions": {"type": "array", "items": {"type": "object"}, "description": "交易对象列表，每项包含stockId/type/shares/price/fee/tradeDate/currency/note"}
         }, "required": ["transactions"]}
     }},
     {"type": "function", "function": {
-        "name": "confirm_bulk_update", "description": "批量编辑多笔交易。需用户确认后才执行。",
+        "name": "confirm_bulk_update", "description": "批量编辑多笔交易。需用户确认后才执行。调用成功后不要输出正文，等待用户在 UI 确认。",
         "parameters": {"type": "object", "properties": {
             "updates": {"type": "array", "items": {"type": "object"}, "description": "更新列表，每项须含id及要修改的字段"}
         }, "required": ["updates"]}
     }},
     {"type": "function", "function": {
-        "name": "confirm_bulk_delete", "description": "批量删除多条交易。需用户确认后才执行。",
+        "name": "confirm_bulk_delete", "description": "批量删除多条交易。需用户确认后才执行。调用成功后不要输出正文，等待用户在 UI 确认。",
         "parameters": {"type": "object", "properties": {
             "ids": {"type": "array", "items": {"type": "integer"}, "description": "要删除的交易ID列表"}
         }, "required": ["ids"]}
@@ -1955,6 +1978,9 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             for t in runnable:
                 formatted.append({"role": "tool", "tool_call_id": t["id"], "content": results_map[t["id"]]})
             total_tool_calls += len(runnable)
+            if any(_is_confirm_tool(t["name"]) and _confirmation_was_sent(results_map.get(t["id"], "")) for t in runnable):
+                print("\n[DONE]", flush=True)
+                return
 
         # Call again — may produce more tool calls or final content
         stream = _stream(formatted)
@@ -2112,6 +2138,9 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
             {"type": "tool_result", "tool_use_id": tu.id, "content": results_map[tu.id]}
             for tu in tool_uses
         ]})
+        if any(_is_confirm_tool(tu.name) and _confirmation_was_sent(results_map.get(tu.id, "")) for tu in runnable):
+            print("\n[DONE]", flush=True)
+            return
 
     print("\n[DONE]", flush=True)
 

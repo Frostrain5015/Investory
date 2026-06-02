@@ -21,9 +21,21 @@ export type TimelineStep =
 interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard }
 interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
 interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
-type ConfirmStatus = 'pending' | 'accepted' | 'refused'
+type ConfirmStatus = 'pending' | 'accepted' | 'refused' | 'failed'
 
 const gradientStyle = { background: 'linear-gradient(135deg, #863bff, #47bfff)' }
+
+function normalizeConfirmCopy(text: string) {
+  return (text || '')
+    .replace(/[「」"“”'’‘\s:：|·,，.。()（）-]/g, '')
+    .replace(/列表/g, '')
+}
+
+function isDuplicateConfirmCopy(title: string, label: string) {
+  const a = normalizeConfirmCopy(title)
+  const b = normalizeConfirmCopy(label)
+  return !!a && !!b && (a === b || a.includes(b) || b.includes(a))
+}
 
 let gMessages: Message[] = []
 let gListeners: (() => void)[] = []
@@ -205,6 +217,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [askData, setAskData] = useState<{ question: string; options: string[] } | null>(null)
   const [confirmData, setConfirmData] = useState<ConfirmData | null>(null)
   const [confirmStatus, setConfirmStatus] = useState<ConfirmStatus | null>(null)
+  const [confirmResult, setConfirmResult] = useState('')
   const [executing, setExecuting] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>([])
   const esRef = useRef<EventSource | null>(null)
@@ -312,7 +325,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     setInput('')
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
-    setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; setAskData(null); setConfirmData(null); setConfirmStatus(null)
+    setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; setAskData(null); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
     try {
       const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, deepThink, webSearch }) })
       if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
@@ -323,7 +336,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       es.addEventListener('picks_card', (e) => { pendingCard.current = { type: 'picks', data: JSON.parse(e.data) } })
       es.addEventListener('ask', (e) => { const d = JSON.parse(e.data); setAskData({ question: d.question, options: d.options || [] }) })
       es.addEventListener('confirm', (e) => {
-        try { const raw = JSON.parse(e.data); const d = raw.data || raw; const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d; if (parsed?.items?.length > 0) { setConfirmData(parsed); setConfirmStatus('pending') } } catch {}
+        try { const raw = JSON.parse(e.data); const d = raw.data || raw; const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d; if (parsed?.items?.length > 0) { setConfirmData(parsed); setConfirmStatus('pending'); setConfirmResult('') } } catch {}
       })
       es.addEventListener('tool', (e) => {
         const d = JSON.parse(e.data) as { name?: string; category?: ToolCategory }
@@ -456,16 +469,21 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   async function handleConfirmAccept() {
     if (!confirmData?.items) return; setExecuting(true); const results: string[] = []
     for (const item of confirmData.items) {
+      const itemName = item.label || confirmData.title
       try {
         const body = item.body || {}; const form = new URLSearchParams()
         for (const [k, v] of Object.entries(body)) { if (v != null && v !== '') form.append(k, String(v)) }
         const res = await fetch(`${BASE}${item.endpoint}`, { method: item.method || 'POST', credentials: 'include', headers: item.method !== 'DELETE' ? { 'Content-Type': 'application/x-www-form-urlencoded' } : undefined, body: item.method !== 'DELETE' ? form.toString() : undefined })
-        if (!res.ok) { const err = await res.json().catch(() => ({})); results.push(`✗ ${item.label}: ${err.error || `HTTP ${res.status}`}`) }
-        else results.push(`✓ ${item.label}`)
-      } catch (e: any) { results.push(`✗ ${item.label}: ${e.message}`) }
+        if (!res.ok) { const err = await res.json().catch(() => ({})); results.push(`✗ ${itemName}: ${err.error || `HTTP ${res.status}`}`) }
+        else results.push(`✓ ${itemName}`)
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e)
+        results.push(`✗ ${itemName}: ${message}`)
+      }
     }
-    setConfirmStatus('accepted'); setExecuting(false)
-    if (results.length > 0) setMessages([...messages, { role: 'system', content: results.join('\n') }])
+    const failed = results.some(r => r.startsWith('✗'))
+    setConfirmResult(results.join('\n'))
+    setConfirmStatus(failed ? 'failed' : 'accepted'); setExecuting(false)
   }
 
   const hasContent = messages.length > 0 || streaming
@@ -508,7 +526,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       window.removeEventListener('resize', scheduleMeasure)
       window.visualViewport?.removeEventListener('resize', scheduleMeasure)
     }
-  }, [mode, hasContent, messages, streaming, streamText, streamTimeline, input, suggestions, askData, confirmData])
+  }, [mode, hasContent, messages, streaming, streamText, streamTimeline, input, suggestions, askData, confirmData, confirmResult, confirmStatus])
 
   const headerNode = (
     <div ref={headerRef} className="flex items-center justify-between px-4 py-2.5 shrink-0">
@@ -706,9 +724,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                 const isTransfer = b.type === 'TRANSFER_IN' || b.type === 'TRANSFER_OUT'; const isDiv = b.type === 'DIV'
                 const typeLabels: Record<string, string> = { BUY: '买入', SELL: '卖出', DIV: '分红', TRANSFER_IN: '转入', TRANSFER_OUT: '转出' }
                 const cardBg = isDelete || isRemove ? 'bg-red-50 text-red-700' : isWatchlist ? 'bg-purple-50 text-purple-700' : 'bg-slate-50 text-slate-500'
+                const showLabel = !!item.label && (confirmData.items.length > 1 || !isDuplicateConfirmCopy(confirmData.title, item.label))
+                if (!showLabel && isWatchlist) return null
                 return (
                   <div key={i} className={`text-[11px] leading-relaxed rounded-lg px-3 py-2 space-y-0.5 ${cardBg}`}>
-                    {item.label && <div className="text-xs font-medium">{item.label}</div>}
+                    {showLabel && <div className="text-xs font-medium">{item.label}</div>}
                     {!isWatchlist && <div className="flex flex-wrap gap-x-3 gap-y-0.5">
                       {b.stockName && <span>{b.stockName}</span>}{b.type && <span className="font-semibold">{typeLabels[b.type] || b.type}</span>}
                       {b.shares > 0 && <span>{isDiv ? `每股 ${b.shares}` : isTransfer ? `${b.shares}` : `${b.shares} 股`}</span>}
@@ -728,7 +748,8 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                   <button onClick={() => setConfirmStatus('refused')} disabled={executing} className="flex items-center gap-1 px-4 py-2 rounded-lg border border-slate-200 text-slate-600 text-xs font-medium hover:bg-slate-50 transition-colors"><X className="w-3.5 h-3.5" />Refuse</button>
                 </div>
               )}
-              {confirmStatus === 'accepted' && <p className="text-xs text-emerald-600 font-medium">✓ 执行成功</p>}
+              {confirmStatus === 'accepted' && <p className="text-xs text-emerald-600 font-medium">✓ 已完成{confirmData.items.length > 1 ? ` ${confirmData.items.length} 项` : ''}</p>}
+              {confirmStatus === 'failed' && <p className="text-xs text-red-500 whitespace-pre-wrap">{confirmResult || '执行失败'}</p>}
               {confirmStatus === 'refused' && <p className="text-xs text-slate-400">✗ 已取消</p>}
             </div>
           </div>
