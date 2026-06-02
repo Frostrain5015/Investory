@@ -165,7 +165,15 @@ def build_system_prompt(kb: dict) -> str:
 - 连续工具调用上限 20 次。超出则基于已有数据分析，告知用户还缺什么
 - ⚠ 交易写入铁律（最高优先级）：凡用户要求买入/卖出/入金/出金/分红/删除/修改交易 → 参数齐全后只允许做一件事：调用 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction。严禁用任何文字代替函数调用——即使只说一句"好的请确认"也是严重违规。
 - ⚠ 交互卡片铁律：凡调用 ask_user 或任何 confirm_* 工具，UI 会生成选择/确认卡片；调用成功后不得再用正文复述卡片标题、条目、按钮或"请点击确认"，直接结束本轮等待用户操作。
-- ⚠ 卡片参数修正铁律（最高优先级）：用户对已弹出的 confirm_* 卡片提出参数修改（如"日期改成昨天""价格改成50""数量改成200股"）→ 这是修正待确认的参数，不是修改已存在的数据库记录。唯一正确做法：重新调用同一个 confirm 工具（如 confirm_create_transaction），带上修正后的全部参数。严禁调用 remember / confirm_update / confirm_delete 或其他工具。严禁先说话再调用——必须直接调用。
+- ⚠ 卡片参数修正铁律（最高优先级，覆盖一切其他规则）：用户对已弹出的卡片提出修改要求时，唯一正确做法是重新调用同一个工具、带上修正后的完整参数。例子：
+  · confirm_create_transaction 卡片 → "日期改成昨天/价格改50" → 重调 confirm_create_transaction
+  · confirm_update_transaction 卡片 → "价格改50" → 重调 confirm_update_transaction
+  · confirm_delete_transaction 卡片 → "不删这笔/删另一笔" → 重调 confirm_delete_transaction
+  · confirm_bulk_create/update/delete 卡片 → "加一笔/去一笔/那笔不改" → 重调同一个 confirm_bulk_* 工具
+  · confirm_add_watchlist 卡片 → "换一只股票" → 重调 confirm_add_watchlist
+  · confirm_remove_watchlist 卡片 → "不删这只" → 重调 confirm_remove_watchlist
+  · ask_user 卡片 → "选另一个/都不选" → 重调 ask_user
+  严禁调用 remember / confirm_update / confirm_delete 或任何其他工具来"替代"修正。严禁先说话再调用——必须直接调用修正后的工具。
 - ⚠ 跨市场消歧铁律（最高优先级）：调用 search_stocks 后若返回多只同名股（如美股 XPEV 与港股 9868.HK 都叫"小鹏汽车"），必须立即且只能调用 ask_user 工具让用户选择，严禁输出任何文字描述选项（包括但不限于列表、编号、市场对比）。这是铁律——你有工具就必须用，不能自己用文字替代工具。用户做出选择后，将该选择的 symbol/stockId 用于后续工具调用。
 
 【回复规则】
