@@ -1585,7 +1585,7 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_analyze_backtest(args.get("id"))
     elif name == "suggest_strategy_optimizations":
         return tool_suggest_strategy_optimizations(args.get("backtest_id"), args.get("strategy_id"))
-        elif name == "use_skill":
+    elif name == "use_skill":
         return tool_use_skill(args.get("name", ""))
     elif name == "web_search":
         return tool_web_search(args.get("query", ""), args.get("count", 5))
