@@ -310,7 +310,9 @@ export default function Settings() {
           </button>
         </Row>
 
-        {mcpToken && (
+        {mcpToken && (() => {
+          const mcpJson = JSON.stringify({ mcpServers: { investory: { type: "http", url: mcpUrl, headers: { Authorization: `Bearer ${mcpToken}` } } } }, null, 2)
+          return (
           <div className="py-3 border-b border-slate-100 dark:border-slate-800">
             <p className="text-xs text-amber-600 dark:text-amber-400 mb-2">{t.settings.mcpTokenOnce}</p>
             <div className="flex items-center gap-2 mb-3">
@@ -320,12 +322,30 @@ export default function Settings() {
                 {t.settings.mcpCopy}
               </button>
             </div>
+            <p className="text-[11px] text-slate-400 mb-1">{t.settings.mcpJsonHint}</p>
+            <div className="relative mb-3">
+              <pre className="block p-3 pr-16 rounded-lg bg-slate-100 dark:bg-slate-800 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300 overflow-x-auto">{mcpJson}</pre>
+              <div className="absolute top-2 right-2 flex gap-1">
+                <button onClick={() => { navigator.clipboard.writeText(mcpJson); toast(t.settings.mcpJsonCopied, true) }}
+                  className="px-2 h-7 rounded-md border border-slate-200 dark:border-slate-600 text-[10px] text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
+                  {t.settings.mcpCopy}
+                </button>
+                <button onClick={() => {
+                  const blob = new Blob([mcpJson], { type: 'application/json' })
+                  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '.mcp.json'; a.click()
+                }}
+                  className="px-2 h-7 rounded-md border border-slate-200 dark:border-slate-600 text-[10px] text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-700 hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors">
+                  {t.settings.mcpJsonDownload}
+                </button>
+              </div>
+            </div>
             <p className="text-[11px] text-slate-400 mb-1">{t.settings.mcpCliHint}</p>
             <code className="block px-2 py-1.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px] text-slate-600 dark:text-slate-300 break-all">
               claude mcp add --transport http investory {mcpUrl} --header "Authorization: Bearer {mcpToken}"
             </code>
           </div>
-        )}
+          )
+        })()}
 
         {/* ── 账户安全 ──────────────────────────────────────────── */}
         <SectionLabel>账户安全</SectionLabel>
