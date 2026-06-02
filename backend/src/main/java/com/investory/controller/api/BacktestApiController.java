@@ -19,16 +19,17 @@ import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.springframework.beans.factory.annotation.Qualifier;
 
 @RestController
 @RequestMapping("/api/backtest")
 public class BacktestApiController {
 
     private static final ObjectMapper json = new ObjectMapper();
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final ExecutorService executor;
     private static final Pattern PROGRESS_RE = Pattern.compile(
         "\\[(\\d+)/(\\d+)\\s+(\\d+(?:\\.\\d+)?)%\\]\\s+(.+)");
 
@@ -40,10 +41,12 @@ public class BacktestApiController {
     private String pythonExecutable;
 
     @Autowired
-    public BacktestApiController(JdbcTemplate jdbc, BacktestDao backtestDao, BacktestSessionManager session) {
+    public BacktestApiController(JdbcTemplate jdbc, BacktestDao backtestDao, BacktestSessionManager session,
+                                 @Qualifier("backtestExecutor") ExecutorService executor) {
         this.jdbc = jdbc;
         this.backtestDao = backtestDao;
         this.session = session;
+        this.executor = executor;
     }
 
     // ── Session helpers ──────────────────────────────────────────────────

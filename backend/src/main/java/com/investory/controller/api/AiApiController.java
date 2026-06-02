@@ -15,15 +15,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+
+import org.springframework.beans.factory.annotation.Qualifier;
 
 @RestController
 @RequestMapping("/api/ai")
 public class AiApiController {
 
     private static final ObjectMapper json = new ObjectMapper();
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    private final ExecutorService executor;
     private final AiSessionManager session;
     private final JdbcTemplate jdbc;
 
@@ -38,9 +39,11 @@ public class AiApiController {
     private static final String DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 
     @Autowired
-    public AiApiController(AiSessionManager session, JdbcTemplate jdbc) {
+    public AiApiController(AiSessionManager session, JdbcTemplate jdbc,
+                           @Qualifier("aiExecutor") ExecutorService executor) {
         this.session = session;
         this.jdbc = jdbc;
+        this.executor = executor;
     }
 
     @PostMapping("/chat")

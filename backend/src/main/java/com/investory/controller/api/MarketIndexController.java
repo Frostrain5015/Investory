@@ -3,6 +3,7 @@ package com.investory.controller.api;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -23,7 +24,7 @@ public class MarketIndexController {
     // concurrency overwhelms the local SOCKS proxy, too little blows the collector
     // budget. 7 keeps 21 Yahoo calls to ~3 waves while staying well under the proxy
     // ceiling that 17-wide concurrency used to hit.
-    private final ExecutorService indexExecutor = Executors.newFixedThreadPool(25);
+    private final ExecutorService indexExecutor;
     private final Semaphore yahooSemaphore = new Semaphore(7, true);
 
     // Page is visited rarely and briefly, so fetch on demand (no 24/7 background
@@ -36,7 +37,14 @@ public class MarketIndexController {
     private volatile Snapshot cache;
     private final Object refreshLock = new Object();
 
-    @Autowired private JdbcTemplate jdbc;
+    private final JdbcTemplate jdbc;
+
+    @Autowired
+    public MarketIndexController(JdbcTemplate jdbc,
+                                  @Qualifier("marketIndexExecutor") ExecutorService indexExecutor) {
+        this.jdbc = jdbc;
+        this.indexExecutor = indexExecutor;
+    }
 
     private enum Source { SINA, YAHOO }
 

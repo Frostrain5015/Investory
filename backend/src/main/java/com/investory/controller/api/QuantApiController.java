@@ -16,11 +16,12 @@ import java.io.File;
 import java.io.InputStreamReader;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+
+import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * 量化分析 REST 控制器，路径前缀 /api/quant。
@@ -41,8 +42,8 @@ public class QuantApiController {
     /** Jackson JSON 序列化器，用于 SSE 数据帧和脚本输出解析 */
     private static final ObjectMapper json = new ObjectMapper();
 
-    /** 固定线程池，用于异步运行 Python 量化脚本 */
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    /** 线程池，用于异步运行 Python 量化脚本 */
+    private final ExecutorService executor;
 
     /**
      * 进度行正则，与 AdminController 完全相同，匹配格式：
@@ -61,9 +62,11 @@ public class QuantApiController {
     private String pythonExecutable;
 
     @Autowired
-    public QuantApiController(JdbcTemplate jdbc, QuantCacheDao quantDao) {
+    public QuantApiController(JdbcTemplate jdbc, QuantCacheDao quantDao,
+                              @Qualifier("quantExecutor") ExecutorService executor) {
         this.jdbc = jdbc;
         this.quantDao = quantDao;
+        this.executor = executor;
     }
 
     // ── 获取持仓股票的量化指标（持仓页可选列数据源）──────────────────────────

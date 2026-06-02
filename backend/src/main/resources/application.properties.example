@@ -3,11 +3,16 @@ server.servlet.context-path=/investory
 
 # HTTPS
 server.ssl.key-store=classpath:keystore.p12
-server.ssl.key-store-password=investory
+server.ssl.key-store-password=${SSL_KEY_PASSWORD:investory}
 server.ssl.key-store-type=PKCS12
 server.ssl.key-alias=investory
 
-spring.datasource.url=jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/investory?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8&allowPublicKeyRetrieval=true
+# Allow cross-origin cookie sending (Electron desktop client)
+server.servlet.session.cookie.same-site=none
+server.servlet.session.cookie.secure=true
+
+# MySQL: SSL enabled; set USE_SSL=false for local non-SSL dev
+spring.datasource.url=jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/investory?useSSL=${USE_SSL:true}&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8&allowPublicKeyRetrieval=true&requireSSL=${USE_SSL:true}
 spring.datasource.username=${DB_USER:root}
 spring.datasource.password=${DB_PASSWORD}
 
@@ -22,8 +27,21 @@ spring.datasource.hikari.idle-timeout=600000
 spring.datasource.hikari.max-lifetime=1800000
 spring.datasource.hikari.pool-name=InvestoryPool
 
+# Flyway: database has existing schema, baseline instead of migrating from scratch
+spring.flyway.baseline-on-migrate=true
+spring.flyway.baseline-version=1
+
 spring.thymeleaf.cache=false
 spring.thymeleaf.encoding=UTF-8
 
 # Default AI provider key (Alibaba Cloud Bailian); users can override in Settings
 ai.default.key=${AI_DEFAULT_KEY:}
+
+# Frost ID OAuth 2.1 configuration (secrets via env vars)
+frostid.oauth.client-id=${FROSTID_CLIENT_ID:xpozx7wXWUBpdfAbOFnzputE_r7C3hecBWy0}
+frostid.oauth.client-secret=${FROSTID_CLIENT_SECRET:1a7d09743a325325fdd3a3b1f13c9205dc3bdf175fe9fb2e9f7478beb2389ca3}
+frostid.oauth.authorize-url=${FROSTID_AUTHORIZE_URL:https://116.62.179.231:4443/oauth/authorize}
+frostid.oauth.token-url=${FROSTID_TOKEN_URL:http://127.0.0.1:4000/oauth/token}
+frostid.oauth.userinfo-url=${FROSTID_USERINFO_URL:http://127.0.0.1:4000/oauth/userinfo}
+frostid.oauth.redirect-url=${FROSTID_REDIRECT_URL:https://116.62.179.231:8443/investory/oauth/frost-id/callback}
+frostid.oauth.scope=openid profile email

@@ -7,6 +7,7 @@ import com.investory.dao.StockDao;
 import com.investory.model.Quote;
 import com.investory.model.Stock;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -23,7 +24,6 @@ import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 
@@ -53,7 +53,15 @@ public class RealtimeQuoteService {
         return HttpClient.newHttpClient();
     }
 
-    @Autowired private StockDao stockDao;
+    private final StockDao stockDao;
+    private final ExecutorService quoteExecutor;
+
+    @Autowired
+    public RealtimeQuoteService(StockDao stockDao,
+                                @Qualifier("quoteExecutor") ExecutorService quoteExecutor) {
+        this.stockDao = stockDao;
+        this.quoteExecutor = quoteExecutor;
+    }
 
     /** Returns true if the given stock's market is currently in a trading session (weekday + session hours). */
     private boolean isMarketOpen(Stock stock) {
@@ -78,8 +86,6 @@ public class RealtimeQuoteService {
             default          -> false;
         };
     }
-
-    private final ExecutorService quoteExecutor = Executors.newFixedThreadPool(3);
 
     /** Get the best available real-time price with fetch timestamp. Returns null if all sources fail. */
     public Quote getQuote(Stock stock) {

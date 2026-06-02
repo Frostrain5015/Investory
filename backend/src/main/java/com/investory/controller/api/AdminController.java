@@ -16,10 +16,11 @@ import java.io.File;
 import java.io.InputStreamReader;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
+import org.springframework.beans.factory.annotation.Qualifier;
 
 /**
  * 后台管理 REST 控制器，路径前缀 /api/admin。
@@ -41,8 +42,8 @@ public class AdminController {
     /** Jackson JSON 序列化器，用于将 Map 序列化为 SSE 数据帧 */
     private static final ObjectMapper json = new ObjectMapper();
 
-    /** 固定线程池，用于异步运行爬虫子进程（避免阻塞 HTTP 线程） */
-    private final ExecutorService executor = Executors.newFixedThreadPool(4);
+    /** 线程池，用于异步运行爬虫子进程（避免阻塞 HTTP 线程） */
+    private final ExecutorService executor;
 
     private final JdbcTemplate jdbc;
 
@@ -73,9 +74,11 @@ public class AdminController {
     @Value("${python.executable:python3}")
     private String pythonExecutable;
 
-    public AdminController(JdbcTemplate jdbc, @Autowired CrawlSessionManager session) {
+    public AdminController(JdbcTemplate jdbc, @Autowired CrawlSessionManager session,
+                           @Qualifier("adminExecutor") ExecutorService executor) {
         this.jdbc = jdbc;
         this.session = session;
+        this.executor = executor;
     }
 
     /**

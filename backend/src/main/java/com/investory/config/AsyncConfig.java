@@ -70,4 +70,52 @@ public class AsyncConfig {
             Thread t = new Thread(r, "index-builder"); t.setDaemon(true); return t;
         });
     }
+
+    /** AI 聊天子进程执行池（AiApiController） */
+    @Bean("aiExecutor")
+    public ExecutorService aiExecutor() {
+        return Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "ai-worker"); t.setDaemon(true); return t;
+        });
+    }
+
+    /** 回测引擎执行池（BacktestApiController） */
+    @Bean("backtestExecutor")
+    public ExecutorService backtestExecutor() {
+        return Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "backtest-worker"); t.setDaemon(true); return t;
+        });
+    }
+
+    /** 管理后台执行池（AdminController） */
+    @Bean("adminExecutor")
+    public ExecutorService adminExecutor() {
+        return Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "admin-worker"); t.setDaemon(true); return t;
+        });
+    }
+
+    /** 量化分析执行池（QuantApiController） */
+    @Bean("quantExecutor")
+    public ExecutorService quantExecutor() {
+        return Executors.newFixedThreadPool(4, r -> {
+            Thread t = new Thread(r, "quant-worker"); t.setDaemon(true); return t;
+        });
+    }
+
+    /** 实时行情竞速执行池（RealtimeQuoteService） */
+    @Bean("quoteExecutor")
+    public ExecutorService quoteExecutor() {
+        return Executors.newFixedThreadPool(3, r -> {
+            Thread t = new Thread(r, "quote-worker"); t.setDaemon(true); return t;
+        });
+    }
+
+    /** 全球指数并发请求池（MarketIndexController） */
+    @Bean("marketIndexExecutor")
+    public ExecutorService marketIndexExecutor() {
+        return Executors.newFixedThreadPool(25, r -> {
+            Thread t = new Thread(r, "market-index-worker"); t.setDaemon(true); return t;
+        });
+    }
 }
