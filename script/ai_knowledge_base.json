@@ -50,5 +50,48 @@
     "all_in": "用户提出'全仓''梭哈''清仓买入XX'时，必须先说明对应的最大潜在亏损与其总资产的关系，再走 confirm 流程。",
     "novel_instruments": "面对加密货币、衍生品、未上市股权、高杠杆ETF（如 3x/-3x）等高风险品种，先确认用户了解其底层机制和风险特征。",
     "absolute_claims": "不使用'稳赚''必涨''保本''零风险'等绝对化表述。回测胜率 100% 时主动指出可能过拟合。"
+  },
+  "skills": {
+    "stock-fundamentals": {
+      "name": "个股基本面分析",
+      "trigger": "用户要求分析基本面、估值、财务健康、业务质量，或说'分析一下XX股票'且关注的是价值/基本面维度",
+      "tools": ["get_stock_price", "get_fundamentals", "get_factor_scores", "get_stock_price_history"],
+      "steps": [
+        "1. 调 get_stock_price 取现价和PE/PB",
+        "2. 调 get_fundamentals 取PE/PB历史、ROE、收入利润增速",
+        "3. 调 get_factor_scores 取价值/成长/质量维度得分",
+        "4. 从因子详情提取PE分位、ROE水平、毛利率、负债率",
+        "5. 检查 Piotroski F-score（≤3=财务弱）和 ROE趋势（下降=风险）",
+        "6. 输出：估值概览 → 盈利能力 → 财务健康 → 风险提示（5-8句）"
+      ],
+      "output": "【估值】PE xx (历史x%分位) 【盈利】ROE xx% 【财务】F-score x 【风险】…"
+    },
+    "stock-technicals": {
+      "name": "个股技术面分析",
+      "trigger": "用户要求技术分析、走势判断、支撑压力位、买卖时机，或说'技术面怎么样''什么时候买''支撑在哪'",
+      "tools": ["get_stock_price", "get_stock_price_history", "get_factor_scores"],
+      "steps": [
+        "1. 调 get_stock_price_history(symbol, 250) 取一年日线",
+        "2. 调 get_stock_price 取现价和涨跌幅",
+        "3. 调 get_factor_scores 取动量/反转/MA偏离/背离/成交量因子",
+        "4. 从因子判断：MA排列方向、MA60偏离度、52周位置、成交量突破",
+        "5. 从RSI/MACD因子（如果有）判断超买超卖和背离",
+        "6. 输出：趋势判断 → 强弱评估 → 关键价位 → 风险提示（5-8句）"
+      ],
+      "output": "【趋势】牛市排列/熊市排列 【强弱】动量信号+成交量确认 【价位】支撑约xx / 压力约xx 【风险】…"
+    },
+    "market-analysis": {
+      "name": "市场环境分析",
+      "trigger": "用户问大盘、行情、仓位建议、市场方向，或说'现在什么行情''大盘怎么样''仓位怎么调'",
+      "tools": ["get_market_regime", "get_global_indices", "get_daily_picks", "get_world_news"],
+      "steps": [
+        "1. 调 get_market_regime 取市场状态(BULL/NORMAL/CAUTION/BEAR)和评分",
+        "2. 调 get_global_indices 取全球指数涨跌",
+        "3. 调 get_daily_picks 看扫描器发现了什么方向",
+        "4. 调 get_world_news 取宏观头条（限5条）",
+        "5. 输出：市场状态+评分 → 仓位建议 → 热点方向 → 风险提示（5-7句）"
+      ],
+      "output": "【市场】xx(评分x/10) 【仓位】建议x% 【热点】… 【风险】…"
+    }
   }
 }

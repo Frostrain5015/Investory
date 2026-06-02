@@ -164,6 +164,14 @@ def build_system_prompt(kb: dict) -> str:
 【安全网（最高优先级，违反任何一条都是错误回答）】
 {safety_text}
 
+【分析框架（Skills）】
+系统内置三个分析框架，用户的相关问题会自动触发。你也可以主动调用 use_skill 工具激活：
+- stock-fundamentals：基本面分析（估值、盈利能力、财务健康）。触发词：基本面/估值/财务健康。
+- stock-technicals：技术面分析（趋势、动量、支撑压力）。触发词：技术面/走势/时机/支撑/压力。
+- market-analysis：市场环境分析（大盘、仓位、板块轮动）。触发词：大盘/行情/仓位/市场。
+
+使用规则：收到匹配的触发词后，先 use_skill 激活框架，再按框架步骤调用工具获取数据。框架输出格式已预设，按格式回答即可。
+
 【工具调用规则】
 - ⚠ 数据铁律（最高优先级，覆盖所有数据类问题）：凡涉及任何具体数据——个股行情/评分/基本面、持仓、盈亏、交易、回测、市场环境、自选、新闻——必须先调用对应工具拿真实数据再回答。持仓画像和长期记忆只作背景参考，严禁据此直接给出价格、涨跌、评分、权重等数字结论。宁可多调一次工具，也不要凭记忆或画像编造数字。不确定该用哪个工具时，先 search_stocks / get_portfolio 起步。
 - ⚠ 策略生成铁律：用户要求写策略/生成策略/构建策略/设计策略时，第一轮对话必须且只能调用 generate_strategy 工具，不得输出任何文字。错误示范：先说"好的我来生成"再调用工具。正确示范：直接调用工具，参数包含完整Python代码。工具调用成功后也不得说话——前端会自动展示策略卡片。
@@ -339,6 +347,8 @@ MAX_WEB_SEARCHES = 3
 #   - 'mutation'  : writes to DB or external state (always behind confirm UI)
 # The frontend uses this to colour-code and icon-tag each step in the timeline.
 TOOL_CATEGORIES = {
+    # ── skill ───────────────────────────────────────────────────────────
+    "use_skill": "analysis",
     # ── query ──────────────────────────────────────────────────────────
     "get_portfolio": "query",
     "search_stocks": "query",
@@ -781,6 +791,25 @@ def tool_forget(user_id: int, keyword: str) -> str:
     deleted = cur.rowcount
     conn.commit(); cur.close(); conn.close()
     return f"已删除 {deleted} 条相关记忆"
+
+def tool_use_skill(name: str) -> dict:
+    """激活一个分析框架（skill）：stock-fundamentals / stock-technicals / market-analysis。
+    调用后框架指令会作为工具结果返回，请严格按框架步骤执行分析。"""
+    kb = load_knowledge_base()
+    skills = kb.get("skills", {})
+    skill = skills.get(name)
+    if not skill:
+        return {"error": f"未知分析框架: {name}，可选: {', '.join(skills.keys())}"}
+    # Emit skill event for frontend timeline book icon
+    print(f"[SKILL]\t{name}\t{skill.get('name', name)}", flush=True)
+    return {
+        "skill": name,
+        "name": skill.get("name", name),
+        "tools": skill.get("tools", []),
+        "steps": skill.get("steps", []),
+        "output_format": skill.get("output", ""),
+        "instruction": "请严格按照上述步骤执行分析。先并行调用所有tool获取数据，再按框架输出结论。"
+    }
 
 def tool_web_search(query: str, count: int = 5) -> dict:
     """联网搜索（DuckDuckGo，免费无API key）"""
@@ -1272,6 +1301,12 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"keyword": {"type": "string", "description": "要删除的记忆关键词"}}, "required": ["keyword"]}
     }},
     {"type": "function", "function": {
+        "name": "use_skill", "description": "激活一个分析框架来指导后续分析。可选: stock-fundamentals(基本面), stock-technicals(技术面), market-analysis(市场环境)。激活后框架的步骤和数据源会在结果中列出，请严格遵循。",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "分析框架名称: stock-fundamentals / stock-technicals / market-analysis"}
+        }, "required": ["name"]}
+    }},
+    {"type": "function", "function": {
         "name": "web_search", "description": "联网搜索。凡涉及新闻、时事、最新动态、具体事件日期和细节——你无法从数据库回答的一切——必须先调用此工具再回复，禁止凭记忆编造",
         "parameters": {"type": "object", "properties": {
             "query": {"type": "string", "description": "搜索关键词"},
@@ -1550,6 +1585,8 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_analyze_backtest(args.get("id"))
     elif name == "suggest_strategy_optimizations":
         return tool_suggest_strategy_optimizations(args.get("backtest_id"), args.get("strategy_id"))
+        elif name == "use_skill":
+        return tool_use_skill(args.get("name", ""))
     elif name == "web_search":
         return tool_web_search(args.get("query", ""), args.get("count", 5))
     elif name == "get_fundamentals":

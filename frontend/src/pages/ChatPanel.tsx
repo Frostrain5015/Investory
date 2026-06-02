@@ -17,6 +17,7 @@ interface PicksCard { regime: string; picks: { code: string; name: string; total
 export type ToolCategory = 'query' | 'analysis' | 'mutation'
 export type TimelineStep =
   | { kind: 'thinking'; text: string; _ts?: number; _elapsed?: number }
+  | { kind: 'skill'; name: string; displayName: string }
   | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string; summary?: string; callId?: string }
 interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard }
 interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
@@ -166,6 +167,14 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
           // last segment in an active generation stays live.
           const segDone = i < steps.length - 1 || done
           return <ThinkingSegment key={i} text={step.text} done={segDone} _ts={step._ts} _elapsed={step._elapsed} />
+        }
+        if (step.kind === 'skill') {
+          return (
+            <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-1.5 text-[11px] text-indigo-600 py-1">
+              <span className="text-base">📖</span>
+              <span className="font-medium">{step.displayName}</span>
+            </motion.div>
+          )
         }
         return <ToolStepDisplay key={i} step={step} lang={lang} />
       })}
@@ -381,6 +390,13 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             if (allRemembered) { handleConfirmAccept(parsed, false) }
           }
         } catch {}
+      })
+      es.addEventListener('skill', (e) => {
+        const d = JSON.parse(e.data) as { name?: string; displayName?: string }
+        if (!d.name) return
+        stampClosedElapsed(timelineRef.current)
+        timelineRef.current = [...timelineRef.current, { kind: 'skill', name: d.name, displayName: d.displayName || d.name }]
+        pushTimeline()
       })
       es.addEventListener('tool', (e) => {
         const d = JSON.parse(e.data) as { name?: string; category?: ToolCategory; callId?: string }
