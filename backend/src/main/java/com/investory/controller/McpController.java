@@ -80,15 +80,23 @@ public class McpController {
         }
     }
 
-    /** GET /mcp：无状态服务不提供服务端推流，返回 405（规范允许）。 */
-    @GetMapping("/mcp")
+    /**
+     * GET /mcp：SSE 传输（Streamable HTTP 可选 GET）。
+     * WorkBuddy 等客户端先探测 GET(SSE)，再回退到 POST(streamableHttp)。
+     * 无状态服务不推事件，但需返回合法 SSE 响应避免客户端误判。
+     */
+    @GetMapping(value = "/mcp", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public ResponseEntity<?> get(HttpServletRequest req) {
         String token = bearer(req);
         if (token == null || tokenDao.resolveToken(token) == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                     .header("WWW-Authenticate", wwwAuthenticate(req)).build();
         }
-        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).build();
+        // 返回合法 SSE，告知客户端该端点仅支持 POST JSON-RPC
+        String sseBody = "event: endpoint\ndata: " + baseUrl(req) + contextPath + "/mcp\n\n";
+        return ResponseEntity.ok()
+                .header("Cache-Control", "no-cache")
+                .body(sseBody);
     }
 
     // ── JSON-RPC 方法实现 ─────────────────────────────────────────────────
