@@ -288,38 +288,4 @@ public class PortfolioController {
         // 直接查询 cash_balances 表，返回该组合所有货币的余额记录
         return Map.of("balances", jdbc.queryForList("SELECT currency, amount FROM cash_balances WHERE portfolio_id=?", pid));
     }
-
-    /**
-     * 修改当前登录用户的登录密码
-     *
-     * <p>HTTP 方法：POST
-     * <p>路径：/api/password
-     * <p>功能说明：验证原密码正确后，将密码更新为新密码（由 AuthService 完成加密存储）。
-     *
-     * <p>请求参数（form 参数）：
-     *   - oldPassword（String）：原密码明文
-     *   - newPassword（String）：新密码明文
-     *
-     * <p>响应格式：
-     * <pre>
-     * 成功：{ "status": "ok" }
-     * 未登录：{ "error": "未登录" }
-     * 原密码错误：{ "error": "原密码错误" }
-     * </pre>
-     *
-     * @param oldPassword 原密码（form 参数）
-     * @param newPassword 新密码（form 参数）
-     * @param req         HTTP 请求，用于读取 Session 中的 userId
-     * @return 操作结果 Map
-     */
-    @PostMapping("/password")
-    public Map<String, String> changePw(@RequestParam String oldPassword, @RequestParam String newPassword,
-                                         HttpServletRequest req) {
-        HttpSession s = req.getSession(false);
-        // 校验规则：Session 不存在或 userId 为 null，视为未登录
-        if (s == null || s.getAttribute("userId") == null) return Map.of("error", "未登录");
-        // 委托 AuthService 验证原密码并完成密码修改，返回 true 表示成功
-        return authService.changePassword((Long) s.getAttribute("userId"), oldPassword, newPassword)
-                ? Map.of("status", "ok") : Map.of("error", "原密码错误");
-    }
 }

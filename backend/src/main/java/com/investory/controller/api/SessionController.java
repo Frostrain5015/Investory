@@ -92,26 +92,6 @@ public class SessionController {
      * @param req HTTP 请求，用于获取 Session
      * @return 操作结果 Map
      */
-    @DeleteMapping("/account")
-    public Map<String, String> deleteAccount(HttpServletRequest req) {
-        HttpSession session = req.getSession(false);
-        // 校验规则：Session 不存在或未包含 userId 属性，视为未认证，拒绝操作
-        if (session == null || session.getAttribute("userId") == null) {
-            Map<String, String> err = new LinkedHashMap<>();
-            err.put("error", "not authenticated");
-            return err;
-        }
-        Long userId = (Long) session.getAttribute("userId");
-        // 调用 DAO 层删除用户及其所有关联数据（级联删除由数据库外键约束保证）
-        userDao.delete(userId);
-        // 删除成功后立即注销 Session，使客户端 Cookie 失效
-        session.invalidate();
-        // 返回操作成功标志
-        Map<String, String> result = new LinkedHashMap<>();
-        result.put("status", "ok");
-        return result;
-    }
-
     /**
      * 测试用登录端点：直接用用户名密码创建会话（供自动化测试脚本使用）。
      * 仅验证数据库中存在的用户，不检查 Frost ID OAuth。

@@ -280,10 +280,6 @@ export function getBacktestCompare(ids: number[]): Promise<CompareResult[]> {
 
 // ── Account ───────────────────────────────────────────────────────────────
 
-export function changePassword(oldPassword: string, newPassword: string): Promise<StatusResponse> {
-  return request('/api/password', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ oldPassword, newPassword }).toString() })
-}
-export function deleteAccount(): Promise<StatusResponse> { return request('/api/account', { method: 'DELETE' }) }
 export function refreshPortfolio(): Promise<StatusResponse> { return request('/api/portfolio/refresh', { method: 'POST' }) }
 
 // ── StockSage Alpha ────────────────────────────────────────────────────────
