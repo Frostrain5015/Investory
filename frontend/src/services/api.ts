@@ -2,11 +2,14 @@ import type {
   SessionResponse, DashboardResponse, HoldingsResponse,
   TransactionsResponse, DividendsResponse, StockDetailResponse,
   AllocationItem, PnlCalendarItem, CumulativeReturnItem,
-  StockSearchItem, PriceData, Portfolio,
+  StockSearchItem, PriceData, BenchmarkItem, Portfolio,
   HoldingsMetricsResponse, QuantData, BacktestResult,
   HoldingCorrelation, CompareResult,
   FactorBreakdown, RegimeStatus,
   FactorScoresResponse, ScanResultsResponse, DailyPick,
+  AdminStatus, AdminUser, AdminCrawlHistoryItem, StatusResponse,
+  WatchlistItem, AiSettings, AiChatRequest,
+  MarketIndexItem, MarketNewsItem, ExchangeRatesResponse,
 } from '@/types'
 
 export const BASE = import.meta.env.VITE_API_BASE || '/investory'
@@ -142,7 +145,7 @@ export function deletePortfolio(id: number): Promise<Response> {
 // ── Charts ─────────────────────────────────────────────────────────────
 
 export const chartAPI = {
-  price(symbol: string, days: number, start?: string, end?: string, benchmark?: string): Promise<PriceData[] | { prices: PriceData[]; benchmark: any[] }> {
+  price(symbol: string, days: number, start?: string, end?: string, benchmark?: string): Promise<PriceData[] | { prices: PriceData[]; benchmark: BenchmarkItem[] }> {
     let url = start && end
       ? `/api/chart?type=price&symbol=${encodeURIComponent(symbol)}&start=${start}&end=${end}`
       : `/api/chart?type=price&symbol=${encodeURIComponent(symbol)}&days=${days}`
@@ -195,8 +198,8 @@ export function getQuantData(): Promise<QuantData> {
 export async function startBacktest(data: {
   name: string
   strategyType: string
-  strategy: any
-  config: any
+  strategy: Record<string, unknown>
+  config: Record<string, unknown>
 }): Promise<Response> {
   return fetch(`${BASE}/api/backtest/start`, {
     method: 'POST',
@@ -224,12 +227,12 @@ export async function getBacktestStream(): Promise<Response> {
 
 // ── Admin ────────────────────────────────────────────────────────────────
 
-export function adminGetStatus(): Promise<any> { return request('/api/admin/status') }
-export function adminGetUsers(): Promise<any[]> { return request('/api/admin/users') }
-export function adminImpersonate(userId: number): Promise<any> { return request('/api/admin/impersonate/' + userId, { method: 'POST' }) }
-export function adminDeleteUser(userId: number): Promise<any> { return request('/api/admin/users/' + userId, { method: 'DELETE' }) }
-export function adminGetCrawlHistory(): Promise<any[]> { return request('/api/admin/crawl-history') }
-export function adminClearCrawlHistory(): Promise<any> { return request('/api/admin/crawl-history', { method: 'DELETE' }) }
+export function adminGetStatus(): Promise<AdminStatus> { return request('/api/admin/status') }
+export function adminGetUsers(): Promise<AdminUser[]> { return request('/api/admin/users') }
+export function adminImpersonate(userId: number): Promise<StatusResponse> { return request('/api/admin/impersonate/' + userId, { method: 'POST' }) }
+export function adminDeleteUser(userId: number): Promise<StatusResponse> { return request('/api/admin/users/' + userId, { method: 'DELETE' }) }
+export function adminGetCrawlHistory(): Promise<AdminCrawlHistoryItem[]> { return request('/api/admin/crawl-history') }
+export function adminClearCrawlHistory(): Promise<StatusResponse> { return request('/api/admin/crawl-history', { method: 'DELETE' }) }
 export function adminCrawlStart(market: string): Promise<Response> { return fetch(`${BASE}/api/admin/crawl/${market}`, { credentials: 'include' }) }
 export function adminCrawlStop(): Promise<Response> { return fetch(`${BASE}/api/admin/crawl/stop`, { method: 'POST', credentials: 'include' }) }
 export function adminCrawlPause(): Promise<Response> { return fetch(`${BASE}/api/admin/crawl/pause`, { method: 'POST', credentials: 'include' }) }
@@ -238,32 +241,32 @@ export function adminCrawlStream(): EventSource { return new EventSource(`${BASE
 
 // ── Watchlist ────────────────────────────────────────────────────────────
 
-export function getWatchlist(): Promise<any[]> { return request('/api/watchlist') }
-export function addToWatchlist(stockId: number): Promise<any> {
+export function getWatchlist(): Promise<WatchlistItem[]> { return request('/api/watchlist') }
+export function addToWatchlist(stockId: number): Promise<WatchlistItem> {
   return request('/api/watchlist', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ stockId: String(stockId) }).toString() })
 }
-export function removeFromWatchlist(stockId: number): Promise<any> { return request(`/api/watchlist/${stockId}`, { method: 'DELETE' }) }
-export function reorderWatchlist(items: { id: number; sortOrder: number }[]): Promise<any> {
+export function removeFromWatchlist(stockId: number): Promise<StatusResponse> { return request(`/api/watchlist/${stockId}`, { method: 'DELETE' }) }
+export function reorderWatchlist(items: { id: number; sortOrder: number }[]): Promise<StatusResponse> {
   return request('/api/watchlist/reorder', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(items) })
 }
 
 // ── AI ────────────────────────────────────────────────────────────────────
 
-export function aiChat(messages: any[], deepThink?: boolean): Promise<any> {
+export function aiChat(messages: AiChatRequest['messages'], deepThink?: boolean): Promise<unknown> {
   return request('/api/ai/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages, deepThink }) })
 }
-export function aiClear(): Promise<any> { return request('/api/ai/clear', { method: 'POST' }) }
+export function aiClear(): Promise<StatusResponse> { return request('/api/ai/clear', { method: 'POST' }) }
 export function aiStream(): EventSource { return new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }) }
-export function aiGetSettings(): Promise<any> { return request('/api/ai/settings') }
-export function aiSaveSettings(data: any): Promise<any> {
+export function aiGetSettings(): Promise<AiSettings> { return request('/api/ai/settings') }
+export function aiSaveSettings(data: Partial<AiSettings> & { apiKey?: string }): Promise<StatusResponse> {
   return request('/api/ai/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
 }
 
 // ── Market ────────────────────────────────────────────────────────────────
 
-export function getMarketIndices(): Promise<any> { return request('/api/market/indices') }
-export function getExchangeRates(): Promise<any> { return request('/api/market/exchange-rates') }
-export function getMarketNews(): Promise<any[]> { return request('/api/market/news') }
+export function getMarketIndices(): Promise<{ indices: MarketIndexItem[]; indicators: MarketIndexItem[] }> { return request('/api/market/indices') }
+export function getExchangeRates(): Promise<ExchangeRatesResponse> { return request('/api/market/exchange-rates') }
+export function getMarketNews(): Promise<MarketNewsItem[]> { return request('/api/market/news') }
 
 // ── Quant extras ─────────────────────────────────────────────────────────
 
@@ -277,11 +280,11 @@ export function getBacktestCompare(ids: number[]): Promise<CompareResult[]> {
 
 // ── Account ───────────────────────────────────────────────────────────────
 
-export function changePassword(oldPassword: string, newPassword: string): Promise<any> {
+export function changePassword(oldPassword: string, newPassword: string): Promise<StatusResponse> {
   return request('/api/password', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ oldPassword, newPassword }).toString() })
 }
-export function deleteAccount(): Promise<any> { return request('/api/account', { method: 'DELETE' }) }
-export function refreshPortfolio(): Promise<any> { return request('/api/portfolio/refresh', { method: 'POST' }) }
+export function deleteAccount(): Promise<StatusResponse> { return request('/api/account', { method: 'DELETE' }) }
+export function refreshPortfolio(): Promise<StatusResponse> { return request('/api/portfolio/refresh', { method: 'POST' }) }
 
 // ── StockSage Alpha ────────────────────────────────────────────────────────
 
@@ -325,7 +328,7 @@ export function refreshStockSageScan(): EventSource {
   return new EventSource(`${BASE}/api/stocksage/refresh`, { withCredentials: true })
 }
 
-export function analyzePortfolio(holdings: { symbol: string; weight: number; name: string }[]): Promise<any> {
+export function analyzePortfolio(holdings: { symbol: string; weight: number; name: string }[]): Promise<Record<string, unknown>> {
   return request('/api/stocksage/portfolio-analysis', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

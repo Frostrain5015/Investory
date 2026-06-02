@@ -439,3 +439,93 @@ export interface ScanResultsResponse {
   scanned: number
   timestamp: string
 }
+
+// ── Admin ──────────────────────────────────────────────────────────────────
+
+export interface AdminStatus {
+  db: { stocks: number; prices: number; transactions: number }
+  tables: Record<string, { rows: number; sizeMb: number }>
+}
+
+export interface AdminUser {
+  id: number
+  username: string
+  email: string | null
+  isAdmin: boolean
+  createdAt: string
+  frostIdId: string | null
+}
+
+export interface AdminCrawlHistoryItem {
+  id: number
+  market: string
+  startedAt: string
+  endedAt: string | null
+  rowsWritten: number
+  stocksFailed: number
+  status: string
+  logTail: string
+}
+
+// ── Watchlist ─────────────────────────────────────────────────────────────
+
+export interface WatchlistItem {
+  id: number
+  stockId: number
+  symbol: string
+  name: string
+  sortOrder: number
+  price?: number
+  changePct?: number
+}
+
+// ── AI ────────────────────────────────────────────────────────────────────
+
+export interface AiSettings {
+  provider: string
+  model: string
+  baseUrl: string
+  hasKey: boolean
+}
+
+export interface AiChatRequest {
+  messages: { role: string; content: string }[]
+  deepThink?: boolean
+}
+
+// ── Market ────────────────────────────────────────────────────────────────
+
+export interface MarketIndexItem {
+  symbol: string
+  name: string
+  price: number
+  change: number
+  changePct: number
+  flag?: string
+  lat?: number
+  lng?: number
+}
+
+export interface MarketNewsItem {
+  title: string
+  url: string
+  source: string
+  pubDate: string
+  category: 'finance' | 'geopolitics' | 'other'
+  score: number
+  countries: string[]
+  summary?: string
+}
+
+export interface ExchangeRatesResponse {
+  rates: Record<string, number>
+  base: string
+  updatedAt: string
+}
+
+// ── Account ───────────────────────────────────────────────────────────────
+
+export interface StatusResponse {
+  status: string
+  error?: string
+}

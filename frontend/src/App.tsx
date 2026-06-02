@@ -1,5 +1,5 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { useEffect } from 'react'
+import { useEffect, lazy, Suspense } from 'react'
 import { AuthProvider, useAuth } from '@/hooks/use-auth'
 import { SettingsProvider } from '@/hooks/use-settings'
 import { ThemeProvider } from '@/hooks/use-theme'
@@ -10,21 +10,25 @@ import { ConfirmProvider } from '@/hooks/use-confirm'
 import { I18nProvider, useT } from '@/i18n/I18nContext'
 import Layout from '@/components/Layout'
 import TitleBar from '@/components/TitleBar'
+
+// Light pages: eager-loaded (critical path)
 import Hero from '@/pages/Hero'
 import Login from '@/pages/Login'
 import Register from '@/pages/Register'
-import Admin from '@/pages/Admin'
-import Dashboard from '@/pages/Dashboard'
-import Market from '@/pages/Market'
-import Holdings from '@/pages/Holdings'
-import Transactions from '@/pages/Transactions'
-import AddTransaction from '@/pages/AddTransaction'
-import Dividends from '@/pages/Dividends'
-import StockDetail from '@/pages/StockDetail'
-import PnlCalendar from '@/pages/PnlCalendar'
 import Portfolio from '@/pages/Portfolio'
 import Settings from '@/pages/Settings'
-import Research from '@/pages/Research'
+import PnlCalendar from '@/pages/PnlCalendar'
+
+// Heavy pages: lazy-loaded (code-split per route)
+const Admin = lazy(() => import('@/pages/Admin'))
+const Dashboard = lazy(() => import('@/pages/Dashboard'))
+const Market = lazy(() => import('@/pages/Market'))
+const Holdings = lazy(() => import('@/pages/Holdings'))
+const Transactions = lazy(() => import('@/pages/Transactions'))
+const AddTransaction = lazy(() => import('@/pages/AddTransaction'))
+const Dividends = lazy(() => import('@/pages/Dividends'))
+const StockDetail = lazy(() => import('@/pages/StockDetail'))
+const Research = lazy(() => import('@/pages/Research'))
 
 const isElectron = !!(window as any).electronAPI?.isDesktop
 
@@ -68,21 +72,21 @@ export default function App() {
             <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
             <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-              <Route path="/market" element={<Market />} />
+              <Route path="/market" element={<Suspense fallback={<LoadingScreen />}><Market /></Suspense>} />
               <Route path="/watchlist" element={<Navigate to="/holdings" replace />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/holdings" element={<Holdings />} />
-              <Route path="/transactions" element={<Transactions />} />
-              <Route path="/transactions/add" element={<AddTransaction />} />
-              <Route path="/dividends" element={<Dividends />} />
-              <Route path="/stock" element={<StockDetail />} />
+              <Route path="/dashboard" element={<Suspense fallback={<LoadingScreen />}><Dashboard /></Suspense>} />
+              <Route path="/holdings" element={<Suspense fallback={<LoadingScreen />}><Holdings /></Suspense>} />
+              <Route path="/transactions" element={<Suspense fallback={<LoadingScreen />}><Transactions /></Suspense>} />
+              <Route path="/transactions/add" element={<Suspense fallback={<LoadingScreen />}><AddTransaction /></Suspense>} />
+              <Route path="/dividends" element={<Suspense fallback={<LoadingScreen />}><Dividends /></Suspense>} />
+              <Route path="/stock" element={<Suspense fallback={<LoadingScreen />}><StockDetail /></Suspense>} />
               <Route path="/pnl-calendar" element={<PnlCalendar />} />
               <Route path="/portfolio" element={<Portfolio />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/quant" element={<Navigate to="/research" replace />} />
               <Route path="/screener" element={<Navigate to="/research" replace />} />
-              <Route path="/research" element={<Research />} />
-              <Route path="/admin" element={<Admin />} />
+              <Route path="/research" element={<Suspense fallback={<LoadingScreen />}><Research /></Suspense>} />
+              <Route path="/admin" element={<Suspense fallback={<LoadingScreen />}><Admin /></Suspense>} />
             </Route>
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
