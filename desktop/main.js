@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, nativeImage, dialog } = require('electron')
+const { app, BrowserWindow, shell, ipcMain, nativeImage, dialog, session } = require('electron')
 const { autoUpdater } = require('electron-updater')
 const http = require('http')
 const fs = require('fs')
@@ -15,6 +15,7 @@ const DIST = path.join(__dirname, 'dist')
 const ICON = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'))
 
 app.commandLine.appendSwitch('ignore-certificate-errors')
+app.commandLine.appendSwitch('no-proxy-server')
 
 // ── Local static server with SPA fallback ──────────────────────────
 
@@ -128,6 +129,8 @@ ipcMain.on('app:restart-and-install', () => {
 // ── App lifecycle ──────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
+  await session.defaultSession.setProxy({ mode: 'direct' })
+
   try {
     await startServer()
   } catch (err) {
