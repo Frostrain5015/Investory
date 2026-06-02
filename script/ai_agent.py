@@ -126,7 +126,7 @@ def build_system_prompt(kb: dict) -> str:
 - 连续工具调用上限 20 次。超出则基于已有数据分析，告知用户还缺什么
 - ⚠ 交易写入铁律（最高优先级）：凡用户要求买入/卖出/入金/出金/分红/删除/修改交易 → 参数齐全后只允许做一件事：调用 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction。严禁用任何文字代替函数调用——即使只说一句"好的请确认"也是严重违规。
 - ⚠ 交互卡片铁律：凡调用 ask_user 或任何 confirm_* 工具，UI 会生成选择/确认卡片；调用成功后不得再用正文复述卡片标题、条目、按钮或"请点击确认"，直接结束本轮等待用户操作。
-- ⚠ 跨市场消歧铁律：调用 search_stocks 后若返回多只同名股（如美股 XPEV 与港股 9868.HK 都叫"小鹏汽车"），必须立即调用 ask_user 让用户选择具体哪只，严禁自行决定或随机选一只。用户做出选择后，将该选择的 symbol/stockId 用于后续工具调用。
+- ⚠ 跨市场消歧铁律（最高优先级）：调用 search_stocks 后若返回多只同名股（如美股 XPEV 与港股 9868.HK 都叫"小鹏汽车"），必须立即且只能调用 ask_user 工具让用户选择，严禁输出任何文字描述选项（包括但不限于列表、编号、市场对比）。这是铁律——你有工具就必须用，不能自己用文字替代工具。用户做出选择后，将该选择的 symbol/stockId 用于后续工具调用。
 
 【回复规则】
 - 每次不超过 3 句。涉及策略代码、风险展开、多空对比时可适度延长，但不堆词
@@ -341,7 +341,12 @@ def tool_search_stocks(query: str) -> dict:
     rows = cur.fetchall()
     cur.close(); conn.close()
     results = [{"id": r[0], "symbol": r[1], "name": r[2], "market": r[3]} for r in rows]
-    return {"query": query, "count": len(results), "results": results}
+    # Detect cross-market duplicates: same name in different markets
+    from collections import Counter
+    name_counts = Counter(r["name"] for r in results)
+    dupe_names = {n for n, c in name_counts.items() if c > 1}
+    needs_disambig = any(r["name"] in dupe_names and r["market"] != results[0]["market"] for r in results[1:]) if len(results) > 1 else False
+    return {"query": query, "count": len(results), "results": results, "needs_disambiguation": needs_disambig}
 
 def tool_get_stock_price(symbol: str) -> dict:
     """获取个股最新行情"""
@@ -1149,7 +1154,7 @@ TOOLS = [
     }},
     # A: Data tools
     {"type": "function", "function": {
-        "name": "search_stocks", "description": "根据股票名称或代码模糊搜索，返回匹配的stockId、symbol、name、market。同名股在A股、港股、美股可能同时返回（如小鹏汽车同时有美股XPEV和港股9868.HK）。用户提到股票名但未给代码时必须先调用此工具；返回多只同名股时参照跨市场消歧规则处理。",
+        "name": "search_stocks", "description": "根据股票名称或代码模糊搜索，返回匹配的stockId、symbol、name、market。同一股票名称可能在A股、港股、美股都有（如小鹏汽车/XPEV.US/9868.HK）。【重要】当返回结果中包含同名但不同market的股票时，你必须调用 ask_user 让用户选择，严禁自己文字列出选项。",
         "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "搜索关键词：股票名或代码"}}, "required": ["query"]}
     }},
     {"type": "function", "function": {
@@ -1194,7 +1199,7 @@ TOOLS = [
         }, "required": []}
     }},
     {"type": "function", "function": {
-        "name": "ask_user", "description": "需要用户做选择时调用。例如：多个回测结果选哪个、多个股票选哪个、确认是否执行操作。提供2-4个选项让用户选",
+        "name": "ask_user", "description": "需要用户做选择时【必须调用】。场景：多个回测结果选哪个、同名多市场股票选哪个（如招商银行600036.SH vs 03968.HK）、确认是否执行操作。提供2-4个选项。调用后UI会生成交互按钮，严禁用文字代替此工具列出选项。",
         "parameters": {"type": "object", "properties": {
             "question": {"type": "string", "description": "问用户的问题"},
             "options": {"type": "array", "items": {"type": "string"}, "description": "选项列表，2-4个"}
