@@ -1,5 +1,6 @@
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useEffect, lazy, Suspense } from 'react'
+import { motion } from 'framer-motion'
 import { AuthProvider, useAuth } from '@/hooks/use-auth'
 import { SettingsProvider } from '@/hooks/use-settings'
 import { ThemeProvider } from '@/hooks/use-theme'
@@ -36,10 +37,27 @@ const isElectron = !!(window as any).electronAPI?.isDesktop
 function LoadingScreen() {
   const { t } = useT()
   return (
-    <div className="flex flex-col items-center justify-center gap-3 h-full bg-slate-50">
-      <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
+    <div className="flex flex-col items-center justify-center gap-3 h-full bg-slate-50 dark:bg-slate-950">
+      <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 dark:border-slate-700 dark:border-t-slate-300 rounded-full animate-spin" />
       <span className="text-sm text-slate-400">{t.common.loading}</span>
     </div>
+  )
+}
+
+function PageTransition({ children }: { children: React.ReactNode }) {
+  const location = useLocation()
+  return (
+    <Suspense fallback={<LoadingScreen />}>
+      <motion.div
+        key={location.pathname}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2, ease: 'easeOut' }}
+        style={{ height: '100%' }}
+      >
+        {children}
+      </motion.div>
+    </Suspense>
   )
 }
 
@@ -74,21 +92,21 @@ export default function App() {
             <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
             <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-              <Route path="/market" element={<Suspense fallback={<LoadingScreen />}><Market /></Suspense>} />
+              <Route path="/market" element={<PageTransition><Market /></PageTransition>} />
               <Route path="/watchlist" element={<Navigate to="/holdings" replace />} />
-              <Route path="/dashboard" element={<Suspense fallback={<LoadingScreen />}><Dashboard /></Suspense>} />
-              <Route path="/holdings" element={<Suspense fallback={<LoadingScreen />}><Holdings /></Suspense>} />
-              <Route path="/transactions" element={<Suspense fallback={<LoadingScreen />}><Transactions /></Suspense>} />
-              <Route path="/transactions/add" element={<Suspense fallback={<LoadingScreen />}><AddTransaction /></Suspense>} />
-              <Route path="/dividends" element={<Suspense fallback={<LoadingScreen />}><Dividends /></Suspense>} />
-              <Route path="/stock" element={<Suspense fallback={<LoadingScreen />}><StockDetail /></Suspense>} />
+              <Route path="/dashboard" element={<PageTransition><Dashboard /></PageTransition>} />
+              <Route path="/holdings" element={<PageTransition><Holdings /></PageTransition>} />
+              <Route path="/transactions" element={<PageTransition><Transactions /></PageTransition>} />
+              <Route path="/transactions/add" element={<PageTransition><AddTransaction /></PageTransition>} />
+              <Route path="/dividends" element={<PageTransition><Dividends /></PageTransition>} />
+              <Route path="/stock" element={<PageTransition><StockDetail /></PageTransition>} />
               <Route path="/pnl-calendar" element={<PnlCalendar />} />
               <Route path="/portfolio" element={<Portfolio />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/quant" element={<Navigate to="/research" replace />} />
               <Route path="/screener" element={<Navigate to="/research" replace />} />
-              <Route path="/research" element={<Suspense fallback={<LoadingScreen />}><Research /></Suspense>} />
-              <Route path="/admin" element={<Suspense fallback={<LoadingScreen />}><Admin /></Suspense>} />
+              <Route path="/research" element={<PageTransition><Research /></PageTransition>} />
+              <Route path="/admin" element={<PageTransition><Admin /></PageTransition>} />
             </Route>
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>

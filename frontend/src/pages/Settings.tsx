@@ -192,7 +192,7 @@ export default function Settings() {
           />
 
           <motion.a
-            href="https://116.62.179.231:4443"
+            href="https://116.62.179.231:4443/dashboard/account"
             target="_blank" rel="noopener noreferrer"
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
