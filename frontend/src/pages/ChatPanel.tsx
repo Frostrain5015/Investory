@@ -691,45 +691,29 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       </div>
   )
 
-  // ── Single morph shell: idle ↔ dock ↔ expanded ─────────────────────
-  // The shell is ALWAYS the same motion.div. framer-motion's `layout` prop
-  // measures rect changes and animates between forms — so the button truly
-  // grows into the dock bar, and dock grows into expanded, with no mount/
-  // unmount in between.
+  // ── CSS-driven morph shell: idle ↔ dock ↔ expanded ──────────────────
+  // Using CSS transitions instead of Framer Motion `layout` so the collapse
+  // is automatically the exact reverse of the expand — symmetric and seamless.
   const isIdle = mode === 'idle'
   const isExpanded = mode === 'expanded'
   const dockBottom = 'calc(1rem + env(safe-area-inset-bottom, 0px))'
 
-  // Per-mode size + corner radius. layout prop animates these.
-  // Dock with content has a hard ceiling so the bubble can't grow past 60vh —
-  // overflow scrolls inside the messages area instead of pushing the top up forever.
-  const shellSize: React.CSSProperties = isIdle
-    ? { width: 60, height: 60, borderRadius: 9999 }
-    : isExpanded
-    ? { width: 'min(720px, calc(100vw - 32px))', height: 'min(80vh, 720px)', borderRadius: 24 }
-    : hasContent
-    ? { width: 'min(720px, calc(100vw - 24px))', height: 'min(60vh, 540px)', borderRadius: 20 }
-    : { width: 'min(720px, calc(100vw - 24px))', height: 'auto', borderRadius: 20 }
+  const shellW = isIdle ? 60 : 'min(720px, calc(100vw - 32px))'
+  const shellH = isIdle ? 60
+    : isExpanded ? 'min(80vh, 720px)'
+    : hasContent ? 'min(60vh, 540px)' : 'auto'
+  const shellR = isIdle ? 9999 : isExpanded ? 24 : 20
+  const shellBgVal = isIdle
+    ? 'linear-gradient(135deg, #863bff, #47bfff)'
+    : 'rgba(255,255,255,0.96)'
 
-  // Per-mode background. Idle = gradient pill. Otherwise white shell.
-  const shellBg: React.CSSProperties = isIdle
-    ? { background: 'linear-gradient(135deg, #863bff, #47bfff)' }
-    : { background: 'rgba(255,255,255,0.96)' }
-
-  const morphTransition = { type: 'spring' as const, stiffness: 360, damping: 32, mass: 0.85 }
-
-  // Wrapper centering. Idle pins bottom-right (no centering).
-  // Dock/expanded center horizontally; on lg+ shift by half sidebar (120px).
-  const wrapperPosClass = isIdle
-    ? 'fixed z-50'
+  // Wrapper positioning — CSS transition on all properties for smooth morph
+  const wrapperClass = 'fixed z-50'
+  const wrapperPos: React.CSSProperties = isIdle
+    ? { right: '1.5rem', bottom: `calc(1.5rem + env(safe-area-inset-bottom, 0px))`, top: 'auto', left: 'auto', transform: 'none' }
     : isExpanded
-    ? 'fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2 lg:translate-x-[calc(120px-50%)]'
-    : 'fixed left-1/2 z-50 -translate-x-1/2 lg:translate-x-[calc(120px-50%)]'
-  const wrapperStyle: React.CSSProperties = isIdle
-    ? { right: '1.5rem', bottom: `calc(1.5rem + env(safe-area-inset-bottom, 0px))` }
-    : isExpanded
-    ? {}
-    : { bottom: dockBottom }
+    ? { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', right: 'auto', bottom: 'auto' }
+    : { bottom: dockBottom, left: '50%', transform: 'translateX(-50%)', top: 'auto', right: 'auto' }
 
   const showInnerContent = !isIdle
 
@@ -748,13 +732,15 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         )}
       </AnimatePresence>
 
-      {/* Centering wrapper — utility classes own translateX so motion is free */}
-      <div className={wrapperPosClass} style={wrapperStyle}>
-      <motion.div
-        layout
+      {/* Shell — CSS transition animates width/height/border-radius symmetrically */}
+      <div className={wrapperClass} style={{ ...wrapperPos, transition: 'top 0.35s cubic-bezier(0.34,1.56,0.64,1), left 0.35s cubic-bezier(0.34,1.56,0.64,1), bottom 0.35s cubic-bezier(0.34,1.56,0.64,1), right 0.35s cubic-bezier(0.34,1.56,0.64,1), transform 0.35s cubic-bezier(0.34,1.56,0.64,1)' }}>
+      <div
         onClick={isIdle ? () => setMode(defaultMode) : undefined}
-        style={{ ...shellSize, ...shellBg, willChange: 'transform, width, height, border-radius' }}
-        transition={morphTransition}
+        style={{
+          width: shellW, height: shellH, borderRadius: shellR,
+          background: shellBgVal,
+          transition: 'width 0.35s cubic-bezier(0.34,1.56,0.64,1), height 0.35s cubic-bezier(0.34,1.56,0.64,1), border-radius 0.35s cubic-bezier(0.34,1.56,0.64,1), background 0.35s ease',
+        }}
         className={`ring-1 shadow-2xl overflow-hidden flex flex-col pb-safe ${
           isIdle
             ? 'ring-white/20 shadow-purple-500/30 cursor-pointer hover:scale-105 active:scale-95 transition-transform items-center justify-center'
@@ -780,9 +766,9 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         {/* Active state content. Wrapped in a single AnimatePresence so the
             whole inner UI fades in/out as one piece. layout="position" on
             children keeps internal reordering smooth. */}
-        <AnimatePresence mode="wait">
+        <AnimatePresence>
           {showInnerContent && (
-            <motion.div key="shell-content" layout="position"
+            <motion.div key="shell-content"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
@@ -832,7 +818,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             </motion.div>
           )}
         </AnimatePresence>
-      </motion.div>
+      </div>
       </div>
     </>
   )
