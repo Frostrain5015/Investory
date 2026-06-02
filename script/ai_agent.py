@@ -126,6 +126,7 @@ def build_system_prompt(kb: dict) -> str:
 - 连续工具调用上限 20 次。超出则基于已有数据分析，告知用户还缺什么
 - ⚠ 交易写入铁律（最高优先级）：凡用户要求买入/卖出/入金/出金/分红/删除/修改交易 → 参数齐全后只允许做一件事：调用 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction。严禁用任何文字代替函数调用——即使只说一句"好的请确认"也是严重违规。
 - ⚠ 交互卡片铁律：凡调用 ask_user 或任何 confirm_* 工具，UI 会生成选择/确认卡片；调用成功后不得再用正文复述卡片标题、条目、按钮或"请点击确认"，直接结束本轮等待用户操作。
+- ⚠ 跨市场消歧铁律：调用 search_stocks 后若返回多只同名股（如美股 XPEV 与港股 9868.HK 都叫"小鹏汽车"），必须立即调用 ask_user 让用户选择具体哪只，严禁自行决定或随机选一只。用户做出选择后，将该选择的 symbol/stockId 用于后续工具调用。
 
 【回复规则】
 - 每次不超过 3 句。涉及策略代码、风险展开、多空对比时可适度延长，但不堆词
@@ -332,9 +333,10 @@ def tool_search_stocks(query: str) -> dict:
     """Fuzzy search stocks by name or symbol, return id/symbol/name/market."""
     conn = get_db_conn()
     cur = conn.cursor()
+    clean = query.strip()
     cur.execute(
-        "SELECT id, symbol, name, market FROM stocks WHERE symbol LIKE %s OR name LIKE %s LIMIT 15",
-        (f"%{query}%", f"%{query}%")
+        "SELECT id, symbol, name, market FROM stocks WHERE symbol LIKE %s OR name LIKE %s OR REPLACE(name, ' ', '') LIKE %s LIMIT 15",
+        (f"%{clean}%", f"%{clean}%", f"%{clean}%")
     )
     rows = cur.fetchall()
     cur.close(); conn.close()
@@ -1147,7 +1149,7 @@ TOOLS = [
     }},
     # A: Data tools
     {"type": "function", "function": {
-        "name": "search_stocks", "description": "根据股票名称或代码模糊搜索，返回匹配的stockId、symbol、name、market。用户提到股票名但未给代码时必须先调用此工具获取stockId。",
+        "name": "search_stocks", "description": "根据股票名称或代码模糊搜索，返回匹配的stockId、symbol、name、market。同名股在A股、港股、美股可能同时返回（如小鹏汽车同时有美股XPEV和港股9868.HK）。用户提到股票名但未给代码时必须先调用此工具；返回多只同名股时参照跨市场消歧规则处理。",
         "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "搜索关键词：股票名或代码"}}, "required": ["query"]}
     }},
     {"type": "function", "function": {
