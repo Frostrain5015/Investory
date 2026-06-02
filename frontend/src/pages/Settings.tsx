@@ -131,6 +131,16 @@ export default function Settings() {
   const mcpUrl = `${window.location.origin}${BASE}/mcp`
   const [mcpToken, setMcpToken] = useState('')
   const [mcpGenerating, setMcpGenerating] = useState(false)
+  const [mcpHasActive, setMcpHasActive] = useState(false)
+
+  // 启动时查询已有 token 状态
+  useEffect(() => {
+    fetch(`${BASE}/api/mcp/tokens`, { credentials: 'include' })
+      .then(r => r.json()).then(d => {
+        const tokens = d.tokens as Array<{ revoked: number }> | undefined
+        if (tokens?.some(t => !t.revoked)) setMcpHasActive(true)
+      }).catch(() => {})
+  }, [])
 
   // ── Card status summaries ─────────────────────────────────────────────
   const themeLabel = { system: t.settings.themeSystem, light: t.settings.themeLight, dark: t.settings.themeDark }[pref]
@@ -175,7 +185,7 @@ export default function Settings() {
           <SettingCard delay={3}
             icon={<Plug className="w-5 h-5" />}
             title="MCP 接入"
-            summary={mcpToken ? '令牌已生成' : '未配置'}
+            summary={mcpHasActive ? '已连接' : '未配置'}
             onClick={() => setOpen('mcp')}
           />
         </div>
