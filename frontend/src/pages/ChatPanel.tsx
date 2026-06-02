@@ -700,14 +700,17 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                   {after && <div className="prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded"><ReactMarkdown remarkPlugins={[remarkGfm]}>{after}</ReactMarkdown></div>}
                 </>)
               })()}
-              {askData && (
-                <div className="mt-3 pt-3 border-t border-slate-200 space-y-1.5">
-                  <p className="text-xs text-slate-500">{askData.question}</p>
-                  {askData.options.map((o: string, i: number) => (
-                    <button key={i} onClick={() => { setAskData(null); send(o) }} className="block w-full text-left text-xs px-3 py-2 rounded-lg border border-slate-200 hover:bg-white hover:border-slate-300 active:bg-purple-50 active:border-purple-200 transition-colors">{o}</button>
-                  ))}
-                </div>
-              )}
+            </div>
+          </div>
+        )}
+        {askData && (
+          <div className="flex justify-start">
+            <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-slate-50 text-slate-700 border border-slate-100">
+              <p className="text-xs text-slate-500 mb-2">{askData.question}</p>
+              {askData.options.map((o: string, i: number) => (
+                <button key={i} onClick={() => { setAskData(null); send(o) }}
+                  className="block w-full text-left text-xs px-3 py-2 rounded-lg border border-slate-200 hover:bg-white hover:border-slate-300 active:bg-purple-50 active:border-purple-200 transition-colors mb-1 last:mb-0">{o}</button>
+              ))}
             </div>
           </div>
         )}
