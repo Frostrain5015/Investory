@@ -4,10 +4,32 @@ import { useAuth } from './use-auth'
 import { useNotificationBubble } from '@/components/NotificationBubble'
 import { BASE } from '@/services/api'
 
+interface HoldingSnapshot {
+  stockSymbol?: string
+  stockName?: string
+  marketValue?: number
+  marketValueCny?: number
+  totalInvested?: number
+}
+
+interface HoldingsResponse {
+  snapshots?: HoldingSnapshot[]
+}
+
+interface PortfolioAnalysisResult {
+  error?: string
+  portfolio_score?: number
+  top_holdings?: { name?: string }[]
+}
+
+function holdingValue(h: HoldingSnapshot) {
+  return h.marketValue ?? h.marketValueCny ?? h.totalInvested ?? 0
+}
+
 /**
  * On login, trigger portfolio factor analysis in the background.
- * Shows an immediate "analysing" bubble, then updates with results
- * when complete. Stores results in sessionStorage for instant RiskSection load.
+ * The "analysing" bubble is shown only after holdings exist, and delayed so it
+ * queues behind the greeting bubble. Results are cached for instant RiskSection load.
  */
 export function usePortfolioPreload() {
   const { authenticated, portfolioId } = useAuth()
@@ -19,66 +41,76 @@ export function usePortfolioPreload() {
     if (!authenticated || !portfolioId || triggered.current) return
     triggered.current = true
 
-    // Show immediate feedback
-    if (!location.pathname.startsWith('/research')) {
-      bubble.show({
-        title: '观澜 · 分析中',
-        message: '正在调用多因子引擎分析你的持仓，稍后为你呈现风控简报…',
-      })
-    }
+    let cancelled = false
+    let analysisDone = false
+    let analysingBubbleTimer: ReturnType<typeof setTimeout> | null = null
 
     ;(async () => {
       try {
-        // 1. Get holdings
         const holdRes = await fetch(`${BASE}/api/holdings`, { credentials: 'include' })
         if (!holdRes.ok) { console.error('[preload] holdings fetch failed:', holdRes.status); return }
-        const holdData = await holdRes.json()
+        const holdData = (await holdRes.json()) as HoldingsResponse
         const snaps = holdData.snapshots || []
         if (snaps.length === 0) { console.log('[preload] no holdings, skipping'); return }
 
-        // 2. Build payload
-        const totalVal = snaps.reduce((s: number, h: any) => s + (h.marketValue ?? h.marketValueCny ?? h.totalInvested ?? 0), 0)
-        const holdings = snaps.map((h: any) => ({
+        if (!location.pathname.startsWith('/research')) {
+          analysingBubbleTimer = setTimeout(() => {
+            if (cancelled || analysisDone) return
+            bubble.show({
+              title: '观澜 · 分析中',
+              message: '正在生成你的风控报告，稍后会把组合风险、优势持仓和薄弱点整理好。',
+            })
+          }, 2600)
+        }
+
+        const totalVal = snaps.reduce((sum, h) => sum + holdingValue(h), 0)
+        const holdings = snaps.map(h => ({
           symbol: h.stockSymbol,
           name: h.stockName || h.stockSymbol,
-          weight: totalVal > 0 ? ((h.marketValue ?? h.marketValueCny ?? h.totalInvested ?? 0) / totalVal * 100) : (100 / snaps.length),
+          weight: totalVal > 0 ? (holdingValue(h) / totalVal * 100) : (100 / snaps.length),
         }))
 
-        // 3. Call analysis API with timeout
         const controller = new AbortController()
-        const timeout = setTimeout(() => controller.abort(), 180000) // 3 min max
+        const timeout = setTimeout(() => controller.abort(), 180000)
         const res = await fetch(`${BASE}/api/stocksage/portfolio-analysis`, {
-          method: 'POST', credentials: 'include',
+          method: 'POST',
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ holdings }),
           signal: controller.signal,
         })
         clearTimeout(timeout)
+        analysisDone = true
+        if (analysingBubbleTimer) clearTimeout(analysingBubbleTimer)
         console.log('[preload] analysis response:', res.status)
 
         if (!res.ok) { console.error('[preload] analysis failed:', res.status); return }
-        const result = await res.json()
+        const result = (await res.json()) as PortfolioAnalysisResult
         if (result.error) { console.error('[preload] analysis error:', result.error); return }
 
-        // 4. Store in sessionStorage
         try { sessionStorage.setItem('investory_preloaded_analysis', JSON.stringify(result)) } catch {}
 
-        // 5. Show result bubble (only if user hasn't navigated to research)
         if (!location.pathname.startsWith('/research')) {
           const score = result.portfolio_score ?? 0
-          const emoji = score >= 60 ? '不错' : score >= 40 ? '还行' : '注意'
-          const topName = result.top_holdings?.[0]?.name || '—'
+          const tone = score >= 60 ? '状态不错' : score >= 40 ? '还算稳' : '需要留意'
+          const topName = result.top_holdings?.[0]?.name || '暂无'
           bubble.show({
             title: '观澜 · 风控简报',
-            message: `组合评分 ${score.toFixed(0)} 分，${emoji}！评分最高 ${topName}。点击查看完整分析 →`,
+            message: `组合评分 ${score.toFixed(0)} 分，${tone}。评分最高的是 ${topName}，可以查看完整分析。`,
             actionLabel: '查看风控报告',
             actionHref: '/research',
           })
-          // Dismiss the "analysing" bubble by replacing it (show replaces)
         }
-      } catch (e: any) {
-        if (e.name !== 'AbortError') console.error('[preload] failed:', e.message || e)
+      } catch (e: unknown) {
+        analysisDone = true
+        if (analysingBubbleTimer) clearTimeout(analysingBubbleTimer)
+        if (e instanceof Error && e.name !== 'AbortError') console.error('[preload] failed:', e.message)
       }
     })()
+
+    return () => {
+      cancelled = true
+      if (analysingBubbleTimer) clearTimeout(analysingBubbleTimer)
+    }
   }, [authenticated, portfolioId])
 }

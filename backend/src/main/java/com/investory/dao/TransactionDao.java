@@ -120,13 +120,13 @@ public class TransactionDao extends BaseDao {
      */
     public long insert(Transaction t) {
         return insert("""
-            INSERT INTO transactions (portfolio_id, stock_id, type, shares, price, fee, trade_date, note)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO transactions (portfolio_id, stock_id, type, shares, price, fee, trade_date, currency, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             t.getPortfolioId(), t.getStockId(), t.getType(),
             t.getShares(), t.getPrice(), t.getFee(),
             // LocalDate 转换为 java.sql.Date 以匹配 JDBC 参数类型
-            Date.valueOf(t.getTradeDate()), t.getNote());
+            Date.valueOf(t.getTradeDate()), t.getCurrency(), t.getNote());
     }
 
     /**
@@ -139,11 +139,11 @@ public class TransactionDao extends BaseDao {
      */
     public void update(Transaction t) {
         update("""
-            UPDATE transactions SET stock_id=?, type=?, shares=?, price=?, fee=?, trade_date=?, note=?
+            UPDATE transactions SET stock_id=?, type=?, shares=?, price=?, fee=?, trade_date=?, currency=?, note=?
             WHERE id=?
             """,
             t.getStockId(), t.getType(), t.getShares(), t.getPrice(), t.getFee(),
-            Date.valueOf(t.getTradeDate()), t.getNote(), t.getId());
+            Date.valueOf(t.getTradeDate()), t.getCurrency(), t.getNote(), t.getId());
     }
 
     /**

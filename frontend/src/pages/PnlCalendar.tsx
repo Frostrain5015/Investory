@@ -46,6 +46,10 @@ export default function PnlCalendar() {
     return s.includes('.') ? s.replace(/\.?0+$/, '') : s
   }
   function sign(v: number) { return v >= 0 ? '+' : '-' }
+  function pnlPct(pnl: number, total: number) {
+    const startValue = total - pnl
+    return startValue !== 0 ? (pnl / startValue) * 100 : 0
+  }
 
   /** replace {key} placeholders in a format string */
   function fmt(str: string, vars: Record<string, string | number>) {
@@ -105,9 +109,10 @@ export default function PnlCalendar() {
   const monthlyTotals = useMemo(() => {
     const amounts = new Array(12).fill(0)
     const lastDayTotal = new Array(12).fill(0)
+    const counts = new Array(12).fill(0)
     for (const [dateStr, pnl, total] of data) {
       const mIdx = parseInt(dateStr.substring(5, 7), 10) - 1
-      if (mIdx >= 0 && mIdx < 12) { amounts[mIdx] += pnl; lastDayTotal[mIdx] = total }
+      if (mIdx >= 0 && mIdx < 12) { amounts[mIdx] += pnl; lastDayTotal[mIdx] = total; counts[mIdx]++ }
     }
     return amounts.map((v, i) => {
       const amt = Math.round(v * 100) / 100
@@ -116,7 +121,7 @@ export default function PnlCalendar() {
         const sv = lastDayTotal[i] - v
         if (sv !== 0) pct = Math.round((v / sv) * 10000) / 100
       }
-      return { amt, pct, lastDayTotal: lastDayTotal[i] }
+      return { amt, pct, lastDayTotal: lastDayTotal[i], hasData: counts[i] > 0 }
     })
   }, [data, pnlDisplay])
 
@@ -147,7 +152,7 @@ export default function PnlCalendar() {
       const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
       const entry = dateMap.get(ds)
       if (!entry) { cells.push(0); continue }
-      cells.push(pnlDisplay === 'amount' ? entry.pnl : (entry.total > 0 ? (entry.pnl / entry.total) * 100 : 0))
+      cells.push(pnlDisplay === 'amount' ? entry.pnl : pnlPct(entry.pnl, entry.total))
     }
     return cells
   }, [dateMap, year, month, pnlDisplay])
@@ -213,7 +218,7 @@ export default function PnlCalendar() {
             <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-6 gap-3">
               {monthlyTotals.map((m, i) => {
                 const val = pnlDisplay === 'amount' ? m.amt : m.pct
-                const noData = m.lastDayTotal === 0
+                const noData = !m.hasData
                 const s = cellStyle(val, noData)
                 return (
                   <div key={i}
@@ -242,7 +247,7 @@ export default function PnlCalendar() {
                 if (val === null) return <div key={i} />
                 const dayOfMonth = i - (new Date(year, month, 1).getDay()) + 1
                 const ds = `${year}-${String(month + 1).padStart(2, '0')}-${String(dayOfMonth).padStart(2, '0')}`
-                const hasData = dateMap.has(ds) && val !== 0
+                const hasData = dateMap.has(ds)
                 const s = cellStyle(val, false)
                 return (
                   <div key={i}

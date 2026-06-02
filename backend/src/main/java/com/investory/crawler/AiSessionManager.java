@@ -53,6 +53,15 @@ public class AiSessionManager {
         if (s != null) {
             s.active = false;
             s.process.set(null);
+            synchronized (s.eventLog) { s.eventLog.clear(); }
+        }
+    }
+
+    public synchronized void finishSession(long userId) {
+        UserSession s = sessions.get(userId);
+        if (s != null) {
+            s.active = false;
+            s.process.set(null);
         }
     }
 
@@ -178,6 +187,14 @@ public class AiSessionManager {
     public boolean isActive(long userId) {
         UserSession s = sessions.get(userId);
         return s != null && s.active;
+    }
+
+    public boolean hasReplayEvents(long userId) {
+        UserSession s = sessions.get(userId);
+        if (s == null) return false;
+        synchronized (s.eventLog) {
+            return !s.eventLog.isEmpty();
+        }
     }
 
     private void emitToAll(UserSession s, String event, Object data) {

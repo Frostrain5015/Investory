@@ -8,6 +8,7 @@ import { BASE } from '@/services/api'
 interface ClosedItem {
   stock_id: number; symbol: string; name: string; market: string
   total_bought: number; total_sold: number; buy_cost: number; sell_proceeds: number; dividends: number
+  realizedPnl?: number
 }
 
 export default function ClosedPositions({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -70,7 +71,7 @@ export default function ClosedPositions({ open, onClose }: { open: boolean; onCl
                 {items.map(item => {
                   const ratio = item.total_bought > 0 ? item.total_sold / item.total_bought : 0
                   const allocatedCost = item.buy_cost * ratio
-                  const realized = item.sell_proceeds - allocatedCost + item.dividends
+                  const realized = item.realizedPnl ?? (item.sell_proceeds - allocatedCost + item.dividends)
                   return (
                     <tr key={item.stock_id} className="border-b border-slate-50">
                       <td className="px-3 py-2.5">

@@ -2,7 +2,7 @@ server.port=8443
 server.servlet.context-path=/investory
 
 # HTTPS
-server.ssl.key-store=classpath:keystore.p12
+server.ssl.key-store=${SSL_KEY_STORE:classpath:keystore.p12}
 server.ssl.key-store-password=${SSL_KEY_PASSWORD:investory}
 server.ssl.key-store-type=PKCS12
 server.ssl.key-alias=investory

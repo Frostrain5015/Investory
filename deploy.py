@@ -8,7 +8,7 @@ Usage:
 Refuses to restart the service if a market-data crawl is running.
 """
 
-import paramiko, os, sys, subprocess, time
+import paramiko, os, sys, subprocess, time, shlex
 
 HOST      = "116.62.179.231"
 USER      = "root"
@@ -17,6 +17,11 @@ LOCAL_SCRIPT_DIR = r"d:\Java Projects\investory\script"
 REMOTE_JAR = "/opt/investory/investory.jar"
 REMOTE_SCRIPT_DIR = "/opt/investory/script"
 SERVICE    = "investory"
+REMOTE_SSL_KEYSTORE = "/opt/investory/keystore.p12"
+REMOTE_SSL_ALIAS = "investory"
+REMOTE_SSL_PASSWORD = "investory"
+SYSTEMD_DROPIN_DIR = f"/etc/systemd/system/{SERVICE}.service.d"
+SYSTEMD_SSL_DROPIN = f"{SYSTEMD_DROPIN_DIR}/ssl.conf"
 
 CRAWL_PROC_PATTERN = "fetch_stocks.py"   # any active crawl shows this
 
@@ -45,6 +50,17 @@ def ssh_connect():
 def run(client, cmd):
     _, out, err = client.exec_command(cmd)
     return out.read().decode(errors="replace").strip()
+
+
+def run_checked(client, cmd):
+    _, out, err = client.exec_command(cmd)
+    stdout = out.read().decode(errors="replace").strip()
+    stderr = err.read().decode(errors="replace").strip()
+    status = out.channel.recv_exit_status()
+    if status != 0:
+        details = "\n".join(part for part in (stdout, stderr) if part)
+        raise RuntimeError(f"Remote command failed ({status}): {cmd}\n{details}")
+    return stdout
 
 
 def check_crawl_running(client):
@@ -95,6 +111,62 @@ def upload(client):
     print("Upload done.")
 
 
+def ensure_stable_ssl(client):
+    print("Ensuring stable HTTPS certificate ...")
+    keytool = run(client, "command -v keytool || true")
+    if not keytool:
+        print("ERROR: keytool not found on server; cannot create stable HTTPS keystore.")
+        client.close()
+        sys.exit(1)
+
+    keystore = shlex.quote(REMOTE_SSL_KEYSTORE)
+    password = shlex.quote(REMOTE_SSL_PASSWORD)
+    alias = shlex.quote(REMOTE_SSL_ALIAS)
+    exists = run(client, f"test -f {keystore} && echo yes || echo no")
+    if exists != "yes":
+        dname = shlex.quote(f"CN={HOST}, OU=Investory, O=Investory, L=Hangzhou, ST=Zhejiang, C=CN")
+        san = shlex.quote(f"SAN=ip:{HOST},dns:localhost")
+        run_checked(
+            client,
+            " ".join([
+                "keytool -genkeypair",
+                f"-alias {alias}",
+                "-keyalg RSA",
+                "-keysize 2048",
+                "-validity 3650",
+                "-storetype PKCS12",
+                f"-keystore {keystore}",
+                f"-storepass {password}",
+                f"-keypass {password}",
+                f"-dname {dname}",
+                f"-ext {san}",
+            ]),
+        )
+        print(f"Created {REMOTE_SSL_KEYSTORE}.")
+    else:
+        print(f"Using existing {REMOTE_SSL_KEYSTORE}.")
+
+    dropin = f"""[Service]
+Environment=SSL_KEY_STORE=file:{REMOTE_SSL_KEYSTORE}
+Environment=SSL_KEY_PASSWORD={REMOTE_SSL_PASSWORD}
+Environment=SERVER_SSL_KEY_STORE=file:{REMOTE_SSL_KEYSTORE}
+Environment=SERVER_SSL_KEY_STORE_PASSWORD={REMOTE_SSL_PASSWORD}
+"""
+    run_checked(
+        client,
+        f"mkdir -p {shlex.quote(SYSTEMD_DROPIN_DIR)} && "
+        f"cat > {shlex.quote(SYSTEMD_SSL_DROPIN)} <<'EOF'\n{dropin}EOF\n"
+        "systemctl daemon-reload",
+    )
+    fingerprint = run(
+        client,
+        f"LANG=C keytool -list -v -keystore {keystore} -storetype PKCS12 "
+        f"-storepass {password} -alias {alias} 2>/dev/null | grep 'SHA256:' | head -1",
+    )
+    if fingerprint:
+        print(f"HTTPS certificate {fingerprint}")
+
+
 def restart_service(client):
     print("Restarting service ...")
     run(client, f"systemctl restart {SERVICE}")
@@ -130,6 +202,7 @@ def main():
 
     # ── Upload & restart ────────────────────────────────────────────────
     client = ssh_connect()
+    ensure_stable_ssl(client)
     upload(client)
     restart_service(client)
     client.close()

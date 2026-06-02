@@ -119,4 +119,11 @@ public class DailyPortfolioValueDao extends BaseDao {
             v.getPortfolioId(), Date.valueOf(v.getSnapshotDate()),
             v.getTotalValue(), v.getTotalCost(), v.getDailyPnl());
     }
+
+    public void deleteFrom(long portfolioId, LocalDate from) {
+        update("""
+            DELETE FROM daily_portfolio_value
+            WHERE portfolio_id = ? AND snapshot_date >= ?
+            """, portfolioId, Date.valueOf(from));
+    }
 }

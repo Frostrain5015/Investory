@@ -3,13 +3,18 @@ import * as echarts from 'echarts'
 import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
 import { useT } from '@/i18n/I18nContext'
-import { BASE } from '@/services/api'
+import {
+  getPreloadedMarketNews,
+  getPreloadedMarketSnapshot,
+  getPreloadedWorldMap,
+  type PreloadMarketIndex,
+  type PreloadMarketIndicator,
+  type PreloadMarketNewsItem,
+} from '@/services/pagePreload'
 
-interface IndexData { name: string; flag: string; lat: number; lng: number; price: number; change: number; changePct: number; symbol: string; fetchedAt?: string }
-
-interface IndicatorData { name: string; symbol: string; price: number; change: number; changePct: number; fetchedAt?: string }
-
-interface NewsItem { title: string; source: string; url: string; summary: string; category: string; country_code: string; published_at: string }
+type IndexData = PreloadMarketIndex
+type IndicatorData = PreloadMarketIndicator
+type NewsItem = PreloadMarketNewsItem
 
 const LEADING = ['上证指数', '恒生指数', '标普500']
 
@@ -78,23 +83,27 @@ export default function Market() {
   const [loading, setLoading] = useState(true)
   const [news, setNews] = useState<NewsItem[]>([])
   const chartRef = useRef<HTMLDivElement>(null)
+  const loadedInitialRef = useRef(false)
 
   const timeLocale = lang === 'zh' ? 'zh-CN' : 'en-US'
 
-  const loadIndices = useCallback(() => {
-    fetch(`${BASE}/api/market/indices`, { credentials: 'include' })
-      .then(r => r.json()).then(data => {
+  const loadIndices = useCallback((force = false) => {
+    const shouldForce = force || loadedInitialRef.current
+    loadedInitialRef.current = true
+    getPreloadedMarketSnapshot({ force: shouldForce })
+      .then(data => {
         setIndices(data.indices || [])
         setIndicators(data.indicators || [])
       })
+      .catch(() => {})
       .finally(() => setLoading(false))
-    fetch(`${BASE}/api/market/news`, { credentials: 'include' })
-      .then(r => r.json()).then(data => setNews(Array.isArray(data) ? data : []))
+    getPreloadedMarketNews({ force: shouldForce })
+      .then(data => setNews(Array.isArray(data) ? data : []))
       .catch(() => {})
   }, [])
 
   useEffect(() => { loadIndices() }, [loadIndices])
-  const [lastRefresh] = useTimedRefresh(loadIndices)
+  const [lastRefresh] = useTimedRefresh(() => loadIndices(true))
 
   // Country region coloring based on leading index change
   const countryRegions = useMemo(() => {
@@ -158,10 +167,9 @@ export default function Market() {
     const onResize = () => chart.resize()
     window.addEventListener('resize', onResize)
 
-    fetch(`${import.meta.env.BASE_URL}world.json`)
-      .then(r => r.json())
+    getPreloadedWorldMap()
       .then(geoJson => {
-        echarts.registerMap('world', geoJson)
+        echarts.registerMap('world', geoJson as Parameters<typeof echarts.registerMap>[1])
         chart.setOption({
           backgroundColor: 'transparent',
           tooltip: {

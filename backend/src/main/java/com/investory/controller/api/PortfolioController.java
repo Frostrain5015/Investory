@@ -230,8 +230,10 @@ public class PortfolioController {
         cash = cash != null ? cash : BigDecimal.ZERO;
 
         // 今日盈亏：将所有持仓的当日涨跌金额（changeToday 字段）求和
-        BigDecimal todayPnl = BigDecimal.ZERO;
-        for (HoldingSnapshot s : snaps) if (s.getChangeToday() != null) todayPnl = todayPnl.add(s.getChangeToday());
+        DailyValue latestDaily = analysisService.getTodayValue(pid);
+        BigDecimal todayPnl = latestDaily != null && latestDaily.getDailyPnl() != null
+                ? latestDaily.getDailyPnl()
+                : BigDecimal.ZERO;
 
         Map<String, Object> r = new LinkedHashMap<>();
         BigDecimal totalMV = analysisService.totalMarketValue(snaps);
@@ -254,7 +256,9 @@ public class PortfolioController {
         r.put("todayPnl", todayPnl);
         // todayPnlPct：今日涨跌幅 = 今日盈亏 / 昨日总市值 × 100
         // 昨日总市值 = 当前总市值 - 今日盈亏；分母为 0 时返回 0 避免除零
-        BigDecimal prev = analysisService.totalMarketValue(snaps).subtract(todayPnl);
+        BigDecimal prev = latestDaily != null && latestDaily.getTotalValue() != null
+                ? latestDaily.getTotalValue().subtract(todayPnl)
+                : totalMV.subtract(todayPnl);
         r.put("todayPnlPct", prev.compareTo(BigDecimal.ZERO) != 0 ? todayPnl.divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")).setScale(2, java.math.RoundingMode.HALF_UP) : BigDecimal.ZERO);
 
         // allocation：仓位分布数据，每项含股票名称、代码、市值、货币，用于饼图展示

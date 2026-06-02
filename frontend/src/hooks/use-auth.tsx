@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { BASE, checkSession, login as apiLogin, register as apiRegister } from '@/services/api'
+import { preloadPostLoginPages } from '@/services/pagePreload'
 import type { SessionResponse } from '@/types'
 
 interface AuthState {
@@ -48,6 +49,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener('investory:auth-expired', onExpired)
     return () => window.removeEventListener('investory:auth-expired', onExpired)
   }, [])
+
+  useEffect(() => {
+    if (!authenticated) return
+    preloadPostLoginPages(isAdmin)
+  }, [authenticated, isAdmin])
 
   async function login(username: string, password: string) {
     try {

@@ -10,246 +10,278 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
-/**
- * 投资组合分析服务
- *
- * <p>负责对投资组合的整体财务指标进行汇总计算与查询，核心功能包括：
- * <ul>
- *   <li>聚合持仓快照数据：总市值、总投入、总分红、总未实现盈亏</li>
- *   <li>计算综合收益率：整体收益率、持仓收益率（含分红）、累计收益率</li>
- *   <li>查询每日组合净值历史</li>
- *   <li>计算已实现盈亏（卖出盈亏 + 历史分红）</li>
- *   <li>查询已平仓股票列表</li>
- * </ul>
- *
- * <p>所有金额均以人民币（CNY）为单位（由上游 {@link HoldingService} 完成币种转换）。
- */
 @Service
 public class PortfolioAnalysisService {
 
-    @Autowired private DailyPortfolioValueDao dailyPortfolioValueDao; // 每日组合净值 DAO
-    @Autowired private JdbcTemplate jdbc;                              // JDBC 模板，用于已实现盈亏等复杂查询
+    private static final BigDecimal ZERO = BigDecimal.ZERO;
+    private static final BigDecimal HUNDRED = new BigDecimal("100");
 
-    /**
-     * 计算投资组合持仓快照的总市值（CNY）。
-     *
-     * @param snapshots 持仓快照列表
-     * @return 所有持仓市值之和；若列表为空则返回 0
-     */
+    @Autowired private DailyPortfolioValueDao dailyPortfolioValueDao;
+    @Autowired private JdbcTemplate jdbc;
+
     public BigDecimal totalMarketValue(List<HoldingSnapshot> snapshots) {
-        return snapshots.stream()
-                .map(HoldingSnapshot::getMarketValue)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal total = ZERO;
+        for (HoldingSnapshot snapshot : snapshots) total = total.add(nz(snapshot.getMarketValue()));
+        return total;
     }
 
-    /**
-     * 计算投资组合的累计已收分红总额（CNY）。
-     *
-     * <p>遍历快照列表，过滤掉 dividends 为 null 的项，求和。
-     *
-     * @param snapshots 持仓快照列表
-     * @return 所有持仓累计分红之和；若列表为空则返回 0
-     */
     public BigDecimal totalDividends(List<HoldingSnapshot> snapshots) {
-        BigDecimal sum = BigDecimal.ZERO;
-        for (HoldingSnapshot s : snapshots) {
-            if (s.getTotalDividends() != null) sum = sum.add(s.getTotalDividends());
-        }
-        return sum;
+        BigDecimal total = ZERO;
+        for (HoldingSnapshot snapshot : snapshots) total = total.add(nz(snapshot.getTotalDividends()));
+        return total;
     }
 
-    /**
-     * 计算投资组合的总投入成本（CNY）。
-     *
-     * @param snapshots 持仓快照列表
-     * @return 所有持仓累计投入之和；若列表为空则返回 0
-     */
     public BigDecimal totalInvested(List<HoldingSnapshot> snapshots) {
-        return snapshots.stream()
-                .map(HoldingSnapshot::getTotalInvested)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal total = ZERO;
+        for (HoldingSnapshot snapshot : snapshots) total = total.add(nz(snapshot.getTotalInvested()));
+        return total;
     }
 
-    /**
-     * 计算投资组合当前持仓的总未实现盈亏（CNY）。
-     *
-     * <p>未实现盈亏 = 当前市值 - 持仓成本，尚未通过卖出操作锁定。
-     *
-     * @param snapshots 持仓快照列表
-     * @return 所有持仓未实现盈亏之和；若列表为空则返回 0
-     */
     public BigDecimal totalUnrealizedPnl(List<HoldingSnapshot> snapshots) {
-        return snapshots.stream()
-                .map(HoldingSnapshot::getUnrealizedPnl)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        BigDecimal total = ZERO;
+        for (HoldingSnapshot snapshot : snapshots) total = total.add(nz(snapshot.getUnrealizedPnl()));
+        return total;
     }
 
-    /**
-     * 计算投资组合的整体收益率（%），即当前未实现盈亏相对于总投入的比率。
-     *
-     * <p>公式：{@code 收益率 = 总未实现盈亏 / 总投入 × 100}
-     *
-     * @param snapshots 持仓快照列表
-     * @return 收益率百分比（保留 2 位小数）；总投入为 0 时返回 0
-     */
     public BigDecimal overallReturnPct(List<HoldingSnapshot> snapshots) {
         BigDecimal invested = totalInvested(snapshots);
-        if (invested.compareTo(BigDecimal.ZERO) == 0) return BigDecimal.ZERO;
+        if (invested.compareTo(ZERO) == 0) return ZERO;
         return totalUnrealizedPnl(snapshots)
                 .divide(invested, 4, RoundingMode.HALF_UP)
-                .multiply(new BigDecimal("100"))
+                .multiply(HUNDRED)
                 .setScale(2, RoundingMode.HALF_UP);
     }
 
-    /**
-     * 查询指定投资组合在日期范围内的每日净值历史记录。
-     *
-     * @param portfolioId 投资组合 ID
-     * @param from        起始日期（含）
-     * @param to          结束日期（含）
-     * @return 按日期升序排列的每日净值列表
-     */
     public List<DailyValue> getDailyValues(long portfolioId, LocalDate from, LocalDate to) {
         return dailyPortfolioValueDao.findRange(portfolioId, from, to);
     }
 
-    /**
-     * 获取指定投资组合最近一次每日快照（通常为今日或最近一个交易日）。
-     *
-     * <p>Today's P&L from the latest daily snapshot.
-     *
-     * @param portfolioId 投资组合 ID
-     * @return 最新的 {@link DailyValue} 记录；若尚无记录则返回 {@code null}
-     */
     public DailyValue getTodayValue(long portfolioId) {
         return dailyPortfolioValueDao.findLatest(portfolioId);
     }
 
-    /**
-     * 计算累计收益率（%）。
-     *
-     * <p>Cumulative return rate = cumulativePnl / totalInvested * 100
-     * <p>公式：{@code 累计收益率 = 累计盈亏 / 总投入 × 100}
-     *
-     * @param cumulativePnl  累计盈亏金额（CNY）
-     * @param totalInvested  总投入金额（CNY）
-     * @return 累计收益率百分比（保留 2 位小数）；总投入为 0 时返回 0
-     */
     public BigDecimal cumulativeReturnRate(BigDecimal cumulativePnl, BigDecimal totalInvested) {
-        if (totalInvested.compareTo(BigDecimal.ZERO) == 0) return BigDecimal.ZERO;
+        if (totalInvested.compareTo(ZERO) == 0) return ZERO;
         return cumulativePnl.divide(totalInvested, 6, RoundingMode.HALF_UP)
-                .multiply(new BigDecimal("100"))
+                .multiply(HUNDRED)
                 .setScale(2, RoundingMode.HALF_UP);
     }
 
-    /**
-     * 计算持仓综合收益率（%），包含未实现盈亏和已收分红。
-     *
-     * <p>Holding-only return rate. Return = (MV + Div - Invested) / Invested * 100
-     * <p>公式：{@code 持仓收益率 = (总市值 + 累计分红 - 总投入) / 总投入 × 100}
-     * <p>将分红收益纳入计算，更真实地反映持仓的综合回报。
-     *
-     * @param totalMarketValue 当前持仓总市值（CNY）
-     * @param totalInvested    总投入成本（CNY）
-     * @param totalDividends   累计已收分红总额（CNY）
-     * @return 持仓综合收益率百分比（保留 2 位小数）；总投入为 0 时返回 0
-     */
     public BigDecimal holdingReturnRate(BigDecimal totalMarketValue, BigDecimal totalInvested, BigDecimal totalDividends) {
-        if (totalInvested.compareTo(BigDecimal.ZERO) == 0) return BigDecimal.ZERO;
-        // 综合收益 = 市值 + 分红 - 投入（未实现盈亏 + 分红收益）
-        BigDecimal totalReturn = totalMarketValue.add(totalDividends).subtract(totalInvested);
-        return totalReturn.divide(totalInvested, 6, RoundingMode.HALF_UP)
-                .multiply(new BigDecimal("100"))
+        if (totalInvested.compareTo(ZERO) == 0) return ZERO;
+        return totalMarketValue.add(totalDividends).subtract(totalInvested)
+                .divide(totalInvested, 6, RoundingMode.HALF_UP)
+                .multiply(HUNDRED)
                 .setScale(2, RoundingMode.HALF_UP);
     }
 
-    /**
-     * 计算投资组合的已实现盈亏总额（CNY）。
-     *
-     * <p>Realized P&L from sells + all dividends ever received
-     * <p>已实现盈亏来源：
-     * <ol>
-     *   <li>每只有过卖出操作的股票：卖出所得 - 按比例分摊的买入成本</li>
-     *   <li>所有历史分红（已实际收到，与是否清仓无关）</li>
-     * </ol>
-     *
-     * <p>分摊成本算法：
-     * <pre>
-     *   分摊比例 = 已卖出股数 / 总买入股数
-     *   分摊成本 = 总买入成本 × 分摊比例
-     *   单股卖出盈亏 = 卖出所得 - 分摊成本
-     * </pre>
-     *
-     * @param portfolioId 投资组合 ID
-     * @return 已实现盈亏总额（CNY），可为负值（亏损）
-     */
     public BigDecimal totalRealizedPnl(long portfolioId) {
-        // Per-stock: sell proceeds - allocated buy cost + dividends
-        // 第1步：通过 SQL 按股票聚合买入数量、卖出数量、买入总成本、卖出所得及分红
-        //        HAVING total_sold > 0 过滤出有卖出记录的股票
-        List<Map<String, Object>> rows = jdbc.queryForList(
-            "SELECT t.stock_id, " +
-            "  COALESCE(SUM(CASE WHEN t.type='BUY' THEN t.shares ELSE 0 END),0) AS total_bought, " +
-            "  COALESCE(SUM(CASE WHEN t.type='SELL' THEN t.shares ELSE 0 END),0) AS total_sold, " +
-            "  COALESCE(SUM(CASE WHEN t.type='BUY' THEN t.shares*t.price+t.fee ELSE 0 END),0) AS buy_cost, " +
-            "  COALESCE(SUM(CASE WHEN t.type='SELL' THEN t.shares*t.price-t.fee ELSE 0 END),0) AS sell_proceeds, " +
-            "  COALESCE((SELECT SUM(d.total_amount) FROM dividends d WHERE d.portfolio_id=t.portfolio_id AND d.stock_id=t.stock_id),0) AS dividends " +
-            "FROM transactions t WHERE t.portfolio_id=? AND t.type IN ('BUY','SELL') " +
-            "GROUP BY t.stock_id HAVING total_sold > 0",
-            portfolioId);
+        Map<String, BigDecimal> rates = loadRates();
+        Map<Long, PositionState> positions = new HashMap<>();
+        BigDecimal realized = ZERO;
 
-        BigDecimal realized = BigDecimal.ZERO; // 累计已实现盈亏
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+            SELECT t.stock_id, t.type, t.shares, t.price, t.fee,
+                   COALESCE(s.currency, 'CNY') AS currency
+            FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
+            WHERE t.portfolio_id = ? AND t.type IN ('BUY', 'SELL')
+            ORDER BY t.stock_id, t.trade_date, t.id
+            """, portfolioId);
 
         for (Map<String, Object> row : rows) {
-            BigDecimal totalBought   = (BigDecimal) row.get("total_bought");   // 历史累计买入总股数
-            BigDecimal totalSold     = (BigDecimal) row.get("total_sold");     // 历史累计卖出总股数
-            BigDecimal buyCost       = (BigDecimal) row.get("buy_cost");       // 历史累计买入总成本（含手续费）
-            BigDecimal sellProceeds  = (BigDecimal) row.get("sell_proceeds");  // 历史累计卖出所得（扣手续费）
-            BigDecimal dividends     = (BigDecimal) row.get("dividends");      // 历史累计分红总额
+            Object stockIdValue = row.get("stock_id");
+            if (!(stockIdValue instanceof Number stockNumber)) continue;
+            long stockId = stockNumber.longValue();
+            PositionState state = positions.computeIfAbsent(stockId, id -> new PositionState());
+            String currency = text(row.get("currency"), "CNY");
+            BigDecimal shares = decimal(row.get("shares"));
+            BigDecimal price = decimal(row.get("price"));
+            BigDecimal fee = decimal(row.get("fee"));
 
-            // Allocated cost for sold shares
-            // 第2步：计算已卖出股份对应的分摊买入成本
-            //        ratio = 已卖出股数 / 总买入股数，表示卖出部分占全部买入的比例
-            BigDecimal ratio = totalBought.compareTo(BigDecimal.ZERO) > 0
-                ? totalSold.divide(totalBought, 8, RoundingMode.HALF_UP) : BigDecimal.ZERO;
-            BigDecimal allocatedCost = buyCost.multiply(ratio); // 分摊到已卖出股份的买入成本
-
-            // Realized on sells = proceeds - allocated cost
-            // 第3步：卖出盈亏 = 卖出所得 - 分摊买入成本
-            realized = realized.add(sellProceeds).subtract(allocatedCost);
-
-            // All dividends are realized
-            // 第4步：所有分红均视为已实现收益，累加
-            realized = realized.add(dividends);
+            if ("BUY".equals(row.get("type"))) {
+                BigDecimal cost = shares.multiply(price).add(fee);
+                state.shares = state.shares.add(shares);
+                state.costBasis = state.costBasis.add(cost);
+                state.currency = currency;
+            } else if ("SELL".equals(row.get("type"))) {
+                BigDecimal proceeds = shares.multiply(price).subtract(fee);
+                BigDecimal soldCost = state.costForSale(shares);
+                realized = realized.add(proceeds.subtract(soldCost).multiply(rateFor(currency, rates)));
+                state.shares = state.shares.subtract(shares);
+                state.costBasis = state.costBasis.subtract(soldCost);
+                state.currency = currency;
+                if (state.shares.compareTo(ZERO) <= 0) {
+                    state.shares = ZERO;
+                    state.costBasis = ZERO;
+                }
+            }
         }
-        return realized;
+
+        List<Map<String, Object>> dividends = jdbc.queryForList("""
+            SELECT d.total_amount, COALESCE(s.currency, 'CNY') AS currency
+            FROM dividends d LEFT JOIN stocks s ON d.stock_id = s.id
+            WHERE d.portfolio_id = ?
+            """, portfolioId);
+        for (Map<String, Object> row : dividends) {
+            String currency = text(row.get("currency"), "CNY");
+            realized = realized.add(decimal(row.get("total_amount")).multiply(rateFor(currency, rates)));
+        }
+
+        return realized.setScale(2, RoundingMode.HALF_UP);
     }
 
-    /**
-     * 查询投资组合中已完全平仓的股票列表（买入总量 = 卖出总量，且均 > 0）。
-     *
-     * <p>返回的每条记录包含：stock_id、symbol、name、market、total_bought、total_sold、
-     * buy_cost、sell_proceeds、dividends，供前端"历史持仓"页面展示使用。
-     *
-     * @param portfolioId 投资组合 ID
-     * @return 已平仓股票的原始数据列表，每条记录为列名→值的 Map；若无平仓记录则返回空列表
-     */
     public List<Map<String, Object>> getClosedPositions(long portfolioId) {
-        // HAVING total_bought > 0 AND total_bought = total_sold 确保是完全平仓（非部分卖出）
-        return jdbc.queryForList(
-            "SELECT t.stock_id, s.symbol, s.name, s.market, " +
-            "  COALESCE(SUM(CASE WHEN t.type='BUY' THEN t.shares ELSE 0 END),0) AS total_bought, " +
-            "  COALESCE(SUM(CASE WHEN t.type='SELL' THEN t.shares ELSE 0 END),0) AS total_sold, " +
-            "  COALESCE(SUM(CASE WHEN t.type='BUY' THEN t.shares*t.price+t.fee ELSE 0 END),0) AS buy_cost, " +
-            "  COALESCE(SUM(CASE WHEN t.type='SELL' THEN t.shares*t.price-t.fee ELSE 0 END),0) AS sell_proceeds, " +
-            "  COALESCE((SELECT SUM(d.total_amount) FROM dividends d WHERE d.portfolio_id=t.portfolio_id AND d.stock_id=t.stock_id),0) AS dividends " +
-            "FROM transactions t JOIN stocks s ON t.stock_id=s.id " +
-            "WHERE t.portfolio_id=? AND t.type IN ('BUY','SELL') " +
-            "GROUP BY t.stock_id, s.symbol, s.name, s.market " +
-            "HAVING total_bought > 0 AND total_bought = total_sold",
-            portfolioId);
+        Map<String, BigDecimal> rates = loadRates();
+        Map<Long, ClosedPositionState> states = new LinkedHashMap<>();
+
+        List<Map<String, Object>> txRows = jdbc.queryForList("""
+            SELECT t.stock_id, t.type, t.shares, t.price, t.fee,
+                   s.symbol, s.name, s.market, COALESCE(s.currency, 'CNY') AS currency
+            FROM transactions t JOIN stocks s ON t.stock_id = s.id
+            WHERE t.portfolio_id = ? AND t.type IN ('BUY', 'SELL')
+            ORDER BY t.stock_id, t.trade_date, t.id
+            """, portfolioId);
+        for (Map<String, Object> row : txRows) {
+            long stockId = ((Number) row.get("stock_id")).longValue();
+            ClosedPositionState state = states.computeIfAbsent(stockId, id -> new ClosedPositionState());
+            state.stockId = stockId;
+            state.symbol = text(row.get("symbol"), "");
+            state.name = text(row.get("name"), "");
+            state.market = text(row.get("market"), "");
+            state.currency = text(row.get("currency"), "CNY");
+            BigDecimal rate = rateFor(state.currency, rates);
+            BigDecimal shares = decimal(row.get("shares"));
+            BigDecimal price = decimal(row.get("price"));
+            BigDecimal fee = decimal(row.get("fee"));
+
+            if ("BUY".equals(row.get("type"))) {
+                BigDecimal cost = shares.multiply(price).add(fee);
+                state.shares = state.shares.add(shares);
+                state.costBasis = state.costBasis.add(cost);
+                state.totalBought = state.totalBought.add(shares);
+                state.buyCost = state.buyCost.add(cost.multiply(rate));
+            } else if ("SELL".equals(row.get("type"))) {
+                BigDecimal proceeds = shares.multiply(price).subtract(fee);
+                BigDecimal soldCost = state.costForSale(shares);
+                state.shares = state.shares.subtract(shares);
+                state.costBasis = state.costBasis.subtract(soldCost);
+                state.totalSold = state.totalSold.add(shares);
+                state.sellProceeds = state.sellProceeds.add(proceeds.multiply(rate));
+                state.realizedPnl = state.realizedPnl.add(proceeds.subtract(soldCost).multiply(rate));
+                if (state.shares.compareTo(ZERO) <= 0) {
+                    state.shares = ZERO;
+                    state.costBasis = ZERO;
+                }
+            }
+        }
+
+        List<Map<String, Object>> divRows = jdbc.queryForList("""
+            SELECT d.stock_id, d.total_amount, COALESCE(s.currency, 'CNY') AS currency
+            FROM dividends d JOIN stocks s ON d.stock_id = s.id
+            WHERE d.portfolio_id = ?
+            """, portfolioId);
+        for (Map<String, Object> row : divRows) {
+            long stockId = ((Number) row.get("stock_id")).longValue();
+            ClosedPositionState state = states.get(stockId);
+            if (state == null) continue;
+            BigDecimal amount = decimal(row.get("total_amount")).multiply(rateFor(text(row.get("currency"), "CNY"), rates));
+            state.dividends = state.dividends.add(amount);
+            state.realizedPnl = state.realizedPnl.add(amount);
+        }
+
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (ClosedPositionState state : states.values()) {
+            if (state.totalBought.compareTo(ZERO) <= 0 || state.totalSold.compareTo(ZERO) <= 0 || state.shares.compareTo(ZERO) != 0) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("stock_id", state.stockId);
+            row.put("symbol", state.symbol);
+            row.put("name", state.name);
+            row.put("market", state.market);
+            row.put("total_bought", state.totalBought.setScale(4, RoundingMode.HALF_UP));
+            row.put("total_sold", state.totalSold.setScale(4, RoundingMode.HALF_UP));
+            row.put("buy_cost", state.buyCost.setScale(2, RoundingMode.HALF_UP));
+            row.put("sell_proceeds", state.sellProceeds.setScale(2, RoundingMode.HALF_UP));
+            row.put("dividends", state.dividends.setScale(2, RoundingMode.HALF_UP));
+            row.put("realizedPnl", state.realizedPnl.setScale(2, RoundingMode.HALF_UP));
+            result.add(row);
+        }
+        return result;
+    }
+
+    private Map<String, BigDecimal> loadRates() {
+        Map<String, BigDecimal> rates = new HashMap<>();
+        rates.put("CNY", BigDecimal.ONE);
+        try {
+            for (Map<String, Object> row : jdbc.queryForList("SELECT currency, rate FROM exchange_rates")) {
+                String currency = text(row.get("currency"), "CNY");
+                BigDecimal rate = decimal(row.get("rate"));
+                if (rate.compareTo(ZERO) > 0) rates.put(currency, BigDecimal.ONE.divide(rate, 8, RoundingMode.HALF_UP));
+            }
+        } catch (Exception ignored) {
+        }
+        return rates;
+    }
+
+    private BigDecimal rateFor(String currency, Map<String, BigDecimal> rates) {
+        return rates.getOrDefault(currency, BigDecimal.ONE);
+    }
+
+    private BigDecimal nz(BigDecimal value) {
+        return value != null ? value : ZERO;
+    }
+
+    private BigDecimal decimal(Object value) {
+        if (value == null) return ZERO;
+        if (value instanceof BigDecimal bd) return bd;
+        if (value instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
+        return new BigDecimal(value.toString());
+    }
+
+    private String text(Object value, String fallback) {
+        if (value == null) return fallback;
+        String text = value.toString();
+        return text.isBlank() ? fallback : text;
+    }
+
+    private static final class PositionState {
+        BigDecimal shares = ZERO;
+        BigDecimal costBasis = ZERO;
+        String currency = "CNY";
+
+        BigDecimal costForSale(BigDecimal sellShares) {
+            if (shares.compareTo(ZERO) <= 0 || costBasis.compareTo(ZERO) <= 0) return ZERO;
+            if (sellShares.compareTo(shares) >= 0) return costBasis;
+            return costBasis.multiply(sellShares).divide(shares, 8, RoundingMode.HALF_UP);
+        }
+    }
+
+    private static final class ClosedPositionState {
+        long stockId;
+        String symbol = "";
+        String name = "";
+        String market = "";
+        String currency = "CNY";
+        BigDecimal shares = ZERO;
+        BigDecimal costBasis = ZERO;
+        BigDecimal totalBought = ZERO;
+        BigDecimal totalSold = ZERO;
+        BigDecimal buyCost = ZERO;
+        BigDecimal sellProceeds = ZERO;
+        BigDecimal dividends = ZERO;
+        BigDecimal realizedPnl = ZERO;
+
+        BigDecimal costForSale(BigDecimal sellShares) {
+            if (shares.compareTo(ZERO) <= 0 || costBasis.compareTo(ZERO) <= 0) return ZERO;
+            if (sellShares.compareTo(shares) >= 0) return costBasis;
+            return costBasis.multiply(sellShares).divide(shares, 8, RoundingMode.HALF_UP);
+        }
     }
 }

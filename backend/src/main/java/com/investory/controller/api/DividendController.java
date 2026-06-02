@@ -66,6 +66,9 @@ public class DividendController {
         long pid = getPortfolioId(req);
         Dividend old = dividendDao.findById(id);
         if (old == null || old.getPortfolioId() != pid) return Map.of("error", "Not found");
+        LocalDate oldDate = old.getRecordDate();
+        Long oldStockId = old.getStockId();
+        LocalDate newDate = LocalDate.parse(recordDate);
         Holding h = holdingDao.findByPortfolioAndStock(pid, stockId);
         BigDecimal sh = h != null ? h.getTotalShares() : old.getSharesHeld();
         Dividend d = new Dividend(); d.setId(id); d.setPortfolioId(pid); d.setStockId(stockId);
@@ -73,7 +76,11 @@ public class DividendController {
         d.setTotalAmount(amountPerShare.multiply(sh)); d.setRecordDate(LocalDate.parse(recordDate));
         dividendDao.update(d);
         holdingService.rebuildHolding(pid, stockId);
-        valueCalculator.backfillFrom(pid, LocalDate.parse(recordDate));
+        if (oldStockId != null && oldStockId > 0 && oldStockId.longValue() != stockId) {
+            holdingService.rebuildHolding(pid, oldStockId);
+        }
+        LocalDate fromDate = oldDate != null && oldDate.isBefore(newDate) ? oldDate : newDate;
+        valueCalculator.backfillFrom(pid, fromDate);
         return Map.of("status", "ok");
     }
 
@@ -84,6 +91,7 @@ public class DividendController {
         if (d != null && d.getPortfolioId() == pid) {
             dividendDao.delete(id);
             holdingService.rebuildHolding(pid, d.getStockId());
+            if (d.getRecordDate() != null) valueCalculator.backfillFrom(pid, d.getRecordDate());
         }
         return Map.of("status", "ok");
     }

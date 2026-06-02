@@ -189,7 +189,7 @@ public class AiApiController {
                 }
                 if (!script.exists()) {
                     session.emitError(uid, "AI 引擎脚本未找到");
-                    session.clearSession(uid);
+                    session.finishSession(uid);
                     return;
                 }
                 File scriptDir = script.getParentFile();
@@ -350,7 +350,7 @@ public class AiApiController {
             } catch (Exception e) {
                 session.emitError(uid, e.getMessage());
             } finally {
-                session.clearSession(uid);
+                session.finishSession(uid);
             }
         });
 
@@ -433,7 +433,7 @@ public class AiApiController {
         response.setHeader("X-Accel-Buffering", "no");
         response.setHeader("Cache-Control", "no-cache");
         long uid = userIdOf(req);
-        if (!session.isActive(uid)) {
+        if (!session.isActive(uid) && !session.hasReplayEvents(uid)) {
             SseEmitter err = new SseEmitter();
             try { err.send(SseEmitter.event().name("error").data(Map.of("msg", "无活跃对话"))); } catch (IOException ignored) {}
             err.complete();
@@ -526,14 +526,24 @@ public class AiApiController {
                 "SELECT COUNT(*) FROM holdings WHERE portfolio_id = ? AND total_shares > 0",
                 Integer.class, portfolioId);
             int n = count != null ? count : 0;
-            if (n == 0) return Map.of("show", false);
 
-            int hour = java.time.LocalTime.now().getHour();
-            String greeting = hour < 6 ? "夜深了" : hour < 12 ? "早安" : hour < 18 ? "午安" : "晚上好";
+            java.time.ZoneId beijing = java.time.ZoneId.of("Asia/Shanghai");
+            int hour = java.time.LocalTime.now(beijing).getHour();
+            String greeting = hour >= 5 && hour < 9 ? "早上好"
+                : hour >= 9 && hour < 11 ? "上午好"
+                : hour >= 11 && hour < 14 ? "中午好"
+                : hour >= 14 && hour < 18 ? "下午好"
+                : hour >= 18 && hour < 23 ? "晚上好"
+                : "欢迎回来";
 
             StringBuilder msg = new StringBuilder();
-            msg.append(greeting).append("。你目前持有 ").append(n).append(" 只标的");
-            if (!movers.isEmpty()) {
+            msg.append(greeting).append("。");
+            if (n > 0) {
+                msg.append("你目前持有 ").append(n).append(" 只标的");
+            } else {
+                msg.append("你还没有持仓数据");
+            }
+            if (n > 0 && !movers.isEmpty()) {
                 Map<String, Object> top = movers.get(0);
                 Number chg = (Number) top.get("chg_pct");
                 String name = String.valueOf(top.get("name"));
@@ -544,7 +554,7 @@ public class AiApiController {
                        .append(" ").append(dir).append(String.format("%.1f%%", c));
                 }
             }
-            msg.append("。需要我现在帮你看看什么吗？");
+            msg.append("。可以先看世界市场、检查组合风险，或挑一只持仓做深度分析。");
 
             return Map.of(
                 "show", true,

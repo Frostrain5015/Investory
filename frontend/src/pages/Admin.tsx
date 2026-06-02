@@ -7,13 +7,20 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Database, Play, RefreshCw, Terminal, Globe, LogIn, UserX, Clock, Square, Pause, PlayCircle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { BASE } from '@/services/api'
+import {
+  getPreloadedAdminCrawlHistory,
+  getPreloadedAdminStatus,
+  getPreloadedAdminUsers,
+  type PreloadAdminCrawlHistory,
+  type PreloadAdminDbStatus,
+  type PreloadAdminUser,
+} from '@/services/pagePreload'
 
-interface MarketStat { market: string; stock_count: number; price_rows: number; latest_date: string; earliest_date: string }
-interface DbStatus { markets: MarketStat[]; totals: { stock_count: number; price_rows: number }; tables: { total_mb: number }[] }
+type DbStatus = PreloadAdminDbStatus
 interface ProgressData { current: number; total: number; pct: number; name: string }
 interface SseEvent { event: string; msg?: string; current?: number; total?: number; pct?: number; name?: string; market?: string }
-interface UserRow { id: number; username: string; email: string | null; created_at: string; txn_count: number; portfolio_count: number }
-interface CrawlHistoryRow { market: string; started_at: string; ended_at: string; rows_written: number; stocks_failed: number; status: string }
+type UserRow = PreloadAdminUser
+type CrawlHistoryRow = PreloadAdminCrawlHistory
 
 const MARKET_FLAGS: Record<string, string> = { A: 'cn', HK: 'hk', US: 'us', IDX: 'un' }
 
@@ -96,24 +103,22 @@ export default function Admin() {
     IDX: t.admin.indices,
   }
 
-  const fetchStatus = useCallback(() => {
+  const fetchStatus = useCallback((force = false) => {
     setLoadingStatus(true)
-    fetch(`${BASE}/api/admin/status`, { credentials: 'include' })
-      .then(r => r.json())
+    getPreloadedAdminStatus({ force })
       .then(setStatus)
+      .catch(() => {})
       .finally(() => setLoadingStatus(false))
   }, [])
 
-  const fetchUsers = useCallback(() => {
-    fetch(`${BASE}/api/admin/users`, { credentials: 'include' })
-      .then(r => r.json())
+  const fetchUsers = useCallback((force = false) => {
+    getPreloadedAdminUsers({ force })
       .then(setUsers)
       .catch(() => {})
   }, [])
 
-  const fetchCrawlHistory = useCallback(() => {
-    fetch(`${BASE}/api/admin/crawl-history`, { credentials: 'include' })
-      .then(r => r.json())
+  const fetchCrawlHistory = useCallback((force = false) => {
+    getPreloadedAdminCrawlHistory({ force })
       .then(setCrawlHistory)
       .catch(() => {})
   }, [])
@@ -276,7 +281,7 @@ export default function Admin() {
       gEsRef = null
       cs.setEsRef(null)
       resetCrawlState()
-      fetchStatus()
+      fetchStatus(true)
     })
     eventSource.addEventListener('stopped', (e) => {
       if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
@@ -331,7 +336,7 @@ export default function Admin() {
     const res = await fetch(`${BASE}/api/admin/users/${userId}`, { method: 'DELETE', credentials: 'include' })
     const data = await res.json()
     if (data.error) { toast(data.error, false); return }
-    fetchUsers()
+    fetchUsers(true)
   }
 
   const crawlStatusLabel = (s: string) => {
@@ -363,7 +368,7 @@ export default function Admin() {
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
             <Globe className="w-3.5 h-3.5" />{t.admin.allMarketCrawl}
           </button>
-          <button onClick={() => { fetchStatus(); fetchUsers(); fetchCrawlHistory() }} disabled={loadingStatus}
+          <button onClick={() => { fetchStatus(true); fetchUsers(true); fetchCrawlHistory(true) }} disabled={loadingStatus}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-100 text-slate-600 text-xs font-medium hover:bg-slate-200 transition-colors">
             <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />{t.common.refresh}
           </button>
@@ -427,7 +432,7 @@ export default function Admin() {
                     onClick={async () => {
                       if (!(await confirm(t.admin.confirmClearHistory))) return
                       await fetch(`${BASE}/api/admin/crawl-history`, { method: 'DELETE', credentials: 'include' })
-                      fetchCrawlHistory()
+                      fetchCrawlHistory(true)
                     }}
                     className="h-6 px-2 rounded-md bg-red-50 text-red-500 hover:bg-red-100 text-[10px] font-medium transition-colors">
                     {t.admin.clearHistory}

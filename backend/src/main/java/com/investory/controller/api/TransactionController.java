@@ -192,6 +192,7 @@ public class TransactionController {
             // ON DUPLICATE KEY UPDATE 确保同币种只有一行余额记录，不重复插入
             jdbc.update("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?", pid, currency, amount, amount);
             Transaction t = buildTx(pid, null, type, shares, BigDecimal.ZERO, BigDecimal.ZERO, tradeDate, note);
+            t.setCurrency(currency);
             long id = transactionDao.insert(t);
             // 划转影响资金曲线，从交易日起回填组合净值历史
             valueCalculator.backfillFrom(pid, LocalDate.parse(tradeDate));
@@ -208,6 +209,7 @@ public class TransactionController {
         // 根据交易类型对应增减现金余额
         applyCash(pid, cur, type, shares, price, feeVal);
         Transaction t = buildTx(pid, stockId, type, shares, price, feeVal, tradeDate, note);
+        t.setCurrency(cur);
         long id = transactionDao.insert(t);
         // 重新计算该股票的持仓（合并所有买卖记录，更新均价和总股数）
         holdingService.rebuildHolding(pid, stockId);
@@ -250,6 +252,9 @@ public class TransactionController {
         Transaction old = transactionDao.findById(id);
         // 校验规则：记录不存在或不属于当前组合，拒绝修改
         if (old == null || old.getPortfolioId() != pid) return ResponseEntity.badRequest().body(Map.of("error", "Not found"));
+        LocalDate oldTradeDate = old.getTradeDate();
+        LocalDate newTradeDate = LocalDate.parse(tradeDate);
+        Long oldStockId = old.getStockId();
         // 先回滚旧交易对现金余额的影响，使余额恢复到交易前状态
         reverseCash(pid, old);
         // 货币优先取请求参数，否则从关联股票取，最终兜底为 CNY
@@ -260,12 +265,16 @@ public class TransactionController {
         if ("TRANSFER_OUT".equals(type) && !checkCash(pid, cur, shares)) { applyCashDirect(pid, old); return ResponseEntity.badRequest().body(cashError(pid, cur, shares)); }
         // 按新交易数据重新应用现金变更
         applyCash(pid, cur, type, shares, price, feeVal);
-        Transaction t = buildTx(pid, stockId, type, shares, price, feeVal, tradeDate, note); t.setId(id);
+        Transaction t = buildTx(pid, stockId, type, shares, price, feeVal, tradeDate, note); t.setId(id); t.setCurrency(cur);
         transactionDao.update(t);
         // 重新计算该股票的持仓聚合数据
-        holdingService.rebuildHolding(pid, stockId);
+        if (stockId > 0) holdingService.rebuildHolding(pid, stockId);
+        if (oldStockId != null && oldStockId > 0 && oldStockId.longValue() != stockId) {
+            holdingService.rebuildHolding(pid, oldStockId);
+        }
         // 从（可能更早的）交易日重新回填净值曲线，确保历史数据一致性
-        valueCalculator.backfillFrom(pid, LocalDate.parse(tradeDate));
+        LocalDate fromDate = oldTradeDate != null && oldTradeDate.isBefore(newTradeDate) ? oldTradeDate : newTradeDate;
+        valueCalculator.backfillFrom(pid, fromDate);
         return ResponseEntity.ok(Map.of("status", "ok"));
     }
 
@@ -297,6 +306,7 @@ public class TransactionController {
             transactionDao.delete(id);
             // 若该交易关联了股票，重新计算对应股票的持仓数据
             if (old.getStockId() != null && old.getStockId() > 0) holdingService.rebuildHolding(pid, old.getStockId());
+            if (old.getTradeDate() != null) valueCalculator.backfillFrom(pid, old.getTradeDate());
         });
         return Map.of("status", "ok");
     }
@@ -319,6 +329,7 @@ public class TransactionController {
     private Transaction buildTx(long pid, Long sid, String type, BigDecimal sh, BigDecimal pr, BigDecimal fee, String date, String note) {
         Transaction t = new Transaction(); t.setPortfolioId(pid); t.setStockId(sid); t.setType(type);
         t.setShares(sh); t.setPrice(pr); t.setFee(fee); t.setTradeDate(LocalDate.parse(date)); t.setNote(note);
+        t.setCurrency("CNY");
         return t;
     }
 
