@@ -1199,10 +1199,11 @@ TOOLS = [
         }, "required": []}
     }},
     {"type": "function", "function": {
-        "name": "ask_user", "description": "需要用户做选择时【必须调用】。场景：多个回测结果选哪个、同名多市场股票选哪个（如招商银行600036.SH vs 03968.HK）、确认是否执行操作。提供2-4个选项。调用后UI会生成交互按钮，严禁用文字代替此工具列出选项。",
+        "name": "ask_user", "description": "需要用户做选择时【必须调用】。场景：多个回测结果选哪个、同名多市场股票选哪个（如招商银行600036.SH vs 03968.HK）、确认是否执行操作。提供2-4个选项。调用后UI会生成交互按钮和「其他」输入框，严禁用文字代替此工具列出选项。",
         "parameters": {"type": "object", "properties": {
             "question": {"type": "string", "description": "问用户的问题"},
-            "options": {"type": "array", "items": {"type": "string"}, "description": "选项列表，2-4个"}
+            "options": {"type": "array", "items": {"type": "string"}, "description": "选项列表，2-4个"},
+            "multiSelect": {"type": "boolean", "description": "是否允许多选，默认false"}
         }, "required": ["question", "options"]}
     }},
     {"type": "function", "function": {
@@ -1423,11 +1424,10 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
     elif name == "forget":
         return {"status": tool_forget(user_id, args.get("keyword", ""))}
     elif name == "ask_user":
-        q = {"question": args.get("question", ""), "options": args.get("options", [])}
+        is_multi = args.get("multiSelect", False)
+        q = {"question": args.get("question", ""), "options": args.get("options", []), "multiSelect": bool(is_multi)}
         print(f"[ASK] {json.dumps(q, ensure_ascii=False)}", flush=True)
         # Block waiting for the user's answer from Java via stdin.
-        # The frontend renders the ask card, the user clicks an option,
-        # Java writes it to this process's stdin.
         answer = sys.stdin.readline().strip()
         return {"selected": answer}
     elif name == "get_portfolio":

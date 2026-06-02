@@ -214,7 +214,9 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     return tl
   }
   const pushTimeline = () => setStreamTimeline([...timelineRef.current])
-  const [askData, setAskData] = useState<{ question: string; options: string[] } | null>(null)
+  const [askData, setAskData] = useState<{ question: string; options: string[]; multiSelect: boolean } | null>(null)
+  const [askChecked, setAskChecked] = useState<Set<number>>(new Set())
+  const [askOther, setAskOther] = useState('')
   const [confirmData, setConfirmData] = useState<ConfirmData | null>(null)
   const [confirmStatus, setConfirmStatus] = useState<ConfirmStatus | null>(null)
   const [confirmResult, setConfirmResult] = useState('')
@@ -325,7 +327,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     setInput('')
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
-    setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; setAskData(null); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
+    setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; setAskData(null); setAskChecked(new Set()); setAskOther(''); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
     try {
       const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, deepThink, webSearch }) })
       if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
@@ -334,7 +336,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       es.addEventListener('strategy', (e) => { const d = JSON.parse(e.data); pendingStrategy.current = { name: d.name, desc: d.description, code: d.code } })
       es.addEventListener('portfolio_card', (e) => { pendingCard.current = { type: 'portfolio', data: JSON.parse(e.data) } })
       es.addEventListener('picks_card', (e) => { pendingCard.current = { type: 'picks', data: JSON.parse(e.data) } })
-      es.addEventListener('ask', (e) => { const d = JSON.parse(e.data); setAskData({ question: d.question, options: d.options || [] }) })
+      es.addEventListener('ask', (e) => { const d = JSON.parse(e.data); setAskData({ question: d.question, options: d.options || [], multiSelect: d.multiSelect || false }); setAskChecked(new Set()); setAskOther('') })
       es.addEventListener('confirm', (e) => {
         try { const raw = JSON.parse(e.data); const d = raw.data || raw; const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d; if (parsed?.items?.length > 0) { setConfirmData(parsed); setConfirmStatus('pending'); setConfirmResult('') } } catch {}
       })
@@ -705,21 +707,85 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         )}
         {askData && (
           <div className="flex justify-start">
-            <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-slate-50 text-slate-700 border border-slate-100">
-              <p className="text-xs text-slate-500 mb-2">{askData.question}</p>
-              {askData.options.map((o: string, i: number) => (
-                <button key={i} onClick={async () => {
-                  setAskData(null)
-                  await fetch(`${BASE}/api/ai/answer`, {
+            <div className="max-w-[85%] rounded-2xl px-4 py-3 text-sm bg-slate-50 text-slate-700 border border-slate-100 space-y-2">
+              <p className="text-xs text-slate-500 font-medium">{askData.question}</p>
+              {askData.multiSelect && (
+                <p className="text-[10px] text-slate-400 -mt-1">可多选</p>
+              )}
+              {askData.options.map((o: string, i: number) => {
+                const checked = askChecked.has(i)
+                const toggle = () => {
+                  if (askData.multiSelect) {
+                    const next = new Set(askChecked)
+                    if (next.has(i)) next.delete(i); else next.add(i)
+                    setAskChecked(next)
+                  } else {
+                    // Single select: submit immediately
+                    setAskData(null); setAskChecked(new Set())
+                    fetch(`${BASE}/api/ai/answer`, {
+                      method: 'POST', credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ answer: o }),
+                    })
+                  }
+                }
+                return (
+                  <button key={i} onClick={toggle}
+                    className={`block w-full text-left text-xs px-3 py-2 rounded-lg border transition-colors mb-1 last:mb-0
+                      ${checked
+                        ? 'bg-purple-50 border-purple-300 text-purple-800'
+                        : 'border-slate-200 hover:bg-white hover:border-slate-300 active:bg-purple-50 active:border-purple-200'}`}>
+                    {askData.multiSelect && (
+                      <span className={`inline-flex items-center justify-center w-4 h-4 rounded border mr-2 text-[10px] align-middle
+                        ${checked ? 'bg-purple-500 border-purple-500 text-white' : 'border-slate-300'}`}>
+                        {checked ? '✓' : ''}
+                      </span>
+                    )}
+                    {o}
+                  </button>
+                )
+              })}
+              {/* "Other" text input — always available */}
+              <div className="flex items-center gap-2 pt-1">
+                <input type="text" value={askOther} onChange={e => setAskOther(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && askOther.trim()) {
+                    setAskData(null); setAskOther(''); setAskChecked(new Set())
+                    fetch(`${BASE}/api/ai/answer`, {
+                      method: 'POST', credentials: 'include',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ answer: askOther.trim() }),
+                    })
+                  }}}
+                  placeholder="其他（自定义回答）…"
+                  className="flex-1 h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-200 placeholder:text-slate-400" />
+                <button disabled={!askOther.trim()} onClick={() => {
+                  if (!askOther.trim()) return
+                  setAskData(null); setAskOther(''); setAskChecked(new Set())
+                  fetch(`${BASE}/api/ai/answer`, {
                     method: 'POST', credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ answer: o }),
+                    body: JSON.stringify({ answer: askOther.trim() }),
                   })
-                  // The SSE stream continues automatically — Python reads
-                  // the answer from stdin and the AI picks up where it left off.
                 }}
-                  className="block w-full text-left text-xs px-3 py-2 rounded-lg border border-slate-200 hover:bg-white hover:border-slate-300 active:bg-purple-50 active:border-purple-200 transition-colors mb-1 last:mb-0">{o}</button>
-              ))}
+                  className="h-8 px-3 rounded-lg bg-slate-200 dark:bg-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-600 disabled:opacity-40 transition-colors shrink-0">
+                  发送
+                </button>
+              </div>
+              {/* Multi-select submit button */}
+              {askData.multiSelect && askChecked.size > 0 && (
+                <button onClick={() => {
+                  const selected = askData.options.filter((_, i) => askChecked.has(i)).join('、')
+                  setAskData(null); setAskChecked(new Set()); setAskOther('')
+                  fetch(`${BASE}/api/ai/answer`, {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ answer: selected }),
+                  })
+                }}
+                  className="w-full h-8 rounded-lg bg-purple-500 text-white text-xs font-medium hover:bg-purple-600 transition-colors">
+                  确认选择（{askChecked.size} 项）
+                </button>
+              )}
             </div>
           </div>
         )}
