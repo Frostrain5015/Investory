@@ -82,7 +82,15 @@ def _is_trivial_chitchat(text: str) -> bool:
     t = text.strip().lower()
     if not t or len(t) > 16:
         return False
-    return any(t == k or t.startswith(k) for k in _CHITCHAT_TOKENS)
+    # Single-char tokens (like "好","嗯","哦") are exact-match only to avoid
+    # false positives like "好股票推荐有哪些" matching "好" via startswith.
+    # Multi-char tokens (like "你好","谢谢") use startswith for loose matching.
+    for k in _CHITCHAT_TOKENS:
+        if t == k:
+            return True
+        if len(k) >= 2 and t.startswith(k):
+            return True
+    return False
 
 def _is_complex_query(messages: list) -> bool:
     """Return True (→ full model) for anything but obvious chit-chat.
@@ -158,7 +166,7 @@ def build_system_prompt(kb: dict) -> str:
 
 【工具调用规则】
 - ⚠ 数据铁律（最高优先级，覆盖所有数据类问题）：凡涉及任何具体数据——个股行情/评分/基本面、持仓、盈亏、交易、回测、市场环境、自选、新闻——必须先调用对应工具拿真实数据再回答。持仓画像和长期记忆只作背景参考，严禁据此直接给出价格、涨跌、评分、权重等数字结论。宁可多调一次工具，也不要凭记忆或画像编造数字。不确定该用哪个工具时，先 search_stocks / get_portfolio 起步。
-- ⚠ 策略生成铁律：用户要求写策略/生成策略/构建策略/设计策略时，第一轮对话必须且只能调用 generate_strategy 工具，不得输出任何文字。错误示范：先说"好的我来生成"再调用工具。正确示范：直接调用工具，参数包含完整Python代码。工具调用成功后，再简短告知用户"已生成"。
+- ⚠ 策略生成铁律：用户要求写策略/生成策略/构建策略/设计策略时，第一轮对话必须且只能调用 generate_strategy 工具，不得输出任何文字。错误示范：先说"好的我来生成"再调用工具。正确示范：直接调用工具，参数包含完整Python代码。工具调用成功后也不得说话——前端会自动展示策略卡片。
 - 用户提到某个策略时，先用 list_strategies 查找，再 get_strategy 获取完整规则
 - 用户问组合问题时：先调 get_portfolio 拿持仓；判断市场环境用 get_market_regime；个股深度分析用 get_factor_scores
 - 用户表达出明确且稳定的投资偏好时（例如"我不碰科技股""我做日内T+0""我只买宽基ETF""我能承受最大20%回撤"），主动调用 remember 工具保存到长期记忆
@@ -416,9 +424,10 @@ def tool_get_stock_price(symbol: str) -> dict:
 
 def tool_get_pnl_history(portfolio_id: int, days: int = 90) -> dict:
     """获取组合盈亏历史"""
+    days = max(1, min(days, 365))  # guard against negative/zero that breaks SQL
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT snapshot_date, total_value, daily_pnl FROM daily_portfolio_value WHERE portfolio_id=%s AND snapshot_date >= DATE_SUB(CURDATE(), INTERVAL %s DAY) ORDER BY snapshot_date LIMIT %s", (portfolio_id, min(days,365), MAX_PNL_ROWS))
+    cur.execute("SELECT snapshot_date, total_value, daily_pnl FROM daily_portfolio_value WHERE portfolio_id=%s AND snapshot_date >= DATE_SUB(CURDATE(), INTERVAL %s DAY) ORDER BY snapshot_date LIMIT %s", (portfolio_id, days, MAX_PNL_ROWS))
     rows = cur.fetchall()
     cur.close(); conn.close()
     if not rows: return {"error": "暂无组合净值数据"}
@@ -1566,7 +1575,7 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
     elif name == "confirm_remove_watchlist":
         return _confirm_remove_watchlist({**args, "_user_id": user_id})
     elif name == "confirm_create_transaction":
-        return _confirm_create(args)
+        return _confirm_create(args, user_id)
     elif name == "confirm_update_transaction":
         return _confirm_update(args)
     elif name == "confirm_delete_transaction":
@@ -1608,17 +1617,41 @@ def _resolve_stock_id(value) -> int:
             conn.close()
     return 0
 
-def _confirm_create(args: dict) -> dict:
+def _confirm_create(args: dict, user_id: int = 0) -> dict:
     """Build a single create-transaction confirmation."""
     t = args.get("type", "BUY")
     sid = _resolve_stock_id(args.get("stockId", 0))
+    shares = float(args.get("shares", 0) or 0)
+
+    # Validate SELL: check holdings exist and have enough shares
+    if t == "SELL" and sid > 0 and user_id > 0:
+        try:
+            conn = get_db_conn()
+            cur = conn.cursor()
+            cur.execute("""SELECT p.id FROM portfolios p WHERE p.user_id = %s LIMIT 1""", (user_id,))
+            row = cur.fetchone()
+            pid = row[0] if row else 0
+            if pid > 0:
+                cur.execute("SELECT total_shares FROM holdings WHERE portfolio_id = %s AND stock_id = %s", (pid, sid))
+                hrow = cur.fetchone()
+                held = float(hrow[0]) if hrow else 0
+                if held < shares:
+                    cur.close(); conn.close()
+                    return {"error": f"持仓不足: 持有{held}股, 试图卖出{shares}股"}
+                if held <= 0:
+                    cur.close(); conn.close()
+                    return {"error": "未持有该股票，无法卖出"}
+            cur.close(); conn.close()
+        except Exception:
+            pass  # best-effort; backend will also validate
+
     label_parts = []
     if t == "DIV":
         label_parts.append(f"分红 {args.get('shares', 0)}/股")
     elif t in ("TRANSFER_IN", "TRANSFER_OUT"):
         label_parts.append(f"{'转入' if t == 'TRANSFER_IN' else '转出'} {args.get('shares', 0)} {args.get('currency', 'CNY')}")
     else:
-        label_parts.append(f"{'买入' if t == 'BUY' else '卖出'} {args.get('shares', 0)}股")
+        label_parts.append(f"{'买入' if t == 'BUY' else '卖出'} {shares}股")
     if args.get("tradeDate"):
         label_parts.append(f"日期 {args['tradeDate']}")
     trade_date = args.get("tradeDate") or _today_str()
@@ -1629,7 +1662,7 @@ def _confirm_create(args: dict) -> dict:
         "note": args.get("note", ""),
     })
     if t == "DIV":
-        body["amountPerShare"] = args.get("shares", 0)
+        body["amountPerShare"] = args.get("amountPerShare") or args.get("shares", 0)
     # Resolve stock name for display
     stock_name = args.get("stockName", "")
     if not stock_name and sid > 0:
@@ -1766,12 +1799,29 @@ def _confirm_bulk_update(args: dict) -> dict:
     return _emit_confirm(items, f"批量编辑 {len(items)} 笔交易")
 
 def _confirm_bulk_delete(args: dict) -> dict:
-    """Build a bulk delete confirmation."""
+    """Build a bulk delete confirmation — resolves DIV vs transaction endpoints."""
     ids = args.get("ids", [])
-    items = [{
-        "action": "delete", "label": f"删除交易 #{tid}",
-        "endpoint": f"/api/transactions/{tid}", "method": "DELETE", "body": {},
-    } for tid in ids]
+    conn = get_db_conn()
+    items = []
+    for tid in ids:
+        endpoint = f"/api/transactions/{tid}"  # default
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT type FROM transactions WHERE id = %s", (tid,))
+            row = cur.fetchone()
+            if row is None:
+                # Check dividends table
+                cur.execute("SELECT 1 FROM dividends WHERE id = %s", (tid,))
+                if cur.fetchone():
+                    endpoint = f"/api/dividends/{tid}"
+            cur.close()
+        except Exception:
+            pass
+        items.append({
+            "action": "delete", "label": f"删除交易 #{tid}",
+            "endpoint": endpoint, "method": "DELETE", "body": {},
+        })
+    conn.close()
     return _emit_confirm(items, f"批量删除 {len(items)} 笔交易")
 
 # ── Watchlist tools ────────────────────────────────────────────────
