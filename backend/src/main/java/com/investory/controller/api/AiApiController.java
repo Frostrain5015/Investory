@@ -50,6 +50,21 @@ public class AiApiController {
         this.executor = executor;
     }
 
+    /**
+     * Feed the user's answer back to the running Python process.
+     * Called when the user clicks an ask_user option card in the frontend.
+     * The Python process is blocking on stdin waiting for this answer.
+     */
+    @PostMapping("/answer")
+    public Map<String, Object> answer(@RequestBody Map<String, Object> body,
+                                       HttpServletRequest req) {
+        long uid = userIdOf(req);
+        String answer = body.get("answer") instanceof String ? (String) body.get("answer") : "";
+        if (answer.isBlank()) return Map.of("error", "answer required");
+        boolean ok = session.writeAnswer(uid, answer);
+        return Map.of("ok", ok);
+    }
+
     @PostMapping("/chat")
     public Map<String, Object> chat(@RequestBody Map<String, Object> body,
                                      HttpServletRequest req) {

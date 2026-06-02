@@ -708,7 +708,16 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-sm bg-slate-50 text-slate-700 border border-slate-100">
               <p className="text-xs text-slate-500 mb-2">{askData.question}</p>
               {askData.options.map((o: string, i: number) => (
-                <button key={i} onClick={() => { setAskData(null); send(o) }}
+                <button key={i} onClick={async () => {
+                  setAskData(null)
+                  await fetch(`${BASE}/api/ai/answer`, {
+                    method: 'POST', credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ answer: o }),
+                  })
+                  // The SSE stream continues automatically — Python reads
+                  // the answer from stdin and the AI picks up where it left off.
+                }}
                   className="block w-full text-left text-xs px-3 py-2 rounded-lg border border-slate-200 hover:bg-white hover:border-slate-300 active:bg-purple-50 active:border-purple-200 transition-colors mb-1 last:mb-0">{o}</button>
               ))}
             </div>

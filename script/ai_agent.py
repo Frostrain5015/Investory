@@ -1425,7 +1425,11 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
     elif name == "ask_user":
         q = {"question": args.get("question", ""), "options": args.get("options", [])}
         print(f"[ASK] {json.dumps(q, ensure_ascii=False)}", flush=True)
-        return {"answered": "已向用户展示选项，等待选择"}
+        # Block waiting for the user's answer from Java via stdin.
+        # The frontend renders the ask card, the user clicks an option,
+        # Java writes it to this process's stdin.
+        answer = sys.stdin.readline().strip()
+        return {"selected": answer}
     elif name == "get_portfolio":
         return tool_get_portfolio(portfolio_id)
     elif name == "get_stock_metrics":
@@ -1931,15 +1935,39 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             for t in sorted_tools
         ]})
 
-        # Short-circuit: ask_user requires immediate return before any parallel work
+        # Short-circuit: ask_user must run alone (it blocks on stdin waiting for user answer).
+        # After it returns, the answer is a normal tool_result — continue the loop.
         ask_tool = next((t for t in sorted_tools if t["name"] == "ask_user"), None)
         if ask_tool:
             try: ask_args = json.loads(ask_tool["args"])
             except: ask_args = {}
-            execute_tool(ask_tool["name"], ask_args, portfolio_id, user_id)
+            result_json = execute_tool(ask_tool["name"], ask_args, portfolio_id, user_id)
             formatted.append({"role": "tool", "tool_call_id": ask_tool["id"],
-                               "content": json.dumps({"answered": "已向用户展示选项，等待选择"})})
-            print("\n[DONE]", flush=True); return
+                               "content": result_json})
+            # Remove ask_user from this round so remaining tools can run in the next
+            # iteration (or just let them execute now — ask_user was alone so no-op)
+            sorted_tools = [t for t in sorted_tools if t["name"] != "ask_user"]
+            if not sorted_tools:
+                # No other tools this round — stream next response
+                stream = _stream(formatted)
+                tool_calls = {}
+                has_tools = False
+                for chunk in stream:
+                    if not chunk.choices: continue
+                    delta = chunk.choices[0].delta
+                    if delta.tool_calls:
+                        has_tools = True
+                        for tc in delta.tool_calls:
+                            idx = tc.index
+                            if idx not in tool_calls:
+                                tool_calls[idx] = {"id": "", "name": "", "args": ""}
+                            if tc.id: tool_calls[idx]["id"] = tc.id
+                            if tc.function:
+                                if tc.function.name: tool_calls[idx]["name"] += tc.function.name
+                                if tc.function.arguments: tool_calls[idx]["args"] += tc.function.arguments
+                    else:
+                        _emit_delta(delta)
+                continue  # back to while has_tools
 
         # Split tools: those within limit run in parallel, excess get error.
         # web_search has a tighter cap — after 3 searches the model should
@@ -2100,16 +2128,19 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
             "content": [b for b in (_block_to_dict(c) for c in msg.content) if b is not None],
         })
 
-        # Short-circuit: ask_user returns immediately
+        # Short-circuit: ask_user blocks on stdin until the answer arrives.
+        # After it returns, the answer is injected as tool_result and the loop continues.
         ask_tool = next((tu for tu in tool_uses if tu.name == "ask_user"), None)
         if ask_tool:
-            execute_tool(ask_tool.name, ask_tool.input, portfolio_id, user_id)
+            result_json = execute_tool(ask_tool.name, ask_tool.input, portfolio_id, user_id)
             formatted.append({"role": "user", "content": [{
                 "type": "tool_result", "tool_use_id": ask_tool.id,
-                "content": json.dumps({"answered": "已向用户展示选项，等待选择"}),
+                "content": result_json,
             }]})
-            print("\n[DONE]", flush=True)
-            return
+            # Remove ask_user so remaining tools can run normally this round
+            tool_uses = [tu for tu in tool_uses if tu.name != "ask_user"]
+            if not tool_uses:
+                continue  # no other tools → next API call
 
         # Split runnable vs capped by MAX_TOOL_CALLS. web_search has its own cap.
         runnable, capped = [], []

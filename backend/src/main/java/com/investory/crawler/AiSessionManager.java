@@ -55,6 +55,24 @@ public class AiSessionManager {
         get(userId).process.set(p);
     }
 
+    /**
+     * Write the user's answer back to the Python process stdin.
+     * Called from the answer endpoint when the user clicks an ask_user option.
+     */
+    public boolean writeAnswer(long userId, String answer) {
+        UserSession s = sessions.get(userId);
+        if (s == null) return false;
+        Process p = s.process.get();
+        if (p == null || !p.isAlive()) return false;
+        try {
+            p.getOutputStream().write((answer + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            p.getOutputStream().flush();
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /** Forcibly terminate the running generation for this user, if any. */
     public boolean cancel(long userId) {
         UserSession s = sessions.get(userId);
