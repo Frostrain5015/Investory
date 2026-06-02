@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, Database } from 'lucide-react'
+import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, Database, BookOpen } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -170,9 +170,14 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
         }
         if (step.kind === 'skill') {
           return (
-            <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-1.5 text-[11px] text-indigo-600 py-1">
-              <span className="text-base">📖</span>
-              <span className="font-medium">{step.displayName}</span>
+            <motion.div key={i} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="mb-1.5 flex items-start gap-2 text-[11px]">
+              <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-indigo-400" />
+              <div className="flex-1 flex items-center gap-1.5 text-indigo-600">
+                <BookOpen className="w-3 h-3" />
+                <span className="font-medium">{step.displayName}</span>
+                <Check className="w-3 h-3 opacity-70" />
+              </div>
             </motion.div>
           )
         }

@@ -301,7 +301,7 @@ def tool_get_factor_scores(symbol: str) -> dict:
     try:
         result = subprocess.run(
             ["python3", bridge, "factor_breakdown", "--symbol", symbol],
-            capture_output=True, text=True, timeout=120, cwd=os.path.dirname(bridge))
+            capture_output=True, text=True, timeout=80, cwd=os.path.dirname(bridge))
         for line in result.stdout.split("\n"):
             if line.startswith("RESULT:"):
                 data = _json.loads(line[7:].strip())
@@ -671,7 +671,7 @@ def tool_run_backtest(strategy_id: int = None, code: str = None,
     try:
         proc = subprocess.run(
             ["python3", str(engine), "--input", tmp_path],
-            capture_output=True, text=True, timeout=120, cwd=str(SCRIPT_DIR))
+            capture_output=True, text=True, timeout=110, cwd=str(SCRIPT_DIR))
         output_file = SCRIPT_DIR / f"backtest_output_{result_id}.json"
         if output_file.exists():
             data = _json.loads(output_file.read_text(encoding="utf-8"))
@@ -891,7 +891,7 @@ def tool_get_portfolio_analysis(portfolio_id: int) -> dict:
     try:
         result = subprocess.run(
             ["python3", bridge, "portfolio_analysis", "--holdings", f"@{tmp_path}"],
-            capture_output=True, text=True, timeout=300, cwd=os.path.dirname(bridge))
+            capture_output=True, text=True, timeout=110, cwd=os.path.dirname(bridge))
         for line in result.stdout.split("\n"):
             if line.startswith("RESULT:"):
                 data = _json.loads(line[7:].strip())
@@ -930,7 +930,7 @@ def tool_get_market_regime() -> dict:
     try:
         result = subprocess.run(
             ["python3", bridge, "regime_status"],
-            capture_output=True, text=True, timeout=60, cwd=os.path.dirname(bridge))
+            capture_output=True, text=True, timeout=35, cwd=os.path.dirname(bridge))
         for line in result.stdout.split("\n"):
             if line.startswith("RESULT:"):
                 data = _json.loads(line[7:].strip())
@@ -960,7 +960,7 @@ def tool_get_daily_picks(strategy: str = "main", limit: int = 5) -> dict:
     try:
         result = subprocess.run(
             ["python3", bridge, "scan_universe", "--type", strategy],
-            capture_output=True, text=True, timeout=300, cwd=os.path.dirname(bridge))
+            capture_output=True, text=True, timeout=80, cwd=os.path.dirname(bridge))
         for line in result.stdout.split("\n"):
             if line.startswith("RESULT:"):
                 data = _json.loads(line[7:].strip())
@@ -1933,16 +1933,17 @@ def _confirm_remove_watchlist(args: dict) -> dict:
 # unlisted defaults to 25s — fast enough that an unresponsive tool can't stall
 # the entire agent loop, but room for typical DB queries.
 _TOOL_TIMEOUTS = {
-    "get_daily_picks": 90,
-    "get_portfolio_analysis": 90,
-    "get_factor_scores": 60,
-    "get_market_regime": 45,
+    "get_daily_picks": 90,           # subprocess 80s
+    "get_portfolio_analysis": 120,   # subprocess 110s
+    "get_factor_scores": 90,         # subprocess 80s
+    "get_market_regime": 45,         # subprocess 35s
     "compute_correlation": 45,
     "benchmark_compare": 45,
-    "optimize_portfolio": 60,
+    "optimize_portfolio": 120,       # subprocess 110s
     "analyze_backtest": 45,
     "web_search": 30,
     "get_world_news": 30,
+    "run_backtest": 120,             # subprocess 110s
 }
 def _tool_timeout(name: str) -> int:
     return _TOOL_TIMEOUTS.get(name, 25)
@@ -2025,24 +2026,26 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0, cal
     # the way the old name-only matching did.
     import time as _time, uuid as _uuid
     cid = call_id or _uuid.uuid4().hex[:8]
-    print(f"[TOOL] {name}\t{_tool_category(name)}\t{cid}", flush=True)
+    # use_skill emits its own [SKILL] line — don't double-show as a regular tool
+    skip_tool_line = name == "use_skill"
+    if not skip_tool_line:
+        print(f"[TOOL] {name}\t{_tool_category(name)}\t{cid}", flush=True)
     t0 = _time.monotonic()
     try:
         result = _run_tool(name, args, portfolio_id, user_id)
         result = _trim_result(name, result)
         latency = int((_time.monotonic() - t0) * 1000)
-        # [TOOL_END] <call_id>\t<name>\t<summary> — name kept for backward-compat
-        # fallback matching; summary is the short result digest shown after the label.
         summary = _tool_summary(name, result).replace("\t", " ").replace("\n", " ")
         _log_tool(name, latency, True, summary)
-        print(f"[TOOL_END] {cid}\t{name}\t{summary}", flush=True)
+        if not skip_tool_line:
+            print(f"[TOOL_END] {cid}\t{name}\t{summary}", flush=True)
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         latency = int((_time.monotonic() - t0) * 1000)
         short = str(e)[:200].replace("\n", " ").replace("\t", " ")
-        # [TOOL_FAIL] <call_id>\t<name>\t<short message>
         _log_tool(name, latency, False, short)
-        print(f"[TOOL_FAIL] {cid}\t{name}\t{short}", flush=True)
+        if not skip_tool_line:
+            print(f"[TOOL_FAIL] {cid}\t{name}\t{short}", flush=True)
         return json.dumps({"error": f"{name} 失败: {short}"}, ensure_ascii=False)
 
 
