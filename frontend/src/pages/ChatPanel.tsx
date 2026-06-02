@@ -782,7 +782,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             children keeps internal reordering smooth. */}
         <AnimatePresence>
           {showInnerContent && (
-            <motion.div key="shell-content"
+            <motion.div key="shell-content" layout="position"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
