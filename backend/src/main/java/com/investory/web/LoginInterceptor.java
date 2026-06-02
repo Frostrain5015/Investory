@@ -1,8 +1,10 @@
 package com.investory.web;
 
+import com.investory.dao.McpTokenDao;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -28,6 +30,9 @@ import org.springframework.web.servlet.HandlerInterceptor;
 @Component
 public class LoginInterceptor implements HandlerInterceptor {
 
+    /** MCP token 解析。带 Bearer token 的 /api/* 请求据此注入用户身份。 */
+    @Autowired private McpTokenDao mcpTokenDao;
+
     /**
      * 请求预处理：在 Controller 方法执行前进行登录状态校验。
      *
@@ -49,6 +54,23 @@ public class LoginInterceptor implements HandlerInterceptor {
         HttpSession session = req.getSession(false);
         if (session != null && session.getAttribute("userId") != null) return true;
 
+        // MCP token 认证：无 session 但带合法 Bearer token 时，解析为对应用户身份并
+        // 注入当前请求的 session（getSession(true) 即用即建），使现有控制器无需改动即可
+        // 复用 session.getAttribute("userId"/"portfolioId") 逻辑。MCP 客户端不带 cookie，
+        // 每次请求得到一个新的临时 session，不会跨请求累积。
+        String token = bearerToken(req);
+        if (token != null) {
+            McpTokenDao.TokenInfo info = mcpTokenDao.resolveToken(token);
+            if (info != null) {
+                HttpSession injected = req.getSession(true);
+                injected.setAttribute("userId", info.userId());
+                injected.setAttribute("username", info.username());
+                injected.setAttribute("isAdmin", false);
+                if (info.portfolioId() != null) injected.setAttribute("portfolioId", info.portfolioId());
+                return true;
+            }
+        }
+
         // 未登录：针对 API 接口返回 JSON 格式的 401 响应，前端可据此统一跳转登录
         if (req.getRequestURI().startsWith(req.getContextPath() + "/api/")) {
             resp.setStatus(401);
@@ -59,5 +81,21 @@ public class LoginInterceptor implements HandlerInterceptor {
         // 未登录：普通页面请求重定向到根路径，由 React SPA 负责渲染登录界面
         resp.sendRedirect(req.getContextPath() + "/");
         return false;
+    }
+
+    /**
+     * 从 Authorization 头提取 Bearer token。
+     *
+     * @param req 当前请求
+     * @return 去掉 "Bearer " 前缀的 token，缺失时返回 {@code null}
+     */
+    private static String bearerToken(HttpServletRequest req) {
+        String auth = req.getHeader("Authorization");
+        if (auth == null) return null;
+        if (auth.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            String t = auth.substring(7).trim();
+            return t.isEmpty() ? null : t;
+        }
+        return null;
     }
 }

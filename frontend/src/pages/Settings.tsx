@@ -96,6 +96,11 @@ export default function Settings() {
   const [aiModel, setAiModel] = useState('')
   const [aiHasKey, setAiHasKey] = useState(false)
 
+  // MCP 接入
+  const mcpUrl = `${window.location.origin}${BASE}/mcp`
+  const [mcpToken, setMcpToken] = useState('')
+  const [mcpGenerating, setMcpGenerating] = useState(false)
+
   useEffect(() => {
     fetch(`${BASE}/api/ai/settings`, { credentials: 'include' })
       .then(r => r.json()).then(d => {
@@ -274,6 +279,53 @@ export default function Settings() {
             {t.settings.aiResetBtn}
           </button>
         </div>
+
+        {/* ── MCP 接入 ──────────────────────────────────────────── */}
+        <SectionLabel>{t.settings.mcpSection}</SectionLabel>
+
+        <Row label={t.settings.mcpConnector} desc={t.settings.mcpConnectorDesc}>
+          <div className="flex items-center gap-2">
+            <code className="px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 text-xs text-slate-600 dark:text-slate-300 break-all">{mcpUrl}</code>
+            <button onClick={() => { navigator.clipboard.writeText(mcpUrl); toast(t.settings.mcpCopied, true) }}
+              className="px-3 h-8 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shrink-0">
+              {t.settings.mcpCopy}
+            </button>
+          </div>
+        </Row>
+
+        <Row label={t.settings.mcpToken} desc={t.settings.mcpTokenDesc}>
+          <button disabled={mcpGenerating} onClick={async () => {
+            setMcpGenerating(true)
+            try {
+              const res = await fetch(`${BASE}/api/mcp/tokens`, {
+                method: 'POST', credentials: 'include',
+                headers: { 'Content-Type': 'application/json' }, body: '{"label":"manual"}',
+              })
+              const data = await res.json()
+              if (data.error) { toast(data.error, false); return }
+              setMcpToken(data.token)
+            } finally { setMcpGenerating(false) }
+          }} className="px-4 h-9 rounded-lg bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-sm font-medium hover:bg-slate-700 dark:hover:bg-white transition-colors disabled:opacity-50">
+            {t.settings.mcpGenerate}
+          </button>
+        </Row>
+
+        {mcpToken && (
+          <div className="py-3 border-b border-slate-100 dark:border-slate-800">
+            <p className="text-xs text-amber-600 dark:text-amber-400 mb-2">{t.settings.mcpTokenOnce}</p>
+            <div className="flex items-center gap-2 mb-3">
+              <code className="flex-1 px-2 py-1.5 rounded bg-slate-100 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-200 break-all">{mcpToken}</code>
+              <button onClick={() => { navigator.clipboard.writeText(mcpToken); toast(t.settings.mcpCopied, true) }}
+                className="px-3 h-8 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shrink-0">
+                {t.settings.mcpCopy}
+              </button>
+            </div>
+            <p className="text-[11px] text-slate-400 mb-1">{t.settings.mcpCliHint}</p>
+            <code className="block px-2 py-1.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px] text-slate-600 dark:text-slate-300 break-all">
+              claude mcp add --transport http investory {mcpUrl} --header "Authorization: Bearer {mcpToken}"
+            </code>
+          </div>
+        )}
 
         {/* ── 账户安全 ──────────────────────────────────────────── */}
         <SectionLabel>账户安全</SectionLabel>

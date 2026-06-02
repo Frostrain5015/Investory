@@ -172,6 +172,13 @@ public class OAuthController {
                 session.setAttribute("portfolioId", portfolios.get(0).getId());
             }
 
+            // 若此前是从 MCP OAuth 授权页跳来登录的，登录成功后回到该授权请求继续发码。
+            Object pending = session.getAttribute("mcp_pending_authorize");
+            if (pending instanceof String pendingUrl && !pendingUrl.isBlank()) {
+                session.removeAttribute("mcp_pending_authorize");
+                return "<script>window.location.href='" + pendingUrl.replace("'", "%27") + "'</script>";
+            }
+
             return "<script>window.location.href='" + req.getContextPath() + "/dashboard'</script>";
 
         } catch (Exception e) {
