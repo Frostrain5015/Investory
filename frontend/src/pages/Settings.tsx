@@ -135,7 +135,8 @@ export default function Settings() {
   // ── Card status summaries ─────────────────────────────────────────────
   const themeLabel = { system: t.settings.themeSystem, light: t.settings.themeLight, dark: t.settings.themeDark }[pref]
   const schemeLabel = colorScheme === 'cn' ? '红涨绿跌' : '绿涨红跌'
-  const aiLabel = AI_PRESETS[aiProvider]?.label || aiProvider
+  const isDefaultAi = aiProvider === 'bailian' && aiModel === 'qwen-plus' && !aiHasKey
+  const aiSummary = isDefaultAi ? '默认' : `${AI_PRESETS[aiProvider]?.label ?? aiProvider} · ${aiModel || '未配置'}`
 
   return (
     <div className="overflow-auto h-full bg-slate-50 dark:bg-slate-950">
@@ -161,14 +162,14 @@ export default function Settings() {
           />
           <SettingCard delay={1}
             icon={<Globe className="w-5 h-5" />}
-            title="显示偏好"
+            title="个性化"
             summary={`基准货币 ${baseCurrency} · 量化列${showRiskMetrics ? '开启' : '关闭'}`}
             onClick={() => setOpen('display')}
           />
           <SettingCard delay={2}
             icon={<Bot className="w-5 h-5" />}
-            title="AI 助手"
-            summary={`${aiLabel} · ${aiModel || '未配置'}`}
+            title="观澜"
+            summary={aiSummary}
             onClick={() => setOpen('ai')}
           />
           <SettingCard delay={3}
@@ -213,7 +214,7 @@ export default function Settings() {
       </Modal>
 
       {/* ── 显示 ────────────────────────────────────────────────────── */}
-      <Modal open={open === 'display'} onClose={() => setOpen(null)} title="显示偏好">
+      <Modal open={open === 'display'} onClose={() => setOpen(null)} title="个性化">
         <ModalRow label={t.settings.currency} desc="影响所有持仓、盈亏金额的显示单位">
           <Segments value={baseCurrency} onChange={setBaseCurrency} options={
             (Object.keys(CURRENCY_LABELS) as BaseCurrency[]).map(c => ({ value: c, label: CURRENCY_LABELS[c] }))
@@ -224,8 +225,8 @@ export default function Settings() {
         </ModalRow>
       </Modal>
 
-      {/* ── AI 助手 ─────────────────────────────────────────────────── */}
-      <Modal open={open === 'ai'} onClose={() => setOpen(null)} title="AI 助手">
+      {/* ── 观澜 ─────────────────────────────────────────────────── */}
+      <Modal open={open === 'ai'} onClose={() => setOpen(null)} title="观澜">
         <ModalRow label={t.settings.aiProvider}>
           <select value={aiProvider} onChange={e => {
             const p = e.target.value; setAiProvider(p)
