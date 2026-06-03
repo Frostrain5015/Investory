@@ -14,6 +14,7 @@ HOST      = "116.62.179.231"
 USER      = "root"
 LOCAL_JAR  = r"d:\Java Projects\investory\backend\target\investory.jar"
 LOCAL_SCRIPT_DIR = r"d:\Java Projects\investory\script"
+SCRIPT_SYNC_DIRS = ["agent_skills"]
 # Resident StockSage engine files (the "ghost submodule"): only a couple of
 # files change in normal work, so we sync just these rather than the whole tree.
 LOCAL_ENGINE_DIR = r"d:\Java Projects\investory\backend\src\main\python\stocksage_alpha"
@@ -115,6 +116,27 @@ def upload(client):
             sftp.put(src, dst)
             print(f"  {f}")
     sftp.close()
+    for dirname in SCRIPT_SYNC_DIRS:
+        local_root = os.path.join(LOCAL_SCRIPT_DIR, dirname)
+        if not os.path.isdir(local_root):
+            continue
+        print(f"Uploading script directory {dirname} ...")
+        for root, dirs, files in os.walk(local_root):
+            dirs[:] = [d for d in dirs if not d.startswith("__pycache__")]
+            rel_root = os.path.relpath(root, LOCAL_SCRIPT_DIR)
+            remote_root = f"{REMOTE_SCRIPT_DIR}/{rel_root.replace(os.sep, '/')}"
+            run_checked(client, f"mkdir -p {shlex.quote(remote_root)}")
+            sftp = client.open_sftp()
+            try:
+                for filename in files:
+                    if filename.startswith("__pycache__"):
+                        continue
+                    src = os.path.join(root, filename)
+                    dst = f"{remote_root}/{filename}"
+                    sftp.put(src, dst)
+                    print(f"  {rel_root.replace(os.sep, '/')}/{filename}")
+            finally:
+                sftp.close()
     # Sync StockSage engine files (resident service, Phase 2)
     print("Syncing StockSage engine ...")
     sftp = client.open_sftp()
