@@ -795,8 +795,14 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                   code={m.strategyCode || m.content}
                   onSave={async (name: string) => {
                     const code = m.strategyCode || m.content
-                    const res = await fetch(`${BASE}/api/backtest/strategies`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, strategyType: 'advanced', strategy: { code } }) })
-                    const data = await res.json(); if (data.error) toast(data.error, false); else toast(t.chat.strategySaved, true)
+                    try {
+                      const res = await fetch(`${BASE}/api/backtest/strategies`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, strategyType: 'advanced', strategy: { code } }) })
+                      const data = await res.json()
+                      if (data.error) { toast(data.error, false); return }
+                      toast(t.chat.strategySaved, true)
+                    } catch (e: unknown) {
+                      toast(e instanceof Error ? e.message : '保存失败', false)
+                    }
                   }}
                 />
               )}
@@ -1439,7 +1445,7 @@ function StrategyCard({ name, description, code: _code, onSave }: { name: string
             const savedName = name || prompt(t.chat.promptStrategyName, t.chat.strategyPlaceholder)
             if (!savedName) return
             setSaving(true)
-            try { await onSave(savedName) } finally { setSaving(false) }
+            try { await onSave(savedName) } catch {} finally { setSaving(false) }
           }} disabled={saving}
             className="w-full h-9 rounded-lg text-white text-xs font-semibold transition-all flex items-center justify-center gap-1.5 tracking-wide hover:opacity-90 disabled:opacity-60"
             style={gradientStyle}>
