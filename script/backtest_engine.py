@@ -415,6 +415,26 @@ def run_simple_backtest(strategy: dict, config: dict, conn, result_id: int) -> d
     return {"equityCurve": equity_curve, "metrics": metrics, "tradeLog": trade_log}
 
 
+class _StrategyCtx:
+    """Per-day strategy context passed to decide(ctx).
+
+    Supports BOTH attribute access (ctx.close) and subscript access
+    (ctx['close']), plus ctx.get('close', default). The old code set an instance
+    attribute named __getitem__, which does nothing — Python looks up dunder
+    methods on the TYPE, so ctx['close'] raised TypeError. Defining __getitem__
+    on the class makes both styles work, so a small access-style slip in
+    generated code no longer silently breaks the whole backtest.
+    """
+    def __init__(self, d: dict):
+        self.__dict__.update(d)
+
+    def __getitem__(self, key):
+        return self.__dict__[key]
+
+    def get(self, key, default=None):
+        return self.__dict__.get(key, default)
+
+
 def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) -> dict:
     """高级模式回测：执行用户自定义 Python 代码"""
     user_code = strategy.get("code", "")
@@ -479,11 +499,17 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
             print(f"[ERROR] 策略代码包含禁止的模式: {pattern}", flush=True)
             return None
 
-    # Find and compile the decide function
+    # Find and compile the decide function.
+    # IMPORTANT: exec with a SINGLE namespace (globals only). With separate
+    # globals/locals, top-level `def decide` and any helper functions (ema, rsi,
+    # atr, …) land in locals, but every function's __globals__ is the globals
+    # dict — so decide() can't see its sibling helpers and each call raises
+    # "name 'ema' is not defined". The per-day try/except then swallows it and
+    # the whole backtest silently records 0 trades / 0 P&L. Sharing one namespace
+    # lets module-level helpers resolve, exactly as normal module code does.
     try:
-        local_ns = {}
-        exec(user_code, globals_ns, local_ns)
-        decide_fn = local_ns.get("decide")
+        exec(user_code, globals_ns)
+        decide_fn = globals_ns.get("decide")
         if not callable(decide_fn):
             print("[ERROR] 策略代码必须定义 decide(ctx) 函数", flush=True)
             return None
@@ -507,6 +533,11 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
         positions = {}
         equity_curve = []
         trade_log = []
+        # Track decision-time exceptions so an unexecutable strategy (bad ctx
+        # access, undefined helper, unsupported builtin) fails LOUDLY instead of
+        # silently recording 0 trades that look like an over-conservative strategy.
+        decision_errors = 0
+        first_decision_error = None
 
         for di, date in enumerate(trading_dates):
             if (di + 1) % 30 == 0:
@@ -542,9 +573,9 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
                         for s in positions
                     ),
                 }
-                # Wrap in SimpleNamespace so both ctx["close"] (dict key) and
-                # ctx.close (attribute) work — the AI agent generates the latter.
-                ctx = SimpleNamespace(**ctx_dict, __getitem__=ctx_dict.__getitem__)
+                # _StrategyCtx supports both ctx.close (attribute) and
+                # ctx["close"] (subscript) so neither access style breaks.
+                ctx = _StrategyCtx(ctx_dict)
 
                 try:
                     _alarm(5)  # 5 seconds per decision
@@ -608,6 +639,9 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
                         else:
                             positions[sym]["shares"] -= sell_qty
                 except Exception as e:
+                    decision_errors += 1
+                    if first_decision_error is None:
+                        first_decision_error = f"{type(e).__name__}: {e}"
                     print(f"  [警告] {sym} @ {date} 策略执行错误: {e}", flush=True)
 
             # Record equity
@@ -623,6 +657,15 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
             })
 
         _alarm(0)  # cancel timeout
+        # Loud fail: errors on decisions but never traded → almost certainly
+        # unexecutable code, not a conservative strategy. Surface it so the user
+        # (and 观澜) fix the code instead of seeing a misleading "0 操作 / 0 收益".
+        if not trade_log and decision_errors > 0:
+            print(f"[ERROR] 策略代码在决策中抛错 {decision_errors} 次且未产生任何交易，"
+                  f"判定为不可执行的策略代码。首个错误：{first_decision_error}。"
+                  f"常见原因：调用了未定义的辅助函数、使用了沙箱外的库/内置函数、"
+                  f"访问了 ctx 不存在的字段，或 try/except 捕获了不可用的异常类。", flush=True)
+            return None
         metrics = compute_metrics(equity_curve, trade_log)
         return {"equityCurve": equity_curve, "metrics": metrics, "tradeLog": trade_log}
 

@@ -1936,7 +1936,7 @@ _PARAM_SCHEMAS = {
     "generate_strategy": {"type": "object", "properties": {
         "name": {"type": "string", "description": "策略名称"},
         "description": {"type": "string", "description": "一句话描述策略思路"},
-        "code": {"type": "string", "description": "完整Python代码，def decide(ctx)函数"}
+        "code": {"type": "string", "description": "完整 Python 代码，必须含 def decide(ctx)。硬性规定（详见 consult_kb('策略引擎')）：①ctx 用属性访问 ctx.close（[-1] 为当日），不要访问 ctx 没有的字段；②只能用 numpy(np) 和 math，严禁 pandas/DataFrame/聚宽/米筐/get_all_securities 与 os/sys/subprocess/open/eval/exec；③只能用沙箱白名单内置，禁止 try/except（异常类不在白名单会 NameError）；④辅助函数(ema/rsi 等)放在 decide 之外顶层 def，decide 内调用；⑤开头加 len(ctx.close)<N 长度保护；⑥返回 1/-1/0 或 {'action':'BUY'/'SELL'/'HOLD','quantity':正整数}"}
     }, "required": ["name", "description", "code"]},
     "run_backtest": {"type": "object", "properties": {
         "strategy_id": {"type": "integer", "description": "已保存策略的ID。必须先用 generate_strategy 保存策略，然后用此ID回测"},

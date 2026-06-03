@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle } from 'lucide-react'
 import { useToast } from '@/components/Toast'
+import { useConfirm } from '@/hooks/use-confirm'
+import { usePrompt } from '@/hooks/use-prompt'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { SseEvent } from '@/types'
@@ -288,6 +290,7 @@ interface ChatPanelProps {
 export default function ChatPanel({ open = true, onOpen, onClose, initialMessage, defaultMode = 'dock' }: ChatPanelProps) {
   const { t, lang } = useT()
   const toast = useToast()
+  const confirm = useConfirm()
   // 'idle' = collapsed to the floating button; otherwise dock/expanded.
   const [internalMode, setInternalMode] = useState<'dock' | 'expanded'>(defaultMode)
   const mode: ChatMode = open ? internalMode : 'idle'
@@ -659,9 +662,9 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       }).catch(() => {})
   }
 
-  function deleteConv(id: number, e: React.MouseEvent) {
+  async function deleteConv(id: number, e: React.MouseEvent) {
     e.stopPropagation()
-    if (!confirm(t.chat.confirmDeleteConv)) return
+    if (!(await confirm(t.chat.confirmDeleteConv))) return
     fetch(`${BASE}/api/ai/conversations/${id}`, { method: 'DELETE', credentials: 'include' })
       .then(() => { if (convIdRef.current === id) clearChat(); loadConvList() }).catch(() => {})
   }
@@ -849,23 +852,30 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                   name={m.strategyName || ''}
                   description={m.strategyDesc || ''}
                   code={m.strategyCode || m.content}
-                  onSave={async (name: string) => {
+                  onSave={async (name: string): Promise<boolean> => {
                     const code = m.strategyCode || m.content
                     try {
                       const res = await fetch(`${BASE}/api/backtest/strategies`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, strategyType: 'advanced', strategy: { code } }) })
                       if (!res.ok) {
                         // Network-level failure (e.g. server down, CORS blocked, session expired → 401)
-                        if (res.status === 401) { toast('登录已过期，请刷新页面后重试', false); return }
+                        if (res.status === 401) { toast('登录已过期，请刷新页面后重试', false); return false }
                         let errMsg = `保存失败 (HTTP ${res.status})`
-                        try { const d = await res.json(); if (d.error) errMsg = String(d.error) } catch { /* non-JSON body */ }
-                        toast(errMsg, false); return
+                        try { const d = await res.json() as { error?: string }; if (d.error) errMsg = String(d.error) } catch { /* non-JSON body */ }
+                        toast(errMsg, false); return false
                       }
-                      const data = await res.json()
-                      if (data.error) { toast(String(data.error), false); return }
+                      const data = await res.json() as { error?: string; id?: number; status?: string }
+                      if (data.error) { toast(String(data.error), false); return false }
                       toast(t.chat.strategySaved, true)
+                      // Hand the freshly-saved strategy_id back so 观澜 keeps going
+                      // (e.g. runs the backtest the user originally asked for) instead
+                      // of stalling on the saved card.
+                      const sid = typeof data.id === 'number' ? data.id : Number(data.id)
+                      if (sid && !streaming) send(`策略「${name}」已保存（strategy_id=${sid}），请继续。`)
+                      return true
                     } catch (e: unknown) {
                       // TypeError "Failed to fetch" — request never reached the server
                       toast(e instanceof TypeError ? '网络请求失败，请检查网络连接' : (e instanceof Error ? e.message : '保存失败'), false)
+                      return false
                     }
                   }}
                 />
@@ -1435,9 +1445,13 @@ function PicksCardDisplay({ card }: { card: PicksCard }) {
   )
 }
 
-function StrategyCard({ name, description, code: _code, onSave }: { name: string; description: string; code: string; onSave: (name: string) => Promise<void> }) {
+function StrategyCard({ name, description, code: _code, onSave }: { name: string; description: string; code: string; onSave: (name: string) => Promise<boolean> }) {
   const { t } = useT()
+  const prompt = usePrompt()
   const [saving, setSaving] = useState(false)
+  // Once saved, the button is permanently disabled so the same strategy can't be
+  // saved twice (which would create duplicate rows and re-trigger continuation).
+  const [saved, setSaved] = useState(false)
 
   const displayName = name || t.chat.strategyPlaceholder
   const lines = (description || '').split(/\n/).map(l => l.trim()).filter(Boolean)
@@ -1508,15 +1522,19 @@ function StrategyCard({ name, description, code: _code, onSave }: { name: string
         {/* Save button */}
         <div className="px-3 pb-3">
           <button onClick={async () => {
-            const savedName = name || prompt(t.chat.promptStrategyName, t.chat.strategyPlaceholder)
+            if (saving || saved) return
+            const savedName = name || await prompt({ message: t.chat.promptStrategyName, defaultValue: t.chat.strategyPlaceholder, placeholder: t.chat.strategyPlaceholder })
             if (!savedName) return
             setSaving(true)
-            try { await onSave(savedName) } catch {} finally { setSaving(false) }
-          }} disabled={saving}
+            try {
+              const ok = await onSave(savedName)
+              if (ok) setSaved(true)  // success → lock the button; parent kicks off the continuation
+            } catch { /* parent surfaces the error via toast */ } finally { setSaving(false) }
+          }} disabled={saving || saved}
             className="w-full h-9 rounded-lg text-white text-xs font-semibold transition-all flex items-center justify-center gap-1.5 tracking-wide hover:opacity-90 disabled:opacity-60"
             style={gradientStyle}>
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5 opacity-70" />}
-            {saving ? t.chat.saving : t.chat.saveStrategyBtn}
+            {saved ? <Check className="w-3.5 h-3.5" /> : saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5 opacity-70" />}
+            {saved ? t.chat.strategySaved : saving ? t.chat.saving : t.chat.saveStrategyBtn}
           </button>
         </div>
       </div>

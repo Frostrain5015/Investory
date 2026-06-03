@@ -8,6 +8,7 @@ import { ToastProvider } from '@/components/Toast'
 import { NotificationBubbleProvider } from '@/components/NotificationBubble'
 import { preloadSuggestions } from '@/services/aiPreload'
 import { ConfirmProvider } from '@/hooks/use-confirm'
+import { PromptProvider } from '@/hooks/use-prompt'
 import { I18nProvider, useT } from '@/i18n/I18nContext'
 import Layout from '@/components/Layout'
 import TitleBar from '@/components/TitleBar'
@@ -86,6 +87,7 @@ export default function App() {
           <ToastProvider>
           <NotificationBubbleProvider>
           <ConfirmProvider>
+          <PromptProvider>
           <ErrorBoundary>
           <Routes>
             <Route path="/" element={<PublicRoute><Hero /></PublicRoute>} />
@@ -111,6 +113,7 @@ export default function App() {
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           </ErrorBoundary>
+          </PromptProvider>
           </ConfirmProvider>
           </NotificationBubbleProvider>
           </ToastProvider>
