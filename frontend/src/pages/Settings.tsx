@@ -354,18 +354,17 @@ export default function Settings() {
           <div className="py-3 border-b border-slate-100 dark:border-slate-800">
             <p className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">{t.settings.aiModel}</p>
             <div className="flex items-center gap-2">
-              <select value={aiModel} onChange={e => setAiModel(e.target.value)}
-                disabled={aiModels.length === 0}
-                className={`${inputCls} flex-1 disabled:opacity-60`}>
-                {aiModels.length === 0 ? (
-                  <option value={aiModel}>{aiModel || '请先获取模型列表'}</option>
-                ) : (
-                  <>
-                    <option value="">选择模型</option>
-                    {aiModels.map(model => <option key={model} value={model}>{model}</option>)}
-                  </>
-                )}
-              </select>
+              <input
+                type="text"
+                list="ai-model-options"
+                value={aiModel}
+                onChange={e => setAiModel(e.target.value)}
+                placeholder={aiModels.length === 0 ? '请先获取模型列表或手动输入' : '选择或输入模型名称'}
+                className={`${inputCls} flex-1`}
+              />
+              <datalist id="ai-model-options">
+                {aiModels.map(model => <option key={model} value={model} />)}
+              </datalist>
               <button onClick={fetchAiModels} disabled={aiModelsLoading || !aiProvider || !(aiKey || aiHasKey)}
                 className="inline-flex items-center justify-center gap-1.5 h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-60 transition-colors cursor-pointer shrink-0">
                 <RefreshCw className={`w-3.5 h-3.5 ${aiModelsLoading ? 'animate-spin' : ''}`} />
