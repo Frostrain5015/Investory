@@ -1696,10 +1696,21 @@ def _emit_report_artifact(report: dict) -> None:
         return
     summary = report.get("summary", "")
     if isinstance(summary, dict):
-        summary_text = summary.get("headline") or summary.get("summary") or json.dumps(summary, ensure_ascii=False)
+        # summary 常是一段机器 meta（title/symbol/scores/generated_at）。直接
+        # json.dumps 会把无法识读的 JSON 当作摘要展示给用户，优先取人类可读
+        # 字段，否则回退到标题，绝不下发原始 meta 对象。
+        summary_text = (summary.get("headline") or summary.get("summary")
+                        or report.get("title") or "")
     else:
         summary_text = str(summary or "")
-    content_json = {k: _jsonable(v) for k, v in report.items() if k != "markdown"}
+    # content_json 仅供前端结构化渲染。剔除对用户无意义、且会被拍平成大段
+    # JSON 的机器字段（模型上下文、原始因子权重字典），否则“审计轨迹”里会
+    # 冒出 weights_used 这种调参数据，用户根本无法识读。
+    content_json = {k: _jsonable(v) for k, v in report.items()
+                    if k not in ("markdown", "llm_context")}
+    audit = content_json.get("audit_trail")
+    if isinstance(audit, dict):
+        content_json["audit_trail"] = {k: v for k, v in audit.items() if k != "weights_used"}
     payload = {
         "type": report.get("report_type", "stocksage_report"),
         "title": report.get("title") or "StockSage 分析报告",

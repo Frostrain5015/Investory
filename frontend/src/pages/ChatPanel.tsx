@@ -31,6 +31,10 @@ export type TimelineStep =
   | { kind: 'thinking'; text: string; _ts?: number; _elapsed?: number }
   | { kind: 'kb'; topic: string }
   | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string; summary?: string; callId?: string }
+  // The assistant's user-facing answer, interleaved in true emission order with
+  // thinking/tool steps so a chunk of answer written *before* a later tool call
+  // renders above that tool call — not dumped below the whole timeline.
+  | { kind: 'text'; text: string }
 interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard; artifacts?: ReportArtifact[] }
 interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
 interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
@@ -191,14 +195,47 @@ function ToolStepDisplay({ step, lang }: { step: Extract<TimelineStep, { kind: '
   )
 }
 
+/** A few providers fold their reasoning into the answer with <think> tags
+ * instead of a separate reasoning channel. Strip the bare tags so they never
+ * leak into the rendered answer (the content itself is kept). */
+function stripThinkTags(text: string): string {
+  return text.replace(/<\/?think(?:ing)?>/gi, '')
+}
+
+const MARKDOWN_BODY_CLASS = 'prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-100 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto'
+
+/** Shared renderer for the assistant's answer markdown (stock-code chips +
+ * GFM). Used by both the live/historical timeline text steps and the legacy
+ * single-block fallback, so all answer text renders identically. */
+function MarkdownBody({ text }: { text: string }) {
+  return (
+    <div className={MARKDOWN_BODY_CLASS}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+        code: ({ children, className, ...props }) => {
+          const txt = String(children).trim()
+          if (/^\d{4,6}\.(SH|SZ|HK|US)$/i.test(txt) || /^[A-Z]{1,5}\.US$/i.test(txt))
+            return <a href={`${BASE}/stock?symbol=${txt}`} target="_blank" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-xs font-medium hover:bg-purple-100">{txt}</a>
+          return <code className={className} {...props}>{children}</code>
+        }
+      }}>{text}</ReactMarkdown>
+    </div>
+  )
+}
+
 /** Renders an array of TimelineSteps as a peer-level sequence:
  * each thinking segment gets its own collapse block, each tool gets its
- * own inline indicator — exactly how Claude Code / Codex render. */
+ * own inline indicator, and each answer chunk renders inline at its true
+ * position — exactly how Claude Code / Codex render. */
 function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: boolean; lang: 'zh' | 'en' | 'hk' }) {
   if (steps.length === 0) return null
   return (
     <div className="mb-2">
       {steps.map((step, i) => {
+        if (step.kind === 'text') {
+          const body = stripThinkTags(step.text)
+          if (!body.trim()) return null
+          return <div key={i} className="mb-2"><MarkdownBody text={body} /></div>
+        }
         if (step.kind === 'thinking') {
           // This segment is "done" if anything follows it (tool call or newer
           // thinking) OR if the whole generation is complete. Only the very
@@ -472,12 +509,30 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         const d = JSON.parse(e.data) as { name?: string; error?: string; callId?: string }
         finalizeToolStep(d.callId, d.name || '', { done: true, error: d.error || '工具执行失败' })
       })
-      es.addEventListener('token', (e) => { const d: SseEvent = JSON.parse(e.data); streamAccum.current += (d.msg || ''); setStreamText(streamAccum.current) })
+      es.addEventListener('token', (e) => {
+        const d: SseEvent = JSON.parse(e.data)
+        const chunk = d.msg || ''
+        if (!chunk) return
+        // Keep the full-text accumulator (used for copy, strategy/code regex, and
+        // the legacy <think> fallback at done-time)…
+        streamAccum.current += chunk; setStreamText(streamAccum.current)
+        // …and also fold the answer into the timeline at its true position, so it
+        // interleaves correctly with thinking/tool steps instead of dropping below.
+        const last = timelineRef.current[timelineRef.current.length - 1]
+        if (last && last.kind === 'text') {
+          timelineRef.current[timelineRef.current.length - 1] = { ...last, text: last.text + chunk }
+        } else {
+          stampClosedElapsed(timelineRef.current)
+          timelineRef.current = [...timelineRef.current, { kind: 'text', text: chunk }]
+        }
+        pushTimeline()
+      })
       es.addEventListener('reasoning', (e) => {
         const d: SseEvent = JSON.parse(e.data)
         const chunk = d.msg || ''
         if (!chunk) return
-        // Append to the last thinking step, or open a new one if the last step is a tool
+        // Append to the last thinking step, or open a new one if the last step is a
+        // tool or answer chunk.
         const last = timelineRef.current[timelineRef.current.length - 1]
         if (last && last.kind === 'thinking') {
           timelineRef.current[timelineRef.current.length - 1] = { ...last, text: last.text + chunk }
@@ -776,21 +831,19 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               m.role === 'user'
                 ? 'text-white' : 'bg-slate-50 text-slate-700 border border-slate-100'
             }`} style={m.role === 'user' ? gradientStyle : undefined}>
-              {m.role === 'assistant' ? <>
-                {m.timeline && m.timeline.length > 0
-                  ? <TimelineRenderer steps={m.timeline} done={true} lang={lang} />
-                  : m.thinking && <TimelineRenderer steps={[{ kind: 'thinking', text: m.thinking }]} done={true} lang={lang} />}
-                <div className="prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-100 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-                    code: ({ children, className, ...props }) => {
-                      const text = String(children).trim()
-                      if (/^\d{4,6}\.(SH|SZ|HK|US)$/i.test(text) || /^[A-Z]{1,5}\.US$/i.test(text))
-                        return <a href={`${BASE}/stock?symbol=${text}`} target="_blank" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-xs font-medium hover:bg-purple-100">{text}</a>
-                      return <code className={className} {...props}>{children}</code>
-                    }
-                  }}>{m.content}</ReactMarkdown>
-                </div>
-              </> : <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>}
+              {m.role === 'assistant' ? (() => {
+                const tl = m.timeline
+                // New turns carry the answer as interleaved text steps → render the
+                // timeline alone (the answer is inside it, in true order). Legacy
+                // turns have no text step → keep the old "timeline then content" layout.
+                const hasTextStep = !!tl && tl.some(s => s.kind === 'text')
+                return <>
+                  {tl && tl.length > 0
+                    ? <TimelineRenderer steps={tl} done={true} lang={lang} />
+                    : m.thinking && <TimelineRenderer steps={[{ kind: 'thinking', text: m.thinking }]} done={true} lang={lang} />}
+                  {!hasTextStep && m.content && <MarkdownBody text={m.content} />}
+                </>
+              })() : <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>}
               {m.hasCode && (
                 <StrategyCard
                   name={m.strategyName || ''}
@@ -833,38 +886,17 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           <div className="flex justify-start">
             <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${streamText.startsWith('⚠') ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-700 border border-slate-100'}`}>
               {(() => {
-                // Fold <think> XML fallback into the live timeline so providers
-                // that don't emit reasoning_content still get a step-by-step trace.
-                let liveSteps = streamTimeline
-                let after = streamText
-                if (liveSteps.length === 0 && streamText) {
-                  const thinkMatch = streamText.match(/<think(?:ing)?>([\s\S]*?)(<\/think(?:ing)?>|$)/)
-                  if (thinkMatch) {
-                    liveSteps = [{ kind: 'thinking', text: thinkMatch[1] }]
-                    after = streamText.replace(/<think(?:ing)?>[\s\S]*?(<\/think(?:ing)?>|$)/, '').trim()
-                  }
-                }
-                const reasoningDone = !!after.trim()
-                // The currently-running tool, if any — surfaced as a peer status
-                // indicator (sibling to "深度思考中…"), not buried in the timeline.
-                const runningTool = (() => {
-                  for (let i = liveSteps.length - 1; i >= 0; i--) {
-                    const s = liveSteps[i]
-                    if (s.kind === 'tool' && !s.done) return s
-                  }
-                  return null
-                })()
-                // Idle pulse only when nothing has streamed yet AND no tool is running
-                const showGenericPending = liveSteps.length === 0 && !after.trim() && !runningTool
+                // The live answer is already interleaved into streamTimeline as
+                // text steps, so there's no separate "after" block — order is exact.
+                const liveSteps = streamTimeline
+                // Idle pulse only when nothing has streamed yet (no thinking, no
+                // answer chunk, no tool). A running tool renders its own animated row.
+                const showGenericPending = liveSteps.length === 0
                 return (<>
-                  {/* The running tool renders inside TimelineRenderer (ToolStepDisplay
-                      shows the animated "调用中…" row) — no separate banner, so a tool
-                      call is never shown twice. */}
-                  {liveSteps.length > 0 && <TimelineRenderer steps={liveSteps} done={reasoningDone} lang={lang} />}
+                  {liveSteps.length > 0 && <TimelineRenderer steps={liveSteps} done={false} lang={lang} />}
                   {showGenericPending && (
                     <span className="inline-flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>
                   )}
-                  {after && <div className="prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-100 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto"><ReactMarkdown remarkPlugins={[remarkGfm]}>{after}</ReactMarkdown></div>}
                 </>)
               })()}
             </div>
@@ -1197,6 +1229,9 @@ function artifactLabel(type: string) {
   if (type === 'stock_report') return 'StockSage 个股报告'
   if (type === 'portfolio_report') return 'StockSage 组合报告'
   if (type === 'daily_picks_report') return 'StockSage 选股报告'
+  // Backtests come from the quant backtest engine, not StockSage — label them
+  // distinctly so a strategy report isn't mistaken for a stock audit.
+  if (type === 'backtest_result') return '量化回测报告'
   return 'StockSage 报告'
 }
 
@@ -1233,7 +1268,27 @@ function objectList(value: unknown): Record<string, unknown>[] {
 
 function objectEntries(value: unknown): string[] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return []
-  return Object.entries(value as Record<string, unknown>).map(([key, val]) => `${key}: ${typeof val === 'object' ? JSON.stringify(val) : String(val)}`)
+  const out: string[] = []
+  for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+    if (val === null || val === undefined) continue
+    if (Array.isArray(val)) {
+      // 人类可读的规则/列表用顿号拼接；嵌套对象项跳过。
+      const items = val.map(v => (v && typeof v === 'object' ? '' : String(v))).filter(Boolean)
+      if (items.length) out.push(`${key}：${items.join('、')}`)
+    } else if (typeof val === 'object') {
+      // 嵌套对象（如 weights_used 权重字典）是机器调参字段，不向用户展示。
+      continue
+    } else {
+      out.push(`${key}：${String(val)}`)
+    }
+  }
+  return out
+}
+
+// 摘要偶尔会被上游误塞成一段 meta JSON；像 JSON 的内容不展示给用户。
+function looksLikeJson(text: string): boolean {
+  const t = text.trim()
+  return (t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))
 }
 
 function ReportArtifactChip({ artifact, onOpen }: { artifact: ReportArtifact; onOpen: (artifact: ReportArtifact) => void }) {
@@ -1296,7 +1351,7 @@ function ReportDetailModal({ artifact, onClose }: { artifact: ReportArtifact | n
                 <FileText className="w-3.5 h-3.5" />{artifactLabel(artifact.type)}
               </div>
               <h3 className="text-base font-semibold text-slate-900">{artifact.title}</h3>
-              {artifact.summary && <p className="text-xs text-slate-500 mt-1 leading-relaxed">{artifact.summary}</p>}
+              {artifact.summary && !looksLikeJson(artifact.summary) && <p className="text-xs text-slate-500 mt-1 leading-relaxed">{artifact.summary}</p>}
             </div>
             <button onClick={onClose} className="p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
               <X className="w-4 h-4" />

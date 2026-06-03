@@ -265,6 +265,22 @@ public class AiApiController {
                     }
                     openThinking[0].put("text", openThinking[0].get("text").toString() + chunk);
                 };
+                // The answer text is its own timeline step, interleaved with thinking
+                // and tool steps in true emission order — so a chunk of answer written
+                // before a later tool call is persisted (and replayed) ABOVE that tool,
+                // never dumped below the whole timeline. A new tool/KB/thinking event
+                // closes the open text step so subsequent answer text starts a new one.
+                final Map<String, Object>[] openText = new Map[]{ null };
+                final Runnable closeText = () -> { openText[0] = null; };
+                java.util.function.Consumer<String> appendText = (chunk) -> {
+                    if (openText[0] == null) {
+                        Map<String, Object> step = new LinkedHashMap<>();
+                        step.put("kind", "text"); step.put("text", "");
+                        timeline.add(step);
+                        openText[0] = step;
+                    }
+                    openText[0].put("text", openText[0].get("text").toString() + chunk);
+                };
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(p.getInputStream(), "UTF-8"))) {
                     String line;
@@ -304,6 +320,7 @@ public class AiApiController {
                             // Payload: "<topic>" — agent consulted the knowledge base.
                             String topic = line.substring(4).trim();
                             closeThinking.run();
+                            closeText.run();
                             Map<String, Object> kbStep = new LinkedHashMap<>();
                             kbStep.put("kind", "kb"); kbStep.put("topic", topic);
                             timeline.add(kbStep);
@@ -314,8 +331,9 @@ public class AiApiController {
                             String name = parts.length > 0 ? parts[0] : "";
                             String category = parts.length > 1 ? parts[1].trim() : "query";
                             String callId = parts.length > 2 ? parts[2].trim() : "";
-                            // A new tool call closes the current thinking segment
+                            // A new tool call closes the current thinking + text segments
                             closeThinking.run();
+                            closeText.run();
                             Map<String, Object> step = new LinkedHashMap<>();
                             step.put("kind", "tool"); step.put("name", name);
                             step.put("category", category); step.put("done", false);
@@ -351,6 +369,7 @@ public class AiApiController {
                                 sb.append(c);
                             }
                             String decoded = sb.toString();
+                            closeText.run();
                             appendThinking.accept(decoded);
                             session.emitReasoning(uid, decoded);
                         } else if (isTracebackLine(line)) {
@@ -358,7 +377,11 @@ public class AiApiController {
                             // Normal errors are emitted via [ERROR] protocol lines.
                         } else {
                             String tok = line.isEmpty() ? "\n" : line;
+                            // Answer text closes any open thinking segment, then folds
+                            // into the timeline at its true position.
+                            closeThinking.run();
                             accumContent.append(tok);
+                            appendText.accept(tok);
                             session.emitToken(uid, tok);
                         }
                     }
@@ -378,13 +401,18 @@ public class AiApiController {
                         if (content.length() > 8000) content = content.substring(0, 8000);
                         jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'assistant', ?)",
                             uid, convId, content);
-                        // Persist the entire timeline (thinking + tool steps) as JSON in the 'thinking'
-                        // role row, so we can faithfully replay the reasoning trace on history reload.
+                        // Persist the entire timeline (answer text + thinking + tool steps)
+                        // as JSON in the 'thinking' role row, so we can faithfully replay the
+                        // interleaved trace on history reload. NEVER substring the JSON — a
+                        // truncated blob is invalid JSON and would be dropped on reload. If it
+                        // exceeds the safe cap, skip it: the frontend then falls back to
+                        // rendering the (separately persisted) answer text.
                         if (!timeline.isEmpty()) {
                             String tlJson = json.writeValueAsString(timeline);
-                            if (tlJson.length() > 8000) tlJson = tlJson.substring(0, 8000);
-                            jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'thinking', ?)",
-                                uid, convId, tlJson);
+                            if (tlJson.length() <= 16000) {
+                                jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'thinking', ?)",
+                                    uid, convId, tlJson);
+                            }
                         }
                     } catch (Exception ignored) {}
                 }
