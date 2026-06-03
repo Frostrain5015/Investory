@@ -157,6 +157,34 @@ public class CrawlerScheduler {
         log.info("回填完成，共处理 " + portfolios.size() + " 个组合");
     }
 
+    // ── 每日收盘后预扫描"今日选股"并写入缓存（避免用户调用时实时扫描超时）──
+    @Scheduled(cron = "0 45 19 * * MON-FRI", zone = "Asia/Shanghai")
+    public void populateDailyPicks() {
+        if (isWeekend()) return;
+        File script = new File(SCRIPT_DIR, "ai_agent.py");
+        if (!script.exists()) script = new File("../script", "ai_agent.py");
+        if (!script.exists()) { log.warning("ai_agent.py not found for daily-picks populate"); return; }
+        log.info("开始预扫描今日选股并写入缓存");
+        try {
+            ProcessBuilder pb = new ProcessBuilder(pythonExecutable, "-u",
+                script.getAbsolutePath(), "--mode", "populate-picks");
+            pb.directory(script.getParentFile());
+            pb.redirectErrorStream(true);
+            pb.environment().put("PYTHONUNBUFFERED", "1");
+            Process p = pb.start();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(p.getInputStream(), "UTF-8"))) {
+                String line;
+                while ((line = reader.readLine()) != null) log.info("[picks] " + line);
+            }
+            boolean finished = p.waitFor(15, TimeUnit.MINUTES);
+            if (!finished) { p.destroyForcibly(); log.warning("今日选股预扫描超时(15min)"); }
+            else log.info("今日选股预扫描完成, exit=" + p.exitValue());
+        } catch (Exception e) {
+            log.warning("今日选股预扫描出错: " + e.getMessage());
+        }
+    }
+
     private void runQuantScript(String mode) {
         File script = new File(SCRIPT_DIR, "analyze_quant.py");
         if (!script.exists()) {

@@ -14,6 +14,13 @@ HOST      = "116.62.179.231"
 USER      = "root"
 LOCAL_JAR  = r"d:\Java Projects\investory\backend\target\investory.jar"
 LOCAL_SCRIPT_DIR = r"d:\Java Projects\investory\script"
+# Resident StockSage engine files (the "ghost submodule"): only a couple of
+# files change in normal work, so we sync just these rather than the whole tree.
+LOCAL_ENGINE_DIR = r"d:\Java Projects\investory\backend\src\main\python\stocksage_alpha"
+ENGINE_SYNC_FILES = ["server.py", "bridge.py", "src/research.py", "src/fetcher.py",
+                     "src/factors/scoring.py"]
+REMOTE_ENGINE_DIR = "/opt/investory/stocksage_alpha"
+ENGINE_SERVICE = "stocksage"
 REMOTE_JAR = "/opt/investory/investory.jar"
 REMOTE_SCRIPT_DIR = "/opt/investory/script"
 SERVICE    = "investory"
@@ -108,6 +115,16 @@ def upload(client):
             sftp.put(src, dst)
             print(f"  {f}")
     sftp.close()
+    # Sync StockSage engine files (resident service, Phase 2)
+    print("Syncing StockSage engine ...")
+    sftp = client.open_sftp()
+    for f in ENGINE_SYNC_FILES:
+        src = os.path.join(LOCAL_ENGINE_DIR, f)
+        dst = f"{REMOTE_ENGINE_DIR}/{f}"
+        if os.path.isfile(src):
+            sftp.put(src, dst)
+            print(f"  {f}")
+    sftp.close()
     print("Upload done.")
 
 
@@ -178,6 +195,19 @@ def restart_service(client):
         print(f"WARNING: service status = {status}")
         print(run(client, f"journalctl -u {SERVICE} -n 20 --no-pager"))
 
+def restart_engine(client):
+    """Restart the resident StockSage engine (Phase 2). Best-effort — if the
+    service was never installed, log and continue."""
+    exists = run(client, f"systemctl list-unit-files {ENGINE_SERVICE}.service 2>/dev/null | wc -l")
+    if not exists or "0" in exists:
+        print(f"Engine service {ENGINE_SERVICE} not installed, skipping.")
+        return
+    print("Restarting StockSage engine ...")
+    run(client, f"systemctl restart {ENGINE_SERVICE}")
+    time.sleep(2)
+    status = run(client, f"systemctl is-active {ENGINE_SERVICE}")
+    print(f"Engine: {status}")
+
 
 def main():
     no_build = "--no-build" in sys.argv
@@ -204,6 +234,7 @@ def main():
     client = ssh_connect()
     ensure_stable_ssl(client)
     upload(client)
+    restart_engine(client)
     restart_service(client)
     client.close()
     print("Deploy complete.")

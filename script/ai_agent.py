@@ -279,6 +279,87 @@ def tool_get_stock_metrics(symbol: str) -> dict:
     return tool_get_factor_scores(symbol)
 
 
+# ── StockSage engine invocation (resident HTTP, subprocess fallback) ────────
+# Phase 2: the engine now runs as a resident process (server.py on
+# 127.0.0.1:8200) with warm imports. These helpers prefer HTTP and fall back to
+# spawning bridge.py if the service is down, so the factor/regime/scan/portfolio
+# tools share one invocation path.
+ENGINE_BASE = "http://127.0.0.1:8200"
+_ENGINE_POST_CMDS = {"portfolio_analysis", "prefetch_data"}
+
+
+def _bridge_path():
+    p = "/opt/investory/stocksage_alpha/bridge.py"
+    if os.path.exists(p):
+        return p
+    p = os.path.join(SCRIPT_DIR, "..", "backend", "src", "main", "python", "stocksage_alpha", "bridge.py")
+    return p if os.path.exists(p) else None
+
+
+def _engine_http(command, params, timeout):
+    """Call the resident engine; return result dict, or None if unreachable."""
+    import urllib.request, urllib.parse, json as _json
+    try:
+        if command in _ENGINE_POST_CMDS:
+            req = urllib.request.Request(
+                f"{ENGINE_BASE}/{command}",
+                data=_json.dumps(params).encode("utf-8"),
+                headers={"Content-Type": "application/json"})
+        else:
+            req = urllib.request.Request(f"{ENGINE_BASE}/{command}?" + urllib.parse.urlencode(params))
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return _json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _engine_subprocess(command, params, timeout):
+    """Fallback: spawn bridge.py CLI and parse its RESULT: line."""
+    import subprocess, json as _json
+    bridge = _bridge_path()
+    if not bridge:
+        return {"error": "因子引擎未找到"}
+    argv = ["python3", bridge, command]
+    tmp_path = None
+    if command in ("factor_breakdown", "chip_distribution"):
+        argv += ["--symbol", params.get("symbol", "")]
+    elif command == "score_stocks":
+        argv += ["--symbols", params.get("symbols", "")]
+    elif command == "scan_universe":
+        argv += ["--type", params.get("type", "main")]
+    elif command == "portfolio_analysis":
+        import tempfile
+        holdings = params.get("holdings")
+        holdings_obj = _json.loads(holdings) if isinstance(holdings, str) else holdings
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            _json.dump(holdings_obj, f)
+            tmp_path = f.name
+        argv += ["--holdings", f"@{tmp_path}"]
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
+                                cwd=os.path.dirname(bridge))
+        for line in result.stdout.split("\n"):
+            if line.startswith("RESULT:"):
+                return _json.loads(line[7:].strip())
+        return {"error": f"因子引擎无响应 (exit={result.returncode})"}
+    except subprocess.TimeoutExpired:
+        return {"error": "因子引擎超时"}
+    except Exception as e:
+        return {"error": str(e)[:200]}
+    finally:
+        if tmp_path:
+            try: os.unlink(tmp_path)
+            except Exception: pass
+
+
+def _engine(command, params, timeout):
+    """Resident engine over HTTP, falling back to subprocess. Returns result dict."""
+    data = _engine_http(command, params, timeout)
+    if data is not None:
+        return data
+    return _engine_subprocess(command, params, timeout)
+
+
 def _is_a_share(symbol: str) -> bool:
     """A股识别：DB格式 1.xxxxxx/0.xxxxxx、裸6位码、或 .SH/.SZ/.BJ 后缀。
     港股(.HK)、美股(.US)、指数(.IDX)等非A股返回 False。"""
@@ -312,85 +393,67 @@ _FACTOR_GUIDE = {
 def tool_get_factor_scores(symbol: str) -> dict:
     """获取A股的多因子评分：综合分 + 各维度(价值/成长/动量/质量/技术等)详细得分。
     仅支持A股。港股/美股/指数请勿调用此工具——改用 get_stock_price + web_search 分析。"""
-    import subprocess, json as _json, os
     # Guard: A-share only. The factor engine has no fundamental/price data for
     # overseas markets, so it would return garbage. Refuse early.
     if not _is_a_share(symbol):
         return {"error": f"多因子引擎仅支持A股，{symbol} 非A股标的。请改用 get_stock_price 取行情、web_search 查基本面与新闻后自行分析。",
                 "symbol": symbol, "unsupported_market": True}
 
-    bridge = os.path.join(SCRIPT_DIR, "..", "backend", "src", "main", "python", "stocksage_alpha", "bridge.py")
-    if not os.path.exists(bridge):
-        bridge = "/opt/investory/stocksage_alpha/bridge.py"
-    if not os.path.exists(bridge):
-        return {"error": "因子引擎未找到"}
+    data = _engine("factor_breakdown", {"symbol": symbol}, 80)
+    if not isinstance(data, dict) or data.get("error"):
+        return {"error": (data or {}).get("error", "因子引擎无响应"), "symbol": symbol}
+    factors = data.get("factors", [])
+    total_score = data.get("total_score", 0)
+    # 0-score-with-empty-factors = research() errored internally.
+    if not factors:
+        return {"error": f"因子引擎未返回有效评分（{symbol} 数据获取失败）", "symbol": symbol}
 
-    try:
-        result = subprocess.run(
-            ["python3", bridge, "factor_breakdown", "--symbol", symbol],
-            capture_output=True, text=True, timeout=80, cwd=os.path.dirname(bridge))
-        for line in result.stdout.split("\n"):
-            if line.startswith("RESULT:"):
-                data = _json.loads(line[7:].strip())
-                if "error" in data:
-                    return {"error": data["error"], "symbol": symbol}
-                factors = data.get("factors", [])
-                total_score = data.get("total_score", 0)
-                # 0-score-with-empty-factors = research() errored internally.
-                if not factors:
-                    return {"error": f"因子引擎未返回有效评分（{symbol} 数据获取失败）", "symbol": symbol}
+    # Core 4 dimensions (each max 25) — the headline fundamentals
+    CORE = ("value", "growth", "momentum", "quality")
+    CORE_ZH = {"value": "价值", "growth": "成长", "momentum": "动量", "quality": "质量"}
+    core = {}
+    by_name = {f["name"]: f for f in factors}
+    for k in CORE:
+        f = by_name.get(k)
+        if f:
+            core[CORE_ZH[k]] = {"score": f["score"], "max": f["max"], "pct": f.get("pct")}
 
-                # Core 4 dimensions (each max 25) — the headline fundamentals
-                CORE = ("value", "growth", "momentum", "quality")
-                CORE_ZH = {"value": "价值", "growth": "成长", "momentum": "动量", "quality": "质量"}
-                core = {}
-                by_name = {f["name"]: f for f in factors}
-                for k in CORE:
-                    f = by_name.get(k)
-                    if f:
-                        core[CORE_ZH[k]] = {"score": f["score"], "max": f["max"], "pct": f.get("pct")}
+    # Group every factor by display group with summed score/max
+    groups = {}
+    for f in factors:
+        g = f.get("group", "其他")
+        gg = groups.setdefault(g, {"score": 0.0, "max": 0.0, "count": 0})
+        gg["score"] += f.get("score", 0) or 0
+        gg["max"] += f.get("max", 0) or 0
+        gg["count"] += 1
+    group_scores = {g: {"score": round(v["score"], 1), "max": round(v["max"], 1),
+                        "pct": round(v["score"] / v["max"] * 100, 0) if v["max"] > 0 else None}
+                    for g, v in groups.items()}
 
-                # Group every factor by display group with summed score/max
-                groups = {}
-                for f in factors:
-                    g = f.get("group", "其他")
-                    gg = groups.setdefault(g, {"score": 0.0, "max": 0.0, "count": 0})
-                    gg["score"] += f.get("score", 0) or 0
-                    gg["max"] += f.get("max", 0) or 0
-                    gg["count"] += 1
-                group_scores = {g: {"score": round(v["score"], 1), "max": round(v["max"], 1),
-                                    "pct": round(v["score"] / v["max"] * 100, 0) if v["max"] > 0 else None}
-                                for g, v in groups.items()}
+    # Strongest bullish (high pct) and bearish (high sell_score) signals
+    scored = [f for f in factors if f.get("pct") is not None]
+    top_bullish = sorted(scored, key=lambda f: f["pct"], reverse=True)[:6]
+    top_bearish = sorted([f for f in factors if (f.get("sell_score") or 0) > 0],
+                         key=lambda f: f["sell_score"], reverse=True)[:6]
 
-                # Strongest bullish (high pct) and bearish (high sell_score) signals
-                scored = [f for f in factors if f.get("pct") is not None]
-                top_bullish = sorted(scored, key=lambda f: f["pct"], reverse=True)[:6]
-                top_bearish = sorted([f for f in factors if (f.get("sell_score") or 0) > 0],
-                                     key=lambda f: f["sell_score"], reverse=True)[:6]
+    def _slim(f):
+        return {"name": f["name"], "group": f.get("group"), "score": f["score"],
+                "max": f["max"], "pct": f.get("pct"), "sell_score": f.get("sell_score"),
+                "signal": f.get("signal", "")}
 
-                def _slim(f):
-                    return {"name": f["name"], "group": f.get("group"), "score": f["score"],
-                            "max": f["max"], "pct": f.get("pct"), "sell_score": f.get("sell_score"),
-                            "signal": f.get("signal", "")}
-
-                rating = ("偏多机会" if total_score > 65 else "中性" if total_score >= 50
-                          else "偏弱" if total_score >= 35 else "明显偏空")
-                return {
-                    "symbol": symbol,
-                    "total_score": total_score,
-                    "rating": rating,
-                    "core_dimensions": core,
-                    "group_scores": group_scores,
-                    "top_bullish": [_slim(f) for f in top_bullish],
-                    "top_bearish": [_slim(f) for f in top_bearish],
-                    "factor_count": len(factors),
-                    "guide": _FACTOR_GUIDE,
-                }
-        return {"error": f"因子引擎无响应 (exit={result.returncode})", "symbol": symbol}
-    except subprocess.TimeoutExpired:
-        return {"error": f"因子分析超时（{symbol}）", "symbol": symbol}
-    except Exception as e:
-        return {"error": f"因子分析失败: {str(e)[:200]}", "symbol": symbol}
+    rating = ("偏多机会" if total_score > 65 else "中性" if total_score >= 50
+              else "偏弱" if total_score >= 35 else "明显偏空")
+    return {
+        "symbol": symbol,
+        "total_score": total_score,
+        "rating": rating,
+        "core_dimensions": core,
+        "group_scores": group_scores,
+        "top_bullish": [_slim(f) for f in top_bullish],
+        "top_bearish": [_slim(f) for f in top_bearish],
+        "factor_count": len(factors),
+        "guide": _FACTOR_GUIDE,
+    }
 
 
 MAX_ROWS = 5000
@@ -947,109 +1010,119 @@ def tool_get_portfolio_analysis(portfolio_id: int) -> dict:
                  "name": r[1], "weight": round(float(r[3] or 0)/total_val*100, 1) if total_val > 0 else 0}
                 for r in rows]
 
-    # Call bridge portfolio_analysis
-    bridge = "/opt/investory/stocksage_alpha/bridge.py"
-    if not os.path.exists(bridge):
-        bridge = os.path.join(SCRIPT_DIR, "..", "backend", "src", "main", "python", "stocksage_alpha", "bridge.py")
-    if not os.path.exists(bridge):
-        return {"error": "因子引擎未找到"}
-
-    import tempfile
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        _json.dump(holdings, f)
-        tmp_path = f.name
-
-    try:
-        result = subprocess.run(
-            ["python3", bridge, "portfolio_analysis", "--holdings", f"@{tmp_path}"],
-            capture_output=True, text=True, timeout=110, cwd=os.path.dirname(bridge))
-        for line in result.stdout.split("\n"):
-            if line.startswith("RESULT:"):
-                data = _json.loads(line[7:].strip())
-                data["_card_type"] = "portfolio_analysis"
-                data["holdings_count"] = len(holdings)
-                # Build card output marker for frontend
-                card = {
-                    "type": "portfolio_analysis",
-                    "data": {
-                        "portfolio_score": data.get("portfolio_score", 0),
-                        "holdings_scored": data.get("holdings_scored", 0),
-                        "top_holdings": data.get("top_holdings", [])[:3],
-                        "bottom_holdings": data.get("bottom_holdings", [])[:3],
-                        "group_exposure": data.get("group_exposure", {}),
-                    }
-                }
-                data["_card"] = card
-                return data
-        return {"error": f"因子引擎无响应 (exit={result.returncode})"}
-    except Exception as e:
-        return {"error": f"组合分析失败: {str(e)[:200]}"}
-    finally:
-        os.unlink(tmp_path)
+    # Call engine portfolio_analysis (resident HTTP, subprocess fallback)
+    data = _engine("portfolio_analysis", {"holdings": _json.dumps(holdings)}, 110)
+    if not isinstance(data, dict) or data.get("error"):
+        return {"error": (data or {}).get("error", "因子引擎无响应")}
+    data["_card_type"] = "portfolio_analysis"
+    data["holdings_count"] = len(holdings)
+    data["_card"] = {
+        "type": "portfolio_analysis",
+        "data": {
+            "portfolio_score": data.get("portfolio_score", 0),
+            "holdings_scored": data.get("holdings_scored", 0),
+            "top_holdings": data.get("top_holdings", [])[:3],
+            "bottom_holdings": data.get("bottom_holdings", [])[:3],
+            "group_exposure": data.get("group_exposure", {}),
+        }
+    }
+    return data
 
 
 def tool_get_market_regime() -> dict:
     """获取当前A股市场环境：牛市/熊市/正常/谨慎/危机，含评分(0-10)。
     数据来自 StockSage 市场环境检测引擎（基于CSI300均线和动量）。"""
-    import subprocess, json as _json, os
-    bridge = "/opt/investory/stocksage_alpha/bridge.py"
-    if not os.path.exists(bridge):
-        bridge = os.path.join(SCRIPT_DIR, "..", "backend", "src", "main", "python", "stocksage_alpha", "bridge.py")
-    if not os.path.exists(bridge):
-        return {"error": "引擎未找到"}
+    data = _engine("regime_status", {}, 35)
+    if not isinstance(data, dict) or data.get("error"):
+        return {"error": (data or {}).get("error", "引擎无响应")}
+    regime = data.get("regime", {})
+    return {
+        "regime": regime.get("signal", "unknown"),
+        "score": regime.get("score", 5),
+        "description": regime.get("description", ""),
+        "exposure": regime.get("exposure", 0.85),
+        "indicators": regime.get("indicators", {}),
+    }
 
+
+def _read_cached_picks(strategy: str, limit: int):
+    """Read precomputed picks from stocksage_daily_picks (most recent date).
+    Returns a tool result dict, or None if the cache is empty."""
     try:
-        result = subprocess.run(
-            ["python3", bridge, "regime_status"],
-            capture_output=True, text=True, timeout=35, cwd=os.path.dirname(bridge))
-        for line in result.stdout.split("\n"):
-            if line.startswith("RESULT:"):
-                data = _json.loads(line[7:].strip())
-                regime = data.get("regime", {})
-                return {
-                    "regime": regime.get("signal", "unknown"),
-                    "score": regime.get("score", 5),
-                    "description": regime.get("description", ""),
-                    "exposure": regime.get("exposure", 0.85),
-                    "indicators": regime.get("indicators", {}),
-                }
-        return {"error": "引擎无响应"}
-    except Exception as e:
-        return {"error": str(e)[:200]}
+        conn = get_db_conn(); cur = conn.cursor()
+        cur.execute("SELECT MAX(pick_date) FROM stocksage_daily_picks WHERE strategy_type=%s", (strategy,))
+        row = cur.fetchone()
+        latest = row[0] if row else None
+        if latest is None:
+            cur.close(); conn.close(); return None
+        cur.execute("""SELECT stock_symbol, stock_name, buy_score, sell_score, total_score, regime, reason_text
+                       FROM stocksage_daily_picks WHERE strategy_type=%s AND pick_date=%s
+                       ORDER BY total_score DESC LIMIT %s""", (strategy, latest, limit))
+        rows = cur.fetchall()
+        cur.close(); conn.close()
+        if not rows:
+            return None
+        picks = [{"code": r[0], "name": r[1], "buy_score": float(r[2] or 0),
+                  "sell_score": float(r[3] or 0), "total_score": float(r[4] or 0),
+                  "bullish": [r[6]] if r[6] else []} for r in rows]
+        regime = rows[0][5] or "unknown"
+        card = {"type": "daily_picks", "data": {"regime": regime, "picks": picks, "scanned": 0}}
+        return {"_card_type": "daily_picks", "_card": card, "picks": picks,
+                "regime": regime, "pick_date": str(latest), "cached": True}
+    except Exception:
+        return None
+
+
+def _persist_picks(strategy: str, data: dict) -> None:
+    """Write a fresh live-scan result into stocksage_daily_picks so subsequent
+    calls that day are instant. Best-effort — never raises into the tool."""
+    import datetime as _dt
+    picks = data.get("picks", [])
+    if not picks:
+        return
+    today = _dt.date.today()
+    regime = data.get("regime", "")
+    try:
+        conn = get_db_conn(); cur = conn.cursor()
+        cur.execute("DELETE FROM stocksage_daily_picks WHERE strategy_type=%s AND pick_date=%s", (strategy, today))
+        for p in picks:
+            reason = ", ".join(p.get("bullish", [])[:3]) if isinstance(p.get("bullish"), list) else ""
+            cur.execute("""INSERT INTO stocksage_daily_picks
+                (pick_date, stock_symbol, stock_name, buy_score, sell_score, total_score, strategy_type, regime, reason_text)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (today, p.get("code", ""), p.get("name", ""), p.get("buy_score", 0),
+                 p.get("sell_score", 0), p.get("total_score", 0), strategy, regime, reason[:512]))
+        conn.commit(); cur.close(); conn.close()
+    except Exception:
+        pass
 
 
 def tool_get_daily_picks(strategy: str = "main", limit: int = 5) -> dict:
-    """获取今日选股推荐：StockSage 每日收盘后自动扫描全市场，
-    选出综合评分最高的股票。结果通过 [PICKS_CARD] 在前端渲染。"""
-    import subprocess, json as _json, os
-    bridge = "/opt/investory/stocksage_alpha/bridge.py"
-    if not os.path.exists(bridge):
-        bridge = os.path.join(SCRIPT_DIR, "..", "backend", "src", "main", "python", "stocksage_alpha", "bridge.py")
-    if not os.path.exists(bridge):
-        return {"error": "引擎未找到"}
-
-    try:
-        result = subprocess.run(
-            ["python3", bridge, "scan_universe", "--type", strategy],
-            capture_output=True, text=True, timeout=80, cwd=os.path.dirname(bridge))
-        for line in result.stdout.split("\n"):
-            if line.startswith("RESULT:"):
-                data = _json.loads(line[7:].strip())
-                picks = data.get("picks", [])[:limit]
-                card = {
-                    "type": "daily_picks",
-                    "data": {
-                        "regime": data.get("regime", "unknown"),
-                        "picks": picks,
-                        "scanned": data.get("scanned", 0),
-                    }
-                }
-                return {"_card_type": "daily_picks", "_card": card,
-                        "picks": picks, "regime": data.get("regime"),
-                        "scanned": data.get("scanned")}
-        return {"error": "扫描引擎无响应"}
-    except Exception as e:
-        return {"error": str(e)[:200]}
+    """获取今日选股推荐：StockSage 收盘后扫描全市场，选出综合评分最高的股票。
+    优先读取每日缓存（快），缓存为空时才实时扫描。结果通过 [PICKS_CARD] 渲染。"""
+    # 1) Fast path: precomputed cache (avoids the slow live scan that often timed out).
+    cached = _read_cached_picks(strategy, limit)
+    if cached:
+        return cached
+    # 2) Cache miss: live scan (slow), then persist so the rest of the day is instant.
+    data = _engine("scan_universe", {"type": strategy}, 80)
+    if not isinstance(data, dict) or data.get("error"):
+        return {"error": (data or {}).get("error", "扫描引擎无响应，且无缓存可用。请稍后再试。")}
+    picks = data.get("picks", [])[:limit]
+    if not picks:
+        return {"error": f"扫描未产生选股结果（{data.get('scanned', 0)} 只扫描）。可能是行情数据未就绪或股票池为空。"}
+    _persist_picks(strategy, data)
+    card = {
+        "type": "daily_picks",
+        "data": {
+            "regime": data.get("regime", "unknown"),
+            "picks": picks,
+            "scanned": data.get("scanned", 0),
+        }
+    }
+    return {"_card_type": "daily_picks", "_card": card,
+            "picks": picks, "regime": data.get("regime"),
+            "scanned": data.get("scanned")}
 
 
 def tool_list_strategies() -> list:
@@ -2578,7 +2651,7 @@ def main():
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description="Investory 观澜 AI Agent")
-    parser.add_argument("--mode", default="chat", choices=["chat", "suggestions"])
+    parser.add_argument("--mode", default="chat", choices=["chat", "suggestions", "populate-picks"])
     parser.add_argument("--provider", default="openai", choices=["openai", "anthropic", "openai_compat"])
     parser.add_argument("--model", default="gpt-4o-mini")
     parser.add_argument("--api-key", default=os.environ.get("AI_API_KEY", ""))
@@ -2592,6 +2665,42 @@ def main():
 
     if args.mode == "suggestions":
         generate_suggestions(args.api_key, args.model, args.api_base)
+        return
+
+    if args.mode == "populate-picks":
+        # Nightly cache warm. Two parts:
+        # 1) Scan each strategy and persist to stocksage_daily_picks (fast read path).
+        # 2) Pre-warm the resident engine's factor cache for all held A-shares, so
+        #    users' next-day "分析XX" queries hit the warm cache (instant) instead
+        #    of paying the ~90s cold per-stock fetch.
+        for strat in ("main", "golden_cross", "hot", "chip"):
+            try:
+                data = _engine("scan_universe", {"type": strat}, 120)
+                if isinstance(data, dict) and data.get("picks"):
+                    _persist_picks(strat, data)
+                    print(f"[populate-picks] {strat}: {len(data['picks'])} 只已缓存", flush=True)
+                else:
+                    print(f"[populate-picks] {strat}: 无结果 ({(data or {}).get('error','')})", flush=True)
+            except Exception as e:
+                print(f"[populate-picks] {strat} 失败: {str(e)[:120]}", flush=True)
+        # Pre-warm factor cache for held A-shares
+        try:
+            conn = get_db_conn(); cur = conn.cursor()
+            cur.execute("""SELECT DISTINCT s.symbol FROM holdings h JOIN stocks s ON h.stock_id=s.id
+                           WHERE h.total_shares > 0 AND s.market IN ('SH','SZ')""")
+            symbols = [r[0] for r in cur.fetchall()]
+            cur.close(); conn.close()
+            warmed = 0
+            for sym in symbols:
+                try:
+                    r = _engine("factor_breakdown", {"symbol": sym}, 130)
+                    if isinstance(r, dict) and r.get("factors"):
+                        warmed += 1
+                except Exception:
+                    pass
+            print(f"[populate-picks] 预热因子缓存: {warmed}/{len(symbols)} 只持仓股", flush=True)
+        except Exception as e:
+            print(f"[populate-picks] 因子预热失败: {str(e)[:120]}", flush=True)
         return
 
     if not args.input:
