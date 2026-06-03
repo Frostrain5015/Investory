@@ -100,6 +100,75 @@ def _is_complex_query(messages: list) -> bool:
     text = str(last_user.get("content", ""))
     return not _is_trivial_chitchat(text)
 
+def _latest_user_text(messages: list) -> str:
+    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    return str(last_user.get("content", "")) if last_user else ""
+
+def _has_stock_like_text(text: str) -> bool:
+    import re
+    t = text.strip()
+    if re.search(r"\b\d{6}(\.(SH|SZ|BJ))?\b", t, re.I):
+        return True
+    # Common Chinese stock-name shape: 2-8 CJK chars next to stock verbs.
+    return bool(re.search(r"[\u4e00-\u9fff]{2,8}.*(股票|这只|这支|跌|涨|估值|财报|基本面|技术面|出什么问题|能买吗)", t))
+
+def _build_workflow_hint(messages: list) -> str:
+    """Inject a short, turn-specific playbook so the model does not rediscover
+    the workflow from scratch. This is intentionally advisory: tools still
+    validate inputs and return errors, but the first tool round becomes stable.
+    """
+    text = _latest_user_text(messages)
+    low = text.lower()
+    workflows = []
+
+    stock_like = _has_stock_like_text(text)
+    stock_diagnosis_intent = any(k in text for k in (
+        "为什么跌", "为啥跌", "跌这么狠", "暴跌", "大跌", "杀跌", "为什么涨", "涨这么多", "异动",
+        "出什么问题", "利空", "利好", "踩雷", "暴雷", "分析", "怎么看", "怎么样", "基本面",
+        "技术面", "估值", "能买吗", "能不能买", "该不该", "还能持有", "风险", "财报", "业绩"
+    ))
+    if stock_like and stock_diagnosis_intent:
+        workflows.append("""【当前工作流：个股诊断】
+- 目标是诊断单只股票的状态、异动原因、基本面/技术面问题、风险和证伪条件；不要重新讨论工具顺序。
+- 第一轮并行取证：get_stock_price(symbol=用户原词, days=90)、get_market_regime；若用户问深入分析、买不买、还能不能持有、基本面/技术面综合、为什么跌/跌这么狠/大跌/暴跌/异动/出问题，则并行 get_stock_report(symbol=用户原词)。
+- 若问题含“最近/最新/消息/公告/利空/利好/异动/暴雷/出问题”等现实事件，再并行 web_search。
+- 用户给的是中文名、代码或 DB symbol 时，直接原样传给 symbol 参数；禁止为了格式解析先 search_stocks，禁止自己拼 0./1. 前缀。
+- 持仓画像只作为背景：除非用户问“要不要卖/仓位怎么办/组合影响”，不要让组合集中度、其他重仓股或该股持仓权重主导个股原因诊断。
+- 工具返回后按用户意图组织：异动诊断用“近期幅度与位置 → 公司/行业/市场原因 → 已证实/未证实 → 风险情景”；价值诊断用“正向证据 → 反向证据 → 估值/趋势 → 证伪条件”；除非名称歧义或工具报未找到，不要再查 search_stocks。""")
+
+    if any(k in text for k in ("组合", "持仓", "仓位", "集中", "分散", "体检", "调仓", "再平衡", "风险暴露")):
+        workflows.append("""【当前工作流：组合/持仓分析】
+- 第一轮至少调用 get_portfolio；若用户问风险、集中度、分散、体检或调仓，同时并行 get_market_regime、compute_sector_breakdown。
+- 需要完整组合审计时再调用 get_portfolio_report；需要权重再分配时调用 optimize_portfolio；需要相关性时调用 compute_correlation。
+- 单一持仓 >30% 主动提示集中度风险，>50% 把它作为主风险。""")
+
+    if any(k in text for k in ("买入", "卖出", "分红", "入金", "出金", "删", "删除交易", "修改交易", "编辑交易", "记录交易")) or any(k in low for k in ("buy", "sell", "dividend", "transaction")):
+        workflows.append("""【当前工作流：交易记录变更】
+- 用户要新增/修改/删除交易、入金、出金或分红时，只调用对应 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction。
+- 不用文字代替确认卡片；卡片发出后本轮不要复述卡片内容。""")
+
+    if any(k in text for k in ("自选", "关注列表", "观察列表", "加入关注", "移出关注", "加关注")) or "watchlist" in low:
+        workflows.append("""【当前工作流：自选列表】
+- 查看自选用 get_watchlist。
+- 加入自选：名称明确时可先 search_stocks 取 stockId，再 confirm_watchlist；若 search_stocks 返回多市场同名，必须 ask_user。
+- 移除自选：先 get_watchlist，再 confirm_watchlist(action='remove')。""")
+
+    if any(k in text for k in ("策略", "回测", "调参", "均线", "信号", "止损", "止盈")) or any(k in low for k in ("strategy", "backtest")):
+        workflows.append("""【当前工作流：策略/回测】
+- 写策略/生成策略：先 consult_kb('策略引擎')，再调用 generate_strategy，第一轮不输出正文。
+- 跑回测：必须使用真实 strategy_id；来源是刚保存的策略或 get_strategies 查询结果，禁止凭空编 ID。
+- 分析回测结果：用 analyze_backtest；优化建议用 suggest_strategy_optimizations。""")
+
+    if any(k in text for k in ("大盘", "市场", "行情", "全球", "美股", "港股", "汇率", "商品", "宏观", "新闻", "最新消息", "今天发生")):
+        workflows.append("""【当前工作流：市场/新闻】
+- A股市场状态调用 get_market_regime；全球市场和财经要闻调用 get_world_market。
+- 涉及最新新闻、公告、事件日期或数据库不能保证覆盖的信息，调用 web_search 后再回答。
+- CAUTION/BEAR/CRISIS 下禁止主动建议加仓、加杠杆或追高。""")
+
+    if not workflows:
+        return ""
+    return "\n\n".join(workflows) + "\n\n【执行要求】第一轮把互相独立的只读工具并行调用；工具完成后直接综合，不要把工作流步骤复述给用户。"
+
 def _read_answer_with_timeout(timeout_s: float) -> str:
     """Read one line from stdin, waiting at most timeout_s seconds.
     Returns "" on timeout. Uses select() on POSIX (where the server runs);
@@ -153,22 +222,22 @@ def build_system_prompt(kb: dict) -> str:
 {safety_text}
 
 【知识库（你的外脑——遇到不确定就查，不要硬想）】
-专业分析框架、指标合理区间、估值方法、风险与仓位、回测解读、行业特性、宏观、A股/港美股规则、常见场景应对、行为偏误都已收录在知识库。consult_kb(topic) 是低成本、高确定性的动作，应主动、频繁使用：
+专业分析框架、指标合理区间、估值方法、风险与仓位、回测解读、行业特性、宏观、A股/港美股规则、常见场景应对、行为偏误都已收录在知识库。consult_kb(topic) 是低成本、高确定性的动作，但不是每次分析的仪式化前置：
 - 当你对某个指标'算高还是低'拿不准、对某种分析方法或某类场景的标准应对感到模糊、或开始在思考链里反复推演同一件事时——第一反应是 consult_kb 查对应主题，而不是凭记忆硬答或空转。
 - 过度思考几乎总是'缺知识'或'怕出错'的表现：缺知识就查库，怕出错就把不确定性如实说出来（缺哪块数据/证据是否冲突/受何约束）。证据和框架到手后，果断给结论，不要犹豫和自我质疑。
 - 查阅知识库不丢人，凭记忆编造区间和框架才是错误。可查阅的主题：
 {kb_index}
 
 【工具调用规则】
-- ⚠ 分析铁律：做任何基本面/技术面/市场环境的分析、评估、拆解、审查前，第一步必须 consult_kb 查阅对应主题（如 基本面分析 / 技术面分析 / 市场环境分析），再调数据工具取数，最后按 KB 框架作答。需要多个主题时一次性并行查齐，不要纠结"先查哪个"。读报告时也要先 consult_kb 了解评分标准再下结论。禁止跳过 KB 直接分析。
+- ⚠ 分析铁律：用户问题命中【当前工作流】时，按工作流第一轮并行取证；没有命中工作流时，先取最直接的数据证据。只有当你拿不准分析框架、指标合理区间、报告评分标准或策略接口时，才 consult_kb 查对应主题。禁止把查 KB 当作固定第一步，也禁止跳过真实数据直接分析。
 - ⚠ 数据铁律：凡涉及具体数据必须先调工具拿真实数据再回答，禁凭记忆编造数字。不确定用什么工具时先 search_stocks / get_portfolio。
 - ⚠ 执行铁律（防过度思考，最高优先级）：参数已明确就直接开火，不在思考链里反复确认格式、合规或调用顺序——这些工具内层已处理。具体：
   ① 并行不排队：多个互相独立的只读操作（多只股票的报告/行情/评分、多个持仓查询）必须在同一轮一次性并行调用。引擎并发执行。"每次只能调一个工具"是误解，禁止自行一只一只串行。
   ② 符号免拼接：中文名（贵州茅台）、代码（600519.SH）、DB格式（1.600519）一律原样传给工具，resolve_symbol 内部完成匹配和格式转换。禁止自己拼 1./0. 前缀，也不要为解析符号先调 search_stocks。
   ③ 不预演：发出工具调用后等真实结果再分析，不要在脑内预测结果或推演格式。
-  ④ 不空转：拿不准指标区间/方法/场景就立刻 consult_kb，绝不在思考链里反复自我质疑同一件事；证据齐了就果断给结论，把不确定性如实说成"缺哪块数据/证据是否冲突"，而不是反复打转。
+  ④ 不空转：拿不准指标区间/方法/场景就立刻 consult_kb；如果工作流已给出工具顺序，直接执行工作流。证据齐了就果断给结论，把不确定性如实说成"缺哪块数据/证据是否冲突"，而不是反复打转。
 - ⚠ 交易铁律：用户要求买卖/入金/出金/分红/删改交易 → 只允许调用 confirm_create/update/delete，严禁用文字代替。
-- ⚠ 策略铁律：用户要求写策略、生成策略、设计规则、构建量化交易系统时，第一步必须 consult_kb('策略引擎（生成与回测）') 查阅可用指标标识符（如 sma/ema/rsi/macd_histogram/stop_loss 等）、判断条件（above/below/overbought/oversold）、离场专用规则（stop_loss/take_profit/trailing_stop）、仓位方法（equal_weight/fixed_pct）和 advanced 模式的 ctx 接口。禁止凭记忆编造指标名或参数格式。
+- ⚠ 策略铁律：用户要求写策略、生成策略、设计规则、构建量化交易系统时，第一步必须 consult_kb('策略引擎') 查阅可用指标标识符（如 sma/ema/rsi/macd_histogram/stop_loss 等）、判断条件（above/below/overbought/oversold）、离场专用规则（stop_loss/take_profit/trailing_stop）、仓位方法（equal_weight/fixed_pct）和 advanced 模式的 ctx 接口。禁止凭记忆编造指标名或参数格式。
 - ⚠ 卡片铁律：confirm_* / ask_user 弹出卡片后不得复述卡片内容；用户对卡片提修改要求 → 重调同一个工具带修正参数，禁调 remember。
 - 轻重分流：简单行情、涨跌、名称匹配、短期K线、PE/PB、新闻事实、术语解释，不调用 StockSage 报告；优先用轻量查询工具或直接解释。
 - 只有用户明确要求”深度分析、审计报告、完整报告、专业分析、证据链、风险拆解、组合体检、今日候选理由”，或轻量回答后用户继续追问更深层原因时，才调用 get_stock_report / get_portfolio_report / get_daily_picks_report。
@@ -1591,13 +1660,20 @@ def _portfolio_report_holdings(portfolio_id: int) -> list:
 
 def tool_get_stock_report(symbol: str) -> dict:
     """Generate an auditable StockSage report for one A-share stock."""
-    if not _is_a_share(symbol):
+    conn = get_db_conn()
+    try:
+        db_sym = resolve_symbol(conn, symbol)
+    finally:
+        conn.close()
+    if not db_sym:
+        return {"error": f"未找到股票: {symbol}", "symbol": symbol}
+    if not _is_a_share(db_sym):
         return {
             "error": f"StockSage 审计报告当前仅覆盖A股，{symbol} 不是A股标的。请改用行情、新闻和通用分析工具。",
             "symbol": symbol,
             "unsupported_market": True,
         }
-    report = _engine("stocksage_report", {"report_type": "stock_report", "symbol": symbol}, 110)
+    report = _engine("stocksage_report", {"report_type": "stock_report", "symbol": db_sym}, 110)
     return _report_llm_result(report)
 
 
@@ -1684,11 +1760,11 @@ _PARAM_SCHEMAS = {
         "query": {"type": "string", "description": "股票名称或代码"}
     }, "required": ["query"]},
     "get_stock_price": {"type": "object", "properties": {
-        "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"},
+        "symbol": {"type": "string", "description": "股票名称、常见代码或DB格式symbol均可，例如贵州茅台 / 600519.SH / 1.600519；工具会自动解析"},
         "days": {"type": "integer", "description": "查询天数：1或省略=最新价，>1=历史K线。默认1，最大500"}
     }, "required": ["symbol"]},
     "get_stock_report": {"type": "object", "properties": {
-        "symbol": {"type": "string", "description": "DB格式A股symbol，例如1.600519"}
+        "symbol": {"type": "string", "description": "A股名称、常见代码或DB格式symbol均可，例如百诚医药 / 301096.SZ / 0.301096；工具会自动解析，禁止手工拼前缀"}
     }, "required": ["symbol"]},
     "get_portfolio_report": {"type": "object", "properties": {}, "required": []},
     "get_daily_picks_report": {"type": "object", "properties": {
@@ -1766,7 +1842,7 @@ _PARAM_SCHEMAS = {
         "commission_pct": {"type": "number", "description": "手续费率(小数)，默认0.008即千分之八"}
     }, "required": ["strategy_id"]},
     "get_fundamentals": {"type": "object", "properties": {
-        "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
+        "symbol": {"type": "string", "description": "股票名称、常见代码或DB格式symbol均可，例如贵州茅台 / 600519.SH / 1.600519；工具会自动解析"}
     }, "required": ["symbol"]},
     "benchmark_compare": {"type": "object", "properties": {
         "benchmark": {"type": "string", "description": "基准代码，默认000001.SH"},
@@ -2672,16 +2748,50 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         if delta.content:
             sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
 
+    def _replay_text(label: str, text: str, limit: int = 3500) -> str:
+        text = (text or "").strip()
+        if not text:
+            return ""
+        if len(text) > limit:
+            text = "..." + text[-limit:]
+        return f"{label}\n{text}"
+
+    def _assistant_tool_content(reasoning_text: str, content_text: str):
+        """Preserve model-side continuity across the tool boundary.
+
+        OpenAI-compatible reasoning streams expose reasoning_content to our UI, but
+        that field is not automatically replayed in the next chat.completions call.
+        If the assistant turn that made tool calls is stored as content=None, the
+        model sees only "I called tools", not the plan that led there, so the next
+        response tends to restart its reasoning. A compact assistant content block
+        keeps the post-tool call connected without changing user-facing output.
+        """
+        parts = []
+        content_text = (content_text or "").strip()
+        if content_text:
+            parts.append(_replay_text("已输出给用户的内容：", content_text, 1500))
+        reasoning_text = (reasoning_text or "").strip()
+        if reasoning_text:
+            parts.append(_replay_text("工具调用前的推理上下文（用于延续分析，不要复述给用户）：", reasoning_text))
+        return "\n\n".join(p for p in parts if p) or None
+
     def _consume(stream):
         """Read a streamed completion: emit text/reasoning deltas, accumulate any
-        tool-call fragments. Returns (tool_calls_dict, has_tools, got_text). Single
-        source of truth for the chunk loop that used to be copy-pasted three times (#5).
+        tool-call fragments. Returns (tool_calls_dict, has_tools, got_text,
+        reasoning_text, content_text). Single source of truth for the chunk loop (#5).
         got_text tracks whether any *answer* content (not reasoning) was emitted, so
         the caller can detect a silent empty completion after a tool round."""
         tcs, has, got_text = {}, False, False
+        reasoning_parts, content_parts = [], []
         for chunk in stream:
             if not chunk.choices: continue
             delta = chunk.choices[0].delta
+            rc = getattr(delta, "reasoning_content", None)
+            if rc:
+                reasoning_parts.append(rc)
+            content = getattr(delta, "content", None)
+            if content:
+                content_parts.append(content)
             if delta.tool_calls:
                 has = True
                 for tc in delta.tool_calls:
@@ -2693,19 +2803,21 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                         if tc.function.name: tcs[idx]["name"] += tc.function.name
                         if tc.function.arguments: tcs[idx]["args"] += tc.function.arguments
             else:
-                if getattr(delta, "content", None): got_text = True
+                if content: got_text = True
                 _emit_delta(delta)
-        return tcs, has, got_text
+        return tcs, has, got_text, "".join(reasoning_parts), "".join(content_parts)
 
     # Always stream first. If tool calls appear mid-stream, collect and handle.
-    tool_calls, has_tools, got_text = _consume(_stream_with_fallback(formatted))
+    tool_calls, has_tools, got_text, reasoning_text, content_text = _consume(_stream_with_fallback(formatted))
 
     total_tool_calls = 0
     web_search_count = 0
     gathered = {}  # tool name -> latest result JSON, replayed next turn via [CONTEXT] (#1)
     while has_tools:
         sorted_tools = [tool_calls[i] for i in sorted(tool_calls)]
-        formatted.append({"role": "assistant", "content": None, "tool_calls": [
+        formatted.append({"role": "assistant",
+                          "content": _assistant_tool_content(reasoning_text, content_text),
+                          "tool_calls": [
             {"id": t["id"], "type": "function", "function": {"name": t["name"], "arguments": t["args"]}}
             for t in sorted_tools
         ]})
@@ -2724,7 +2836,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             sorted_tools = [t for t in sorted_tools if t["name"] != "ask_user"]
             if not sorted_tools:
                 # No other tools this round — stream next response
-                tool_calls, has_tools, got_text = _consume(_stream_with_fallback(formatted))
+                tool_calls, has_tools, got_text, reasoning_text, content_text = _consume(_stream_with_fallback(formatted))
                 continue  # back to while has_tools
 
         # Split tools: those within limit run in parallel, excess get error.
@@ -2780,7 +2892,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                 return
 
         # Call again — may produce more tool calls or final content
-        tool_calls, has_tools, got_text = _consume(_stream_with_fallback(formatted))
+        tool_calls, has_tools, got_text, reasoning_text, content_text = _consume(_stream_with_fallback(formatted))
 
     # Empty-completion guard: a tool-using turn ended without any answer text
     # (context bloated by big reports, or the thinking budget was fully consumed).
@@ -2790,7 +2902,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         formatted.append({"role": "user",
                           "content": "请基于以上工具已返回的数据，直接用中文给出简洁的分析结论，不要再调用工具。"})
         try:
-            _, _, got_text = _consume(_stream_with_fallback(formatted))
+            _, _, got_text, _, _ = _consume(_stream_with_fallback(formatted))
         except Exception:
             got_text = False
         if not got_text:
@@ -3098,7 +3210,11 @@ def main():
                 system_prompt += "\n\n" + recalled
     if args.deep_think:
         system_prompt += "\n\n深度思考模式：充分推理后给出简洁结论（3-5句）。如果要求写策略代码：Investory格式def decide(ctx)函数，只用numpy，禁止pandas/聚宽/米筐API。"
-    full_messages = [{"role": "system", "content": system_prompt}] + messages
+    full_messages = [{"role": "system", "content": system_prompt}]
+    workflow_hint = _build_workflow_hint(messages)
+    if workflow_hint:
+        full_messages.append({"role": "system", "content": workflow_hint})
+    full_messages += messages
 
     try:
         if args.provider == "anthropic":
