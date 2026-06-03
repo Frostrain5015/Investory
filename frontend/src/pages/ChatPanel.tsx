@@ -722,7 +722,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         ))}
         {streaming && (
           <div className="flex justify-start">
-            <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${streamText.startsWith('⚠') ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-700 border border-slate-100'}`}>
+            <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${streamText.startsWith('⚠') ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-700 border border-slate-100'}`}>
               {(() => {
                 // Fold <think> XML fallback into the live timeline so providers
                 // that don't emit reasoning_content still get a step-by-step trace.
@@ -755,7 +755,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                   {showGenericPending && (
                     <span className="inline-flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>
                   )}
-                  {after && <div className="prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded"><ReactMarkdown remarkPlugins={[remarkGfm]}>{after}</ReactMarkdown></div>}
+                  {after && <div className="prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-100 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto"><ReactMarkdown remarkPlugins={[remarkGfm]}>{after}</ReactMarkdown></div>}
                 </>)
               })()}
             </div>
