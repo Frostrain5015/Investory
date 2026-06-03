@@ -885,38 +885,137 @@ def tool_suggest_strategy_optimizations(backtest_id: int = None, strategy_id: in
 
 # ── Memory / Knowledge Base ──────────────────────────────────────────────
 
-def tool_remember(user_id: int, fact: str) -> str:
-    """用户主动要求记住的信息，持久化到知识库"""
-    conn = get_db_conn(); cur = conn.cursor()
-    cur.execute("INSERT INTO ai_chat_history (user_id, role, content) VALUES (%s, 'memory', %s)",
-                 (user_id, fact[:2000]))
-    conn.commit()
-    # Keep max 50 memories per user
-    cur.execute("DELETE FROM ai_chat_history WHERE user_id=%s AND role='memory' AND id NOT IN (SELECT id FROM (SELECT id FROM ai_chat_history WHERE user_id=%s AND role='memory' ORDER BY id DESC LIMIT 50) AS t)", (user_id, user_id))
-    conn.commit()
-    cur.close(); conn.close()
-    return "已记住"
+# ── Vector memory (Phase 3) ──────────────────────────────────────────────────
+# Replaces the old flat ai_chat_history role='memory' with content + embedding
+# stored in ai_memory. Embeddings come from DashScope text-embedding-v3 (same
+# OpenAI-compatible /embeddings endpoint as the chat API). Per-user ≤50 vectors
+# × ~6KB each → brute-force cosine in Python is effectively instant.
 
-def load_memories(user_id: int) -> str:
-    """加载用户主动保存的记忆，总量上限 3000 字符"""
+_EMBED_CACHE = {}  # content_hash -> embedding list, lives for the process lifetime
+
+
+def _get_embedding(text: str) -> list:
+    """Return a float list embedding for text, or [] on failure. Cached in-process."""
+    import hashlib, json as _json
+    h = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if h in _EMBED_CACHE:
+        return _EMBED_CACHE[h]
+    try:
+        import urllib.request
+        api_key = os.environ.get("AI_API_KEY", "")
+        api_base = os.environ.get("AI_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        req = urllib.request.Request(
+            f"{api_base}/embeddings",
+            data=_json.dumps({"model": "text-embedding-v3", "input": text}).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = _json.loads(resp.read().decode("utf-8"))
+            emb = data["data"][0]["embedding"]
+            _EMBED_CACHE[h] = emb
+            return emb
+    except Exception:
+        return []
+
+
+def _cosine_sim(a: list, b: list) -> float:
+    """Cosine similarity between two equal-length float lists."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na > 0 and nb > 0 else 0.0
+
+
+def tool_remember(user_id: int, fact: str) -> str:
+    """用户主动要求记住的信息。生成embedding并持久化，与已有记忆去重（余弦>0.92视为重复则更新）。"""
+    import json as _json
+    content = fact[:2000]
+    emb = _get_embedding(content)
     conn = get_db_conn(); cur = conn.cursor()
-    cur.execute("SELECT content FROM ai_chat_history WHERE user_id=%s AND role='memory' ORDER BY id DESC LIMIT 50", (user_id,))
-    rows = cur.fetchall()
-    cur.close(); conn.close()
-    if not rows: return ""
-    lines, budget = [], 3000
-    for (content,) in rows:
-        line = f"- {content}"
-        if sum(len(l) for l in lines) + len(line) > budget:
-            break
-        lines.append(line)
-    return "用户保存的记忆：\n" + "\n".join(lines)
+    try:
+        # Check for near-duplicates (cosine > 0.92) — update instead of insert.
+        cur.execute("SELECT id, embedding FROM ai_memory WHERE user_id=%s AND embedding IS NOT NULL", (user_id,))
+        dup_id = None
+        for rid, raw in cur.fetchall():
+            if not raw: continue
+            try:
+                old_emb = _json.loads(raw)
+            except Exception:
+                old_emb = []
+            if _cosine_sim(emb, old_emb) > 0.92:
+                dup_id = rid
+                break
+        if dup_id:
+            cur.execute("UPDATE ai_memory SET content=%s, embedding=%s WHERE id=%s",
+                        (content, _json.dumps(emb) if emb else None, dup_id))
+            conn.commit()
+            cur.close(); conn.close()
+            return "已更新（与已有记忆去重）"
+        # Insert new
+        cur.execute("INSERT INTO ai_memory (user_id, content, embedding) VALUES (%s, %s, %s)",
+                     (user_id, content, _json.dumps(emb) if emb else None))
+        conn.commit()
+        # Cap: keep at most 50 per user (drop the oldest entries)
+        cur.execute("DELETE FROM ai_memory WHERE user_id=%s AND id NOT IN (SELECT id FROM (SELECT id FROM ai_memory WHERE user_id=%s ORDER BY id DESC LIMIT 50) AS t)",
+                     (user_id, user_id))
+        conn.commit()
+        cur.close(); conn.close()
+        return "已记住" if emb else "已记住（未生成向量）"
+    except Exception as e:
+        conn.rollback()
+        cur.close(); conn.close()
+        return f"保存失败: {str(e)[:100]}"
+
+
+def _recall_memories(user_id: int, query: str) -> str:
+    """Embed the latest user message, cosine-recall top-k ≤6 relevant
+    memories, and return them as a formatted string for system-prompt injection.
+    If no embedding available (API key missing, etc.), returns empty string."""
+    emb = _get_embedding(query)
+    if not emb:
+        return ""
+    import json as _json
+    conn = get_db_conn(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT id, content, embedding FROM ai_memory WHERE user_id=%s AND embedding IS NOT NULL", (user_id,))
+        scored = []
+        for _, content, raw in cur.fetchall():
+            try:
+                mem_emb = _json.loads(raw) if raw else []
+            except Exception:
+                mem_emb = []
+            sim = _cosine_sim(emb, mem_emb)
+            if sim > 0.5:  # relevance threshold
+                scored.append((sim, content))
+        cur.close(); conn.close()
+        scored.sort(reverse=True)
+        top = scored[:6]
+        if not top:
+            return ""
+        lines = []
+        for sim, content in top:
+            lines.append(f"- {content}")
+        return "用户相关记忆（当前话题的上下文参考）：\n" + "\n".join(lines)
+    except Exception:
+        cur.close(); conn.close()
+        return ""
+
 
 def tool_forget(user_id: int, keyword: str) -> str:
-    """删除包含关键词的记忆"""
+    """删除包含关键词的记忆。同时清理 ai_memory 和旧的 ai_chat_history。"""
     conn = get_db_conn(); cur = conn.cursor()
-    cur.execute("DELETE FROM ai_chat_history WHERE user_id=%s AND role='memory' AND content LIKE %s", (user_id, f"%{keyword}%"))
-    deleted = cur.rowcount
+    # Escape LIKE wildcards so '%' and '_' in the keyword don't turn into
+    # unintended pattern matches (long-standing bug fix).
+    safe = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    deleted = 0
+    for table, col in [("ai_memory", "content"), ("ai_chat_history", "content")]:
+        try:
+            cur.execute(f"DELETE FROM {table} WHERE user_id=%s AND {col} LIKE %s",
+                        (user_id, f"%{safe}%"))
+            deleted += cur.rowcount
+        except Exception:
+            pass  # table may not exist yet
     conn.commit(); cur.close(); conn.close()
     return f"已删除 {deleted} 条相关记忆"
 
@@ -2712,11 +2811,17 @@ def main():
 
     kb = load_knowledge_base()
     system_prompt = build_system_prompt(kb)
-    # Inject user's saved memories as context
+    # Inject relevant vector memories (cosine recall, replaces old flat load_memories)
     if args.user_id > 0:
-        memories = load_memories(args.user_id)
-        if memories:
-            system_prompt += "\n\n" + memories
+        last_user = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                last_user = str(m.get("content", ""))[:500]
+                break
+        if last_user:
+            recalled = _recall_memories(args.user_id, last_user)
+            if recalled:
+                system_prompt += "\n\n" + recalled
     if args.deep_think:
         system_prompt += "\n\n深度思考模式：充分推理后给出简洁结论（3-5句）。如果要求写策略代码：Investory格式def decide(ctx)函数，只用numpy，禁止pandas/聚宽/米筐API。"
     full_messages = [{"role": "system", "content": system_prompt}] + messages

@@ -175,8 +175,9 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
               <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-indigo-400" />
               <div className="flex-1 flex items-center gap-1.5 text-indigo-600">
                 <BookOpen className="w-3 h-3" />
-                <span className="font-medium">{lang === 'en' ? 'Consulting knowledge base' : '查阅知识库'} · {step.topic}</span>
+                <span className="font-medium">{lang === 'en' ? 'Consulting knowledge base' : '查阅知识库'}</span>
                 <Check className="w-3 h-3 opacity-70" />
+                <span className="text-[10px] text-slate-400">· {step.topic}</span>
               </div>
             </motion.div>
           )
