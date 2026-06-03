@@ -140,13 +140,11 @@ def load_knowledge_base() -> dict:
 
 
 def build_system_prompt(kb: dict) -> str:
-    principles_text = "\n".join(
-        f"- **{p['name']}**: {p['description']}（应用：{p['application']}）"
-        for p in kb.get("core_principles", [])
-    )
-    metrics_text = "\n".join(f"- **{k}**: {v}" for k, v in kb.get("key_metrics_guide", {}).items())
     safety = kb.get("safety_net", {})
     safety_text = "\n".join(f"- **{k}**: {v}" for k, v in safety.items())
+    # KB index: auto-generated from articles so the catalog never drifts.
+    articles = kb.get("articles", {})
+    kb_index = "\n".join(f"- {topic}：{a.get('summary', '')}" for topic, a in articles.items())
     today = __import__('datetime').date.today()
     return f"""你是「观澜」（Horizon），Investory 内置的金融分析助理。风格：冷静、专业、简洁。不寒暄，不恭维，不废话。用数据说话。
 
@@ -155,29 +153,16 @@ def build_system_prompt(kb: dict) -> str:
 【定位】
 风格中立的投资助理。价值、成长、动量、趋势、量化、套利、对冲、被动定投——所有主流方法论都在你的知识范围内。不预设用户偏好，按用户当前持仓特征和提问意图判断其风格倾向，在其语境内回答。不向用户布道任何特定流派。
 
-【核心分析框架】
-{principles_text}
-
-【指标解读参考】
-{metrics_text}
-
 【安全网（最高优先级，违反任何一条都是错误回答）】
 {safety_text}
 
-【分析框架（Skills）】
-系统内置三个分析框架，用户的相关问题会自动触发。你也可以主动调用 use_skill 工具激活：
-- stock-fundamentals：基本面分析（估值、盈利能力、财务健康）。触发词：基本面/估值/财务健康。
-- stock-technicals：技术面分析（趋势、动量、支撑压力）。触发词：技术面/走势/时机/支撑/压力。
-- market-analysis：市场环境分析（大盘、仓位、板块轮动）。触发词：大盘/行情/仓位/市场。
-
-使用规则：收到匹配的触发词后，先 use_skill 激活框架，再按框架步骤调用工具获取数据。框架输出格式已预设，按格式回答即可。
-
-【多因子评分解读】
-get_factor_scores 仅支持A股，返回综合分(0-100)与各维度得分。读分标准：
-- 综合分：>65偏多机会，50-65中性，35-50偏弱，<35明显偏空。
-- 维度得分率(pct=得分/满分)：>70强，40-70中等，<40弱。价值高=便宜，成长高=增速好，质量高=ROE/现金流/负债健康，动量高=趋势强。
-- sell_score 是该因子看空强度，与买入分独立；买入分与卖出分都高=信号矛盾，需谨慎。
-- 港股/美股/指数没有因子数据：直接用 get_stock_price 取行情 + web_search 查基本面与新闻，自行分析，不要调 get_factor_scores。
+【知识库（按需查阅）】
+专业分析框架、指标解读、评分标准已收录在知识库，需要时调用 consult_kb(topic) 查阅，不要凭记忆作答。可查阅的主题：
+{kb_index}
+查阅规则：
+- 做基本面/技术面/市场环境分析前，先 consult_kb 对应主题，再按框架步骤调工具取数、按框架格式作答。
+- 需要某指标的定义或好坏阈值、某因子评分的解读标准时，先 consult_kb 再下结论。
+- 一次只查所需主题，不要一次性查阅全部。
 
 【工具调用规则】
 - ⚠ 数据铁律（最高优先级，覆盖所有数据类问题）：凡涉及任何具体数据——个股行情/评分/基本面、持仓、盈亏、交易、回测、市场环境、自选、新闻——必须先调用对应工具拿真实数据再回答。持仓画像和长期记忆只作背景参考，严禁据此直接给出价格、涨跌、评分、权重等数字结论。宁可多调一次工具，也不要凭记忆或画像编造数字。不确定该用哪个工具时，先 search_stocks / get_portfolio 起步。
@@ -427,8 +412,8 @@ MAX_WEB_SEARCHES = 3
 #   - 'mutation'  : writes to DB or external state (always behind confirm UI)
 # The frontend uses this to colour-code and icon-tag each step in the timeline.
 TOOL_CATEGORIES = {
-    # ── skill ───────────────────────────────────────────────────────────
-    "use_skill": "analysis",
+    # ── knowledge base ──────────────────────────────────────────────────
+    "consult_kb": "analysis",
     # ── query ──────────────────────────────────────────────────────────
     "get_portfolio": "query",
     "search_stocks": "query",
@@ -872,23 +857,29 @@ def tool_forget(user_id: int, keyword: str) -> str:
     conn.commit(); cur.close(); conn.close()
     return f"已删除 {deleted} 条相关记忆"
 
-def tool_use_skill(name: str) -> dict:
-    """激活一个分析框架（skill）：stock-fundamentals / stock-technicals / market-analysis。
-    调用后框架指令会作为工具结果返回，请严格按框架步骤执行分析。"""
+def tool_consult_kb(topic: str) -> dict:
+    """查阅知识库中的某个主题（投资原则/指标解读/因子评分解读/基本面分析/技术面分析/市场环境分析等）。
+    返回该主题的完整内容，请据此执行分析或解读，不要凭记忆作答。"""
     kb = load_knowledge_base()
-    skills = kb.get("skills", {})
-    skill = skills.get(name)
-    if not skill:
-        return {"error": f"未知分析框架: {name}，可选: {', '.join(skills.keys())}"}
-    # Emit skill event for frontend timeline book icon
-    print(f"[SKILL]\t{name}\t{skill.get('name', name)}", flush=True)
+    articles = kb.get("articles", {})
+    if not articles:
+        return {"error": "知识库为空"}
+    article = articles.get(topic)
+    # Fuzzy match if the exact topic isn't found (model may paraphrase).
+    if article is None:
+        t = (topic or "").strip()
+        for name, a in articles.items():
+            if t and (t in name or name in t):
+                topic, article = name, a
+                break
+    if article is None:
+        return {"error": f"知识库无此主题: {topic}。可查阅: {', '.join(articles.keys())}"}
+    # Emit KB event for the frontend timeline book indicator.
+    print(f"[KB]\t{topic}", flush=True)
     return {
-        "skill": name,
-        "name": skill.get("name", name),
-        "tools": skill.get("tools", []),
-        "steps": skill.get("steps", []),
-        "output_format": skill.get("output", ""),
-        "instruction": "请严格按照上述步骤执行分析。先并行调用所有tool获取数据，再按框架输出结论。"
+        "topic": topic,
+        "content": article.get("content", ""),
+        "instruction": "已查阅知识库。请严格按上述内容执行分析/解读，先并行调用所需数据工具，再按框架格式作答。"
     }
 
 def tool_web_search(query: str, count: int = 5) -> dict:
@@ -1382,10 +1373,10 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {"keyword": {"type": "string", "description": "要删除的记忆关键词"}}, "required": ["keyword"]}
     }},
     {"type": "function", "function": {
-        "name": "use_skill", "description": "激活一个分析框架来指导后续分析。可选: stock-fundamentals(基本面), stock-technicals(技术面), market-analysis(市场环境)。激活后框架的步骤和数据源会在结果中列出，请严格遵循。",
+        "name": "consult_kb", "description": "查阅知识库中的专业主题，获取分析框架/指标解读/评分标准后再作答。可查阅: 投资原则, 指标解读, 因子评分解读, 基本面分析, 技术面分析, 市场环境分析。做基本面/技术面/市场分析前，或需要某指标定义/评分好坏标准时必须先查阅，不要凭记忆。",
         "parameters": {"type": "object", "properties": {
-            "name": {"type": "string", "description": "分析框架名称: stock-fundamentals / stock-technicals / market-analysis"}
-        }, "required": ["name"]}
+            "topic": {"type": "string", "description": "知识库主题名，如 基本面分析 / 技术面分析 / 市场环境分析 / 指标解读 / 因子评分解读 / 投资原则"}
+        }, "required": ["topic"]}
     }},
     {"type": "function", "function": {
         "name": "web_search", "description": "联网搜索。凡涉及新闻、时事、最新动态、具体事件日期和细节——你无法从数据库回答的一切——必须先调用此工具再回复，禁止凭记忆编造",
@@ -1666,8 +1657,8 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_analyze_backtest(args.get("id"))
     elif name == "suggest_strategy_optimizations":
         return tool_suggest_strategy_optimizations(args.get("backtest_id"), args.get("strategy_id"))
-    elif name == "use_skill":
-        return tool_use_skill(args.get("name", ""))
+    elif name == "consult_kb":
+        return tool_consult_kb(args.get("topic", ""))
     elif name == "web_search":
         return tool_web_search(args.get("query", ""), args.get("count", 5))
     elif name == "get_fundamentals":
@@ -2107,8 +2098,8 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0, cal
     # the way the old name-only matching did.
     import time as _time, uuid as _uuid
     cid = call_id or _uuid.uuid4().hex[:8]
-    # use_skill emits its own [SKILL] line — don't double-show as a regular tool
-    skip_tool_line = name == "use_skill"
+    # consult_kb emits its own [KB] line — don't double-show as a regular tool
+    skip_tool_line = name == "consult_kb"
     if not skip_tool_line:
         print(f"[TOOL] {name}\t{_tool_category(name)}\t{cid}", flush=True)
     t0 = _time.monotonic()

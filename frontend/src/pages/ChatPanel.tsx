@@ -17,7 +17,7 @@ interface PicksCard { regime: string; picks: { code: string; name: string; total
 export type ToolCategory = 'query' | 'analysis' | 'mutation'
 export type TimelineStep =
   | { kind: 'thinking'; text: string; _ts?: number; _elapsed?: number }
-  | { kind: 'skill'; name: string; displayName: string }
+  | { kind: 'kb'; topic: string }
   | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string; summary?: string; callId?: string }
 interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard }
 interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
@@ -168,20 +168,21 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
           const segDone = i < steps.length - 1 || done
           return <ThinkingSegment key={i} text={step.text} done={segDone} _ts={step._ts} _elapsed={step._elapsed} />
         }
-        if (step.kind === 'skill') {
+        if (step.kind === 'kb') {
           return (
             <motion.div key={i} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
               className="mb-1.5 flex items-start gap-2 text-[11px]">
               <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-indigo-400" />
               <div className="flex-1 flex items-center gap-1.5 text-indigo-600">
                 <BookOpen className="w-3 h-3" />
-                <span className="font-medium">{step.displayName}</span>
+                <span className="font-medium">{lang === 'en' ? 'Consulting knowledge base' : '查阅知识库'} · {step.topic}</span>
                 <Check className="w-3 h-3 opacity-70" />
               </div>
             </motion.div>
           )
         }
-        return <ToolStepDisplay key={i} step={step} lang={lang} />
+        if (step.kind === 'tool') return <ToolStepDisplay key={i} step={step} lang={lang} />
+        return null  // unknown/legacy step kinds (e.g. old 'skill') — skip gracefully
       })}
     </div>
   )
@@ -396,11 +397,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           }
         } catch {}
       })
-      es.addEventListener('skill', (e) => {
-        const d = JSON.parse(e.data) as { name?: string; displayName?: string }
-        if (!d.name) return
+      es.addEventListener('kb', (e) => {
+        const d = JSON.parse(e.data) as { topic?: string }
+        if (!d.topic) return
         stampClosedElapsed(timelineRef.current)
-        timelineRef.current = [...timelineRef.current, { kind: 'skill', name: d.name, displayName: d.displayName || d.name }]
+        timelineRef.current = [...timelineRef.current, { kind: 'kb', topic: d.topic }]
         pushTimeline()
       })
       es.addEventListener('tool', (e) => {

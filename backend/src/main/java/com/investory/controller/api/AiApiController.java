@@ -272,17 +272,14 @@ public class AiApiController {
                             String errMsg = parts.length > 2 ? parts[2] : "";
                             markToolDone(timeline, callId, name, true, null, errMsg);
                             session.emitToolFail(uid, callId, name, errMsg);
-                        } else if (line.startsWith("[SKILL]")) {
-                            // Payload: "<name>\t<displayName>"
-                            String[] parts = line.substring(7).trim().split("\t", 2);
-                            String skillName = parts.length > 0 ? parts[0] : "";
-                            String displayName = parts.length > 1 ? parts[1].trim() : skillName;
+                        } else if (line.startsWith("[KB]")) {
+                            // Payload: "<topic>" — agent consulted the knowledge base.
+                            String topic = line.substring(4).trim();
                             openThinking[0] = null;
-                            Map<String, Object> skillStep = new LinkedHashMap<>();
-                            skillStep.put("kind", "skill"); skillStep.put("name", skillName);
-                            skillStep.put("displayName", displayName);
-                            timeline.add(skillStep);
-                            session.emitSkill(uid, skillName, displayName);
+                            Map<String, Object> kbStep = new LinkedHashMap<>();
+                            kbStep.put("kind", "kb"); kbStep.put("topic", topic);
+                            timeline.add(kbStep);
+                            session.emitKb(uid, topic);
                         } else if (line.startsWith("[TOOL]")) {
                             // Payload: "<name>\t<category>\t<callId>" (latter two optional)
                             String[] parts = line.substring(6).trim().split("\t", 3);

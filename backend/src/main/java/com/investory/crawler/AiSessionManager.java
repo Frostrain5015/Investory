@@ -109,11 +109,10 @@ public class AiSessionManager {
         emitToAll(get(userId), "reasoning", Map.of("msg", chunk));
     }
 
-    public void emitSkill(long userId, String name, String displayName) {
+    public void emitKb(long userId, String topic) {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("name", name);
-        data.put("displayName", displayName);
-        emitToAll(get(userId), "skill", data);
+        data.put("topic", topic);
+        emitToAll(get(userId), "kb", data);
     }
 
     public void emitTool(long userId, String name, String category, String callId) {
