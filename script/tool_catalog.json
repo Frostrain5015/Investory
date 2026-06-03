@@ -1,7 +1,7 @@
 [
   {
     "name": "get_portfolio",
-    "description": "获取当前持仓组合的完整数据：每只标的的名称、代码、市值、盈亏比例、权重。用户问持仓相关问题时必须先调用此工具。",
+    "description": "【数据铁律：须调用此工具获取真实持仓数据，禁凭记忆作答】 获取当前持仓组合的完整数据：每只标的的名称、代码、市值、盈亏比例、权重。用户问持仓相关问题时必须先调用此工具。",
     "category": "query"
   },
   {
@@ -16,72 +16,72 @@
   },
   {
     "name": "get_market_regime",
-    "description": "获取当前A股市场环境（牛市/熊市/正常/谨慎/危机）及评分(0-10)。用户问'现在市场怎么样''大盘什么情况'时调用。",
+    "description": "【数据铁律：须调用获取真实市场环境数据】 获取当前A股市场环境（牛市/熊市/正常/谨慎/危机）及评分(0-10)。用户问'现在市场怎么样''大盘什么情况'时调用。",
     "category": "query"
   },
   {
     "name": "get_daily_picks",
-    "description": "获取今日智能选股推荐：每日收盘后自动全市场扫描选出的综合评分最高股票。用户问'今天有什么推荐''最近该买什么'时调用。结果会渲染为推荐卡片。",
+    "description": "【数据铁律：须调用获取真实选股推荐】 获取今日智能选股推荐：每日收盘后自动全市场扫描选出的综合评分最高股票。用户问'今天有什么推荐''最近该买什么'时调用。结果会渲染为推荐卡片。",
     "category": "analysis"
   },
   {
     "name": "get_backtests",
-    "description": "获取最近的历史回测记录和结果指标",
+    "description": "【数据铁律：须调用获取真实回测数据】 获取最近的历史回测记录和结果指标",
     "category": "query"
   },
   {
     "name": "list_strategies",
-    "description": "获取用户已保存的策略列表",
+    "description": "【数据铁律：须调用获取真实策略列表】 获取用户已保存的策略列表",
     "category": "query"
   },
   {
     "name": "get_strategy",
-    "description": "获取策略的完整规则详情（入场条件、离场条件、指标参数、逻辑组合、仓位管理）。用户要求评价或分析某个策略时必须调用此工具。",
+    "description": "【数据铁律：须调用获取真实策略详情】 获取策略的完整规则详情（入场条件、离场条件、指标参数、逻辑组合、仓位管理）。用户要求评价或分析某个策略时必须调用此工具。",
     "category": "query"
   },
   {
     "name": "generate_strategy",
-    "description": "生成量化策略的唯一途径。用户说写策略/构建策略/设计策略/帮我写/生成XXX策略时必须调用，且第一轮对话只能调用此工具、不得输出任何文字。description必须按以下格式写：第一行策略名称，之后分行列出入场条件、出场条件、止损规则、仓位管理、风险控制（每行以人话清晰说明，不用公式符号）。code: def decide(ctx):函数，ctx键:symbol date open high low close volume has_position shares avg_cost cash total_equity，返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只用numpy和math，≤60行。禁止pandas/聚宽/米筐。",
+    "description": "【策略铁律：第一轮对话必须且只能调用此工具，不得输出任何文字。调用成功后也不得说话——前端自动展示策略卡片】 生成量化策略的唯一途径。用户说写策略/构建策略/设计策略/帮我写/生成XXX策略时必须调用，且第一轮对话只能调用此工具、不得输出任何文字。description必须按以下格式写：第一行策略名称，之后分行列出入场条件、出场条件、止损规则、仓位管理、风险控制（每行以人话清晰说明，不用公式符号）。code: def decide(ctx):函数，ctx键:symbol date open high low close volume has_position shares avg_cost cash total_equity，返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只用numpy和math，≤60行。禁止pandas/聚宽/米筐。",
     "category": "analysis"
   },
   {
     "name": "search_stocks",
-    "description": "根据股票名称或代码模糊搜索，返回匹配的stockId、symbol、name、market。同一股票名称可能在A股、港股、美股都有（如小鹏汽车/XPEV.US/9868.HK）。【重要】当返回结果中包含同名但不同market的股票时，你必须调用 ask_user 让用户选择，严禁自己文字列出选项。",
+    "description": "【数据铁律：须调用搜索真实股票数据。若返回多只同名不同市场股→必须调ask_user让用户选择，禁文字描述选项】 根据股票名称或代码模糊搜索，返回匹配的stockId、symbol、name、market。同一股票名称可能在A股、港股、美股都有（如小鹏汽车/XPEV.US/9868.HK）。【重要】当返回结果中包含同名但不同market的股票时，你必须调用 ask_user 让用户选择，严禁自己文字列出选项。",
     "category": "query"
   },
   {
     "name": "get_stock_price",
-    "description": "查询某只股票的当前价格和今日涨跌",
+    "description": "【数据铁律：须调用获取真实行情，禁凭记忆报价】 查询某只股票的当前价格和今日涨跌",
     "category": "query"
   },
   {
     "name": "get_pnl_history",
-    "description": "获取组合每日净值走势和盈亏",
+    "description": "【数据铁律：须调用获取真实盈亏数据】 获取组合每日净值走势和盈亏",
     "category": "query"
   },
   {
     "name": "get_transactions",
-    "description": "获取近期交易记录",
+    "description": "【数据铁律：须调用获取真实交易记录】 获取近期交易记录",
     "category": "query"
   },
   {
     "name": "get_stock_price_history",
-    "description": "获取个股历史K线（OHLCV）",
+    "description": "【数据铁律：须调用获取真实K线数据】 获取个股历史K线（OHLCV）",
     "category": "query"
   },
   {
     "name": "compute_correlation",
-    "description": "计算持仓股票间的价格相关性矩阵",
+    "description": "【数据铁律：须调用获取真实相关性数据】 计算持仓股票间的价格相关性矩阵",
     "category": "analysis"
   },
   {
     "name": "compute_sector_breakdown",
-    "description": "分析持仓的行业/市场分布和集中度",
+    "description": "【数据铁律：须调用获取真实行业分布】 分析持仓的行业/市场分布和集中度",
     "category": "analysis"
   },
   {
     "name": "benchmark_compare",
-    "description": "对比组合与基准指数的表现差异",
+    "description": "【数据铁律：须调用获取真实对比数据】 对比组合与基准指数的表现差异",
     "category": "analysis"
   },
   {
@@ -91,12 +91,12 @@
   },
   {
     "name": "ask_user",
-    "description": "需要用户做选择时【必须调用】。场景：多个回测结果选哪个、同名多市场股票选哪个（如招商银行600036.SH vs 03968.HK）、确认是否执行操作。提供2-4个选项。调用后UI会生成交互按钮和「其他」输入框，严禁用文字代替此工具列出选项。",
+    "description": "【消歧铁律：弹出选择卡后禁复述选项内容。search_stocks返回多市场同名股时必须调用此工具让用户选。用户改选→重调此工具】 需要用户做选择时【必须调用】。场景：多个回测结果选哪个、同名多市场股票选哪个（如招商银行600036.SH vs 03968.HK）、确认是否执行操作。提供2-4个选项。调用后UI会生成交互按钮和「其他」输入框，严禁用文字代替此工具列出选项。",
     "category": "query"
   },
   {
     "name": "remember",
-    "description": "用户要求记住某个信息（偏好、事实、背景等），保存到长期记忆。用户说'记住'、'别忘了'、'帮我记一下'时调用",
+    "description": "【记忆铁律：用户说记住/记一下/帮我记/别忘了时调用，保存投资偏好或事实到长期记忆】 用户要求记住某个信息（偏好、事实、背景等），保存到长期记忆。用户说'记住'、'别忘了'、'帮我记一下'时调用",
     "category": "mutation"
   },
   {
@@ -106,7 +106,7 @@
   },
   {
     "name": "consult_kb",
-    "description": "查阅知识库中的专业主题，获取分析框架/指标解读/评分标准后再作答。可查阅: 投资原则, 指标解读, 因子评分解读, 基本面分析, 技术面分析, 市场环境分析。做基本面/技术面/市场分析前，或需要某指标定义/评分好坏标准时必须先查阅，不要凭记忆。",
+    "description": "【知识库铁律：做分析前先查阅对应主题获取框架，禁凭记忆作答。可查：投资原则/指标解读/因子评分解读/基本面分析/技术面分析/市场环境分析】 查阅知识库中的专业主题，获取分析框架/指标解读/评分标准后再作答。可查阅: 投资原则, 指标解读, 因子评分解读, 基本面分析, 技术面分析, 市场环境分析。做基本面/技术面/市场分析前，或需要某指标定义/评分好坏标准时必须先查阅，不要凭记忆。",
     "category": "analysis"
   },
   {
@@ -126,17 +126,17 @@
   },
   {
     "name": "get_global_indices",
-    "description": "获取全球 20 个股市指数 + 4 个商品/汇率指标的最新行情(含 stockId，可用于加自选)。问全球/世界/大盘走势/市场概况，或用户想把某指数加入自选时调用。",
+    "description": "【数据铁律：须调用获取真实指数行情】 获取全球 20 个股市指数 + 4 个商品/汇率指标的最新行情(含 stockId，可用于加自选)。问全球/世界/大盘走势/市场概况，或用户想把某指数加入自选时调用。",
     "category": "query"
   },
   {
     "name": "get_world_news",
-    "description": "获取今日全球财经/地缘要闻。问最新新闻、时事、今日大事时调用。",
+    "description": "【数据铁律：须调用获取真实新闻】 获取今日全球财经/地缘要闻。问最新新闻、时事、今日大事时调用。",
     "category": "query"
   },
   {
     "name": "get_watchlist",
-    "description": "获取用户的股票自选列表，含最新价格和近一周涨跌",
+    "description": "【数据铁律：须调用获取真实自选列表】 获取用户的股票自选列表，含最新价格和近一周涨跌",
     "category": "query"
   },
   {
@@ -166,17 +166,17 @@
   },
   {
     "name": "confirm_bulk_create",
-    "description": "批量创建多笔交易。需用户确认后才执行。每笔交易的参数必须完整。调用成功后不要输出正文，等待用户在 UI 确认。",
+    "description": "【交易铁律：批量创建唯一途径。弹出确认卡后禁复述；修改→重调此工具】 批量创建多笔交易。需用户确认后才执行。每笔交易的参数必须完整。调用成功后不要输出正文，等待用户在 UI 确认。",
     "category": "mutation"
   },
   {
     "name": "confirm_bulk_update",
-    "description": "批量编辑多笔交易。需用户确认后才执行。调用成功后不要输出正文，等待用户在 UI 确认。",
+    "description": "【交易铁律：批量修改唯一途径。弹出确认卡后禁复述；修改→重调此工具】 批量编辑多笔交易。需用户确认后才执行。调用成功后不要输出正文，等待用户在 UI 确认。",
     "category": "mutation"
   },
   {
     "name": "confirm_bulk_delete",
-    "description": "批量删除多条交易。需用户确认后才执行。调用成功后不要输出正文，等待用户在 UI 确认。",
+    "description": "【交易铁律：批量删除唯一途径。弹出确认卡后禁复述；修改→重调此工具】 批量删除多条交易。需用户确认后才执行。调用成功后不要输出正文，等待用户在 UI 确认。",
     "category": "mutation"
   }
 ]
