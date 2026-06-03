@@ -2240,6 +2240,51 @@ def _needs_proxy(api_base: str) -> bool:
     return True
 
 
+# ── Model fallback chains ──────────────────────────────────────────────────
+# When the primary model fails (timeout, overload, 5xx), we try the next in
+# the chain rather than dying. Two independent chains so a reasoning-capable
+# model doesn't waste tokens on chitchat, and a fast model isn't asked to
+# think deeply. Each chain is ordered by capability — first is best.
+
+# Fast models: general chat, tool calling, no deep reasoning needed.
+# Ordered by intelligence: qwen3.7-plus > qwen3.6-plus > deepseek-v3.2 > glm-5.1 > qwen-plus > qwen-flash.
+FAST_MODEL_CHAIN = [
+    "qwen3.7-plus",
+    "qwen3.6-plus",
+    "deepseek-v3.2",
+    "glm-5.1",
+    "qwen-plus",
+    "qwen-flash",
+]
+
+# Reasoning models: deep thinking, complex multi-step analysis.
+# Ordered: deepseek-v4-pro > qwen3.7-max > deepseek-r1 > qwq-plus > qwen3.6-max-preview.
+REASONING_MODEL_CHAIN = [
+    "deepseek-v4-pro",
+    "qwen3.7-max",
+    "deepseek-r1",
+    "qwq-plus",
+    "qwen3.6-max-preview",
+]
+
+# Errors that should NOT trigger fallback (retrying with another model won't help).
+_NON_RETRYABLE = frozenset({
+    "401", "403", "invalid_api_key", "Insufficient", "quota",
+    "content_filter", "content_policy", "moderation",
+})
+
+
+def _is_retryable(error_msg: str) -> bool:
+    """Return True if the error looks transient (another model might work)."""
+    msg = str(error_msg)
+    # Fatal: auth, quota, content policy — no model switch will fix these.
+    for tag in _NON_RETRYABLE:
+        if tag in msg:
+            return False
+    # Transient: overload, timeout, 5xx, rate-limit — worth trying another model.
+    return True
+
+
 # ── Dynamic tool subsetting (#4) ─────────────────────────────────────────
 # Sending all ~35 tools every call costs tokens and muddies the model's choice.
 # We keep every read/analysis tool always available, and only surface the
@@ -2313,6 +2358,22 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
 
     is_dashscope = bool(api_base and ("dashscope" in api_base or "aliyuncs" in api_base))
 
+    # ── Model fallback chain ───────────────────────────────────────────────
+    # If the user's chosen model fails with a transient error (overload, 5xx,
+    # timeout), we try the next model in the appropriate chain rather than
+    # dying. Reasoning-capable models and fast models are separate chains so
+    # the expensive reasoning models aren't wasted on chitchat.
+    # The primary model (user's choice) is always tried first.
+    chain = REASONING_MODEL_CHAIN if deep_think else FAST_MODEL_CHAIN
+    # Build a unique ordered list: primary model first, then chain entries
+    # that aren't the same model.
+    seen = {model}
+    fallback_models = [model]
+    for m in chain:
+        if m not in seen:
+            seen.add(m)
+            fallback_models.append(m)
+
     # ── Thinking & model routing (no manual deep-think toggle needed) ──────
     # Qwen3 (qwen-plus) is markedly more reliable at *calling tools* when its
     # native thinking mode is on. With it off, it tends to answer in prose and
@@ -2336,12 +2397,31 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     expose_web = web_search or _should_use_web_search(messages)
     effective_tools = _select_tools(messages, expose_web)
 
-    def _stream(msgs):
+    def _stream(msgs, model_override=None):
+        m = model_override or effective_model
         return client.chat.completions.create(
-            model=effective_model, messages=msgs, tools=effective_tools,
+            model=m, messages=msgs, tools=effective_tools,
             stream=True, temperature=0.7, max_tokens=max_tokens,
             **({"extra_body": extra_body} if extra_body else {}),
         )
+
+    # Wrap _stream with model fallback: on transient error, try next model in chain.
+    def _stream_with_fallback(msgs):
+        nonlocal effective_model
+        fallback_idx = fallback_models.index(effective_model) if effective_model in fallback_models else 0
+        for i in range(fallback_idx, len(fallback_models)):
+            fm = fallback_models[i]
+            try:
+                return _stream(msgs, model_override=fm)
+            except Exception as e:
+                msg = str(e)
+                if not _is_retryable(msg):
+                    raise
+                if i < len(fallback_models) - 1:
+                    sys.stderr.write(f"[FALLBACK] {fm} → {fallback_models[i+1]} ({msg[:60]})\n")
+                effective_model = fallback_models[min(i + 1, len(fallback_models) - 1)]
+        # All models failed — re-raise last error
+        raise RuntimeError(f"All {len(fallback_models)} models in chain exhausted")
 
     formatted = []
     for m in messages:
@@ -2394,7 +2474,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         return tcs, has
 
     # Always stream first. If tool calls appear mid-stream, collect and handle.
-    tool_calls, has_tools = _consume(_stream(formatted))
+    tool_calls, has_tools = _consume(_stream_with_fallback(formatted))
 
     total_tool_calls = 0
     web_search_count = 0
@@ -2420,7 +2500,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             sorted_tools = [t for t in sorted_tools if t["name"] != "ask_user"]
             if not sorted_tools:
                 # No other tools this round — stream next response
-                tool_calls, has_tools = _consume(_stream(formatted))
+                tool_calls, has_tools = _consume(_stream_with_fallback(formatted))
                 continue  # back to while has_tools
 
         # Split tools: those within limit run in parallel, excess get error.
@@ -2476,7 +2556,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                 return
 
         # Call again — may produce more tool calls or final content
-        tool_calls, has_tools = _consume(_stream(formatted))
+        tool_calls, has_tools = _consume(_stream_with_fallback(formatted))
 
     _emit_context(gathered)
     print("\n[DONE]", flush=True)
@@ -2526,9 +2606,7 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
         if system_block:
             stream_kwargs["system"] = system_block
         if deep_think:
-            # Extended thinking: 2048 tokens of reasoning budget, streamed as thinking_delta events
             stream_kwargs["thinking"] = {"type": "enabled", "budget_tokens": 2048}
-            # Extended thinking requires temperature=1
             stream_kwargs["temperature"] = 1
 
         with client.messages.stream(**stream_kwargs) as stream:
