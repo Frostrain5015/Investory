@@ -567,6 +567,9 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     try {
       const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, webSearch, conversationId: convIdRef.current || undefined }) })
       if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
+      // Capture the server-assigned conversation id (auto-created on the first turn)
+      // so deleting the active conversation later correctly clears this window.
+      try { const data = await resp.json() as { conversationId?: number }; if (data.conversationId && data.conversationId > 0) convIdRef.current = data.conversationId } catch { /* non-JSON / ignore */ }
       if (esRef.current) esRef.current.close()
       const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
       attachStream(es, newMessages)

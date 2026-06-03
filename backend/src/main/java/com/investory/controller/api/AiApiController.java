@@ -406,7 +406,10 @@ public class AiApiController {
             }
         });
 
-        return Map.of("status", "started");
+        // Return the (possibly auto-created) conversationId so the client can keep
+        // convIdRef in sync — needed so deleting the active conversation clears the
+        // chat window even when it was freshly created this turn.
+        return Map.of("status", "started", "conversationId", convId);
     }
 
     @GetMapping("/suggestions")

@@ -160,8 +160,13 @@ def build_system_prompt(kb: dict) -> str:
 {kb_index}
 
 【工具调用规则】
-- ⚠ 分析铁律：做任何基本面/技术面/市场环境的分析、评估、拆解、审查前，第一步必须 consult_kb 查阅对应主题（如 基本面分析 / 技术面分析 / 市场环境分析），再调数据工具取数，最后按 KB 框架作答。读报告时也要先 consult_kb 了解评分标准再下结论。禁止跳过 KB 直接分析。
+- ⚠ 分析铁律：做任何基本面/技术面/市场环境的分析、评估、拆解、审查前，第一步必须 consult_kb 查阅对应主题（如 基本面分析 / 技术面分析 / 市场环境分析），再调数据工具取数，最后按 KB 框架作答。需要多个主题时一次性并行查齐，不要纠结"先查哪个"。读报告时也要先 consult_kb 了解评分标准再下结论。禁止跳过 KB 直接分析。
 - ⚠ 数据铁律：凡涉及具体数据必须先调工具拿真实数据再回答，禁凭记忆编造数字。不确定用什么工具时先 search_stocks / get_portfolio。
+- ⚠ 执行铁律（防过度思考，最高优先级）：参数已明确就直接开火，不在思考链里反复确认格式、合规或调用顺序——这些工具内层已处理。具体：
+  ① 并行不排队：多个互相独立的只读操作（多只股票的报告/行情/评分、多个持仓查询）必须在同一轮一次性并行调用。引擎并发执行。"每次只能调一个工具"是误解，禁止自行一只一只串行。
+  ② 符号免拼接：中文名（贵州茅台）、代码（600519.SH）、DB格式（1.600519）一律原样传给工具，resolve_symbol 内部完成匹配和格式转换。禁止自己拼 1./0. 前缀，也不要为解析符号先调 search_stocks。
+  ③ 不预演：发出工具调用后等真实结果再分析，不要在脑内预测结果或推演格式。
+  ④ 不空转：拿不准指标区间/方法/场景就立刻 consult_kb，绝不在思考链里反复自我质疑同一件事；证据齐了就果断给结论，把不确定性如实说成"缺哪块数据/证据是否冲突"，而不是反复打转。
 - ⚠ 交易铁律：用户要求买卖/入金/出金/分红/删改交易 → 只允许调用 confirm_create/update/delete，严禁用文字代替。
 - ⚠ 策略铁律：用户要求写策略、生成策略、设计规则、构建量化交易系统时，第一步必须 consult_kb('策略引擎（生成与回测）') 查阅可用指标标识符（如 sma/ema/rsi/macd_histogram/stop_loss 等）、判断条件（above/below/overbought/oversold）、离场专用规则（stop_loss/take_profit/trailing_stop）、仓位方法（equal_weight/fixed_pct）和 advanced 模式的 ctx 接口。禁止凭记忆编造指标名或参数格式。
 - ⚠ 卡片铁律：confirm_* / ask_user 弹出卡片后不得复述卡片内容；用户对卡片提修改要求 → 重调同一个工具带修正参数，禁调 remember。
@@ -2316,9 +2321,9 @@ def _confirm_watchlist(args: dict) -> dict:
 # unlisted defaults to 25s — fast enough that an unresponsive tool can't stall
 # the entire agent loop, but room for typical DB queries.
 _TOOL_TIMEOUTS = {
-    "get_stock_report": 120,
-    "get_portfolio_report": 150,
-    "get_daily_picks_report": 130,
+    "get_stock_report": 30,
+    "get_portfolio_report": 30,
+    "get_daily_picks_report": 30,
     "get_market_regime": 45,         # subprocess 35s
     "compute_correlation": 45,
     "benchmark_compare": 45,
@@ -2669,9 +2674,11 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
 
     def _consume(stream):
         """Read a streamed completion: emit text/reasoning deltas, accumulate any
-        tool-call fragments. Returns (tool_calls_dict, has_tools). Single source of
-        truth for the chunk loop that used to be copy-pasted three times (#5)."""
-        tcs, has = {}, False
+        tool-call fragments. Returns (tool_calls_dict, has_tools, got_text). Single
+        source of truth for the chunk loop that used to be copy-pasted three times (#5).
+        got_text tracks whether any *answer* content (not reasoning) was emitted, so
+        the caller can detect a silent empty completion after a tool round."""
+        tcs, has, got_text = {}, False, False
         for chunk in stream:
             if not chunk.choices: continue
             delta = chunk.choices[0].delta
@@ -2686,11 +2693,12 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                         if tc.function.name: tcs[idx]["name"] += tc.function.name
                         if tc.function.arguments: tcs[idx]["args"] += tc.function.arguments
             else:
+                if getattr(delta, "content", None): got_text = True
                 _emit_delta(delta)
-        return tcs, has
+        return tcs, has, got_text
 
     # Always stream first. If tool calls appear mid-stream, collect and handle.
-    tool_calls, has_tools = _consume(_stream_with_fallback(formatted))
+    tool_calls, has_tools, got_text = _consume(_stream_with_fallback(formatted))
 
     total_tool_calls = 0
     web_search_count = 0
@@ -2716,7 +2724,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             sorted_tools = [t for t in sorted_tools if t["name"] != "ask_user"]
             if not sorted_tools:
                 # No other tools this round — stream next response
-                tool_calls, has_tools = _consume(_stream_with_fallback(formatted))
+                tool_calls, has_tools, got_text = _consume(_stream_with_fallback(formatted))
                 continue  # back to while has_tools
 
         # Split tools: those within limit run in parallel, excess get error.
@@ -2772,7 +2780,21 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                 return
 
         # Call again — may produce more tool calls or final content
-        tool_calls, has_tools = _consume(_stream_with_fallback(formatted))
+        tool_calls, has_tools, got_text = _consume(_stream_with_fallback(formatted))
+
+    # Empty-completion guard: a tool-using turn ended without any answer text
+    # (context bloated by big reports, or the thinking budget was fully consumed).
+    # Nudge once to synthesise; if still silent, emit a message so the chat never
+    # appears frozen after "工具已完成".
+    if not got_text and total_tool_calls > 0:
+        formatted.append({"role": "user",
+                          "content": "请基于以上工具已返回的数据，直接用中文给出简洁的分析结论，不要再调用工具。"})
+        try:
+            _, _, got_text = _consume(_stream_with_fallback(formatted))
+        except Exception:
+            got_text = False
+        if not got_text:
+            print("已取得所需数据，但本轮未能生成结论。可点击重试，或换一种问法。\n", flush=True)
 
     _emit_context(gathered)
     print("\n[DONE]", flush=True)
@@ -2817,6 +2839,7 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
     gathered = {}  # tool name -> latest result JSON, replayed next turn via [CONTEXT] (#1)
 
     while True:
+        got_text = False  # any answer text this turn — detect silent empty completion
         max_tokens = 8192 if deep_think else 4096
         stream_kwargs = {"model": model, "messages": formatted, "max_tokens": max_tokens, "tools": anthropic_tools}
         if system_block:
@@ -2841,10 +2864,15 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
                     elif dtype == "text_delta":
                         text = getattr(delta, "text", "")
                         if text:
+                            got_text = True
                             sys.stdout.write(text + "\n"); sys.stdout.flush()
             msg = stream.get_final_message()
 
         if msg.stop_reason != "tool_use":
+            # Empty-completion guard: ended a tool-using turn without any answer
+            # text — surface a message so the chat never appears frozen.
+            if not got_text and total_tool_calls > 0:
+                print("已取得所需数据，但本轮未能生成结论。可点击重试，或换一种问法。\n", flush=True)
             break
 
         tool_uses = [c for c in msg.content if c.type == "tool_use"]
