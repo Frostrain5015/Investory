@@ -551,7 +551,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
 
   function deleteConv(id: number, e: React.MouseEvent) {
     e.stopPropagation()
-    if (!confirm('删除此对话？')) return
+    if (!confirm(t.chat.confirmDeleteConv)) return
     fetch(`${BASE}/api/ai/conversations/${id}`, { method: 'DELETE', credentials: 'include' })
       .then(() => { if (convIdRef.current === id) clearChat(); loadConvList() }).catch(() => {})
   }
@@ -1064,7 +1064,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               {/* Input bar — bottom of every active state */}
               <div ref={inputWrapRef} className={`shrink-0 px-3 py-2 ${isExpanded || hasContent ? 'border-t border-slate-100 bg-white' : ''}`}>
                 {inputBar}
-                <p className="text-[10px] text-slate-300 text-center">内容由AI生成，不构成投资建议</p>
+                <p className="text-[10px] text-slate-300 text-center">{t.chat.aiDisclaimer}</p>
               </div>
             </motion.div>
           )}
@@ -1080,23 +1080,23 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                 onClick={e => e.stopPropagation()}
                 className="w-full lg:max-w-sm bg-white rounded-t-2xl lg:rounded-2xl shadow-xl max-h-[60vh] flex flex-col">
                 <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 shrink-0">
-                  <h3 className="text-sm font-bold text-slate-800">对话列表</h3>
-                  <button onClick={() => { clearChat(); setShowConvList(false) }} className="text-[11px] text-indigo-600 font-medium hover:text-indigo-700">新对话</button>
+                  <h3 className="text-sm font-bold text-slate-800">{t.chat.conversations}</h3>
+                  <button onClick={() => { clearChat(); setShowConvList(false) }} className="text-[11px] text-indigo-600 font-medium hover:text-indigo-700">{t.chat.newConversation}</button>
                 </div>
                 <div className="overflow-auto flex-1">
                   {convList.length === 0 ? (
-                    <p className="text-xs text-slate-400 text-center py-12">暂无历史对话</p>
+                    <p className="text-xs text-slate-400 text-center py-12">{t.chat.noConversations}</p>
                   ) : (
                     convList.map(c => (
                       <div key={c.id} onClick={() => openConv(c.id)}
                         className="flex items-center justify-between px-5 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 transition-colors">
                         <div className="flex-1 min-w-0 mr-2">
                           <p className="text-[13px] text-slate-700 font-medium truncate">{c.title}</p>
-                          <p className="text-[10px] text-slate-400 mt-0.5">{c.messageCount ?? 0} 条消息 · {c.createdAt?.substring(0, 10)}</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">{t.chat.messageCount.replace('{n}', String(c.messageCount ?? 0))} · {c.createdAt?.substring(0, 10)}</p>
                         </div>
                         <div className="flex items-center gap-1 shrink-0">
-                          <button onClick={(e) => { e.stopPropagation(); openConv(c.id) }} className="p-1 rounded hover:bg-slate-100 text-slate-400" title="继续对话"><ArrowRight className="w-3.5 h-3.5" /></button>
-                          <button onClick={(e) => deleteConv(c.id, e)} className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500" title="删除对话"><Trash2 className="w-3.5 h-3.5" /></button>
+                          <button onClick={(e) => { e.stopPropagation(); openConv(c.id) }} className="p-1 rounded hover:bg-slate-100 text-slate-400" title={t.chat.continueConv}><ArrowRight className="w-3.5 h-3.5" /></button>
+                          <button onClick={(e) => deleteConv(c.id, e)} className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500" title={t.chat.deleteConv}><Trash2 className="w-3.5 h-3.5" /></button>
                         </div>
                       </div>
                     ))

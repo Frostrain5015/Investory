@@ -136,7 +136,7 @@ public class AiApiController {
         if (cidRaw instanceof Number) conversationId = ((Number) cidRaw).longValue();
         if (conversationId <= 0 && userId > 0) {
             try {
-                jdbc.update("INSERT INTO ai_conversations (user_id, title) VALUES (?, '新对话')", userId);
+                jdbc.update("INSERT INTO ai_conversations (user_id, title) VALUES (?, '无标题')", userId);
                 conversationId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
             } catch (Exception ignored) {}
         }
@@ -187,11 +187,9 @@ public class AiApiController {
                 try {
                     jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'user', ?)",
                         userId, convId, content.length() > 4000 ? content.substring(0, 4000) : content);
-                    // Set conversation title from first user message (only if still the default).
-                    // Also touch updated_at so the conversation list stays sorted correctly.
+                    // Summarise conversation title via LLM after the first turn (only if still the default).
                     if (convId > 0) {
-                        String title = content.length() > 30 ? content.substring(0, 30) : content;
-                        jdbc.update("UPDATE ai_conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND title = '新对话'", title, convId);
+                        summarizeTitleAsync(convId, content, userId);
                     }
                 } catch (Exception ignored) {}
             }
@@ -498,13 +496,11 @@ public class AiApiController {
         session.clearSession(uid);
         // Clear stale tooldata so it doesn't leak into the new conversation
         try { jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role = 'tooldata'", uid); } catch (Exception ignored) {}
-        // Insert new conversation row
-        long convId = jdbc.update("INSERT INTO ai_conversations (user_id, title) VALUES (?, '新对话')", uid);
-        // MySQL returns last_insert_id for INSERT
-        try {
-            convId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
-        } catch (Exception ignored) {}
-        return Map.of("id", convId, "title", "新对话");
+        // Insert new conversation row; title is summarised async by the LLM after the first turn.
+        jdbc.update("INSERT INTO ai_conversations (user_id, title) VALUES (?, '无标题')", uid);
+        long convId = 0;
+        try { convId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class); } catch (Exception ignored) {}
+        return Map.of("id", convId, "title", "无标题");
     }
 
     @GetMapping("/conversations")
@@ -560,8 +556,12 @@ public class AiApiController {
 
     @PostMapping("/clear")
     public Map<String, Object> clear(HttpServletRequest req) {
-        // Start a new conversation (archive current, don't delete)
-        return createConversation(req);
+        long uid = userIdOf(req);
+        session.clearSession(uid);
+        if (uid > 0) {
+            try { jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role IN ('user','assistant','thinking','tooldata')", uid); } catch (Exception ignored) {}
+        }
+        return Map.of("status", "cleared");
     }
 
     @PostMapping("/cancel")
@@ -705,6 +705,47 @@ public class AiApiController {
         if (s == null) return 0;
         Object uid = s.getAttribute("userId");
         return uid instanceof Number ? ((Number) uid).longValue() : 0;
+    }
+
+    /** Summarise a conversation title via LLM (async, fire-and-forget). */
+    private void summarizeTitleAsync(long convId, String userMessage, long userId) {
+        executor.submit(() -> {
+            try {
+                File script = new File("script/ai_agent.py");
+                if (!script.exists()) script = new File("../script/ai_agent.py").getCanonicalFile();
+                if (!script.exists()) return;
+                // Build temp input with the user message
+                Path tmpInput = Files.createTempFile("ai_title_", ".json");
+                Files.writeString(tmpInput, json.writeValueAsString(Map.of("message", userMessage)));
+                // Load user's AI settings
+                String key = defaultKey, model = DEFAULT_MODEL, base = DEFAULT_BASE_URL, provider = DEFAULT_PROVIDER;
+                try {
+                    List<Map<String, Object>> rows = jdbc.queryForList(
+                        "SELECT provider, model, base_url, api_key FROM ai_settings WHERE user_id = ?", userId);
+                    if (!rows.isEmpty()) {
+                        var r = rows.get(0);
+                        provider = String.valueOf(r.getOrDefault("provider", DEFAULT_PROVIDER));
+                        model = String.valueOf(r.getOrDefault("model", DEFAULT_MODEL));
+                        key = String.valueOf(r.getOrDefault("api_key", key));
+                        String b = String.valueOf(r.getOrDefault("base_url", ""));
+                        if (!b.isBlank()) base = b;
+                    }
+                } catch (Exception ignored) {}
+                ProcessBuilder pb = new ProcessBuilder(pythonExecutable, "-u",
+                    script.getAbsolutePath(), "--mode", "title", "--api-key", key,
+                    "--model", model, "--provider", provider, "--api-base", base,
+                    "--input", tmpInput.toString());
+                pb.directory(script.getParentFile());
+                pb.redirectErrorStream(true);
+                Process p = pb.start();
+                String title = new String(p.getInputStream().readAllBytes(), "UTF-8").trim();
+                p.waitFor(15, TimeUnit.SECONDS);
+                Files.deleteIfExists(tmpInput);
+                if (!title.isEmpty() && !"无标题".equals(title)) {
+                    jdbc.update("UPDATE ai_conversations SET title = ? WHERE id = ?", title, convId);
+                }
+            } catch (Exception ignored) {}
+        });
     }
 
     private String buildPortfolioHint(long portfolioId) {

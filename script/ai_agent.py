@@ -2668,7 +2668,7 @@ def main():
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description="Investory 观澜 AI Agent")
-    parser.add_argument("--mode", default="chat", choices=["chat", "suggestions", "populate-picks"])
+    parser.add_argument("--mode", default="chat", choices=["chat", "suggestions", "populate-picks", "title"])
     parser.add_argument("--provider", default="openai", choices=["openai", "anthropic", "openai_compat"])
     parser.add_argument("--model", default="gpt-4o-mini")
     parser.add_argument("--api-key", default=os.environ.get("AI_API_KEY", ""))
@@ -2682,6 +2682,40 @@ def main():
 
     if args.mode == "suggestions":
         generate_suggestions(args.api_key, args.model, args.api_base)
+        return
+
+    if args.mode == "title":
+        # Summarise a user message into a conversation title (3-8 words).
+        # Called async by Java after the first turn of a new conversation.
+        msg = ""
+        if args.input:
+            with open(args.input, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            msg = str(data.get("message", "")).strip()
+        if not msg:
+            print("无标题", flush=True)
+            return
+        import requests as _requests
+        try:
+            kwargs = {"api_key": args.api_key}
+            base = args.api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            if "deepseek" in base:
+                model = "deepseek-chat"
+            elif "anthropic" in args.provider:
+                model = "claude-sonnet-4-6"
+            elif args.model and args.model != "gpt-4o-mini":
+                model = args.model
+            else:
+                model = "qwen-plus"
+            r = _requests.post(f"{base}/chat/completions", json={
+                "model": model,
+                "messages": [{"role": "user", "content": f"用3-8个中文字总结这段对话的主题，只输出标题，不要引号、标点或额外解释：\n{msg[:500]}"}],
+                "max_tokens": 20, "temperature": 0.3
+            }, headers={"Authorization": f"Bearer {args.api_key}"}, timeout=15)
+            title = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip("'").strip("。")
+            print(title[:30] if title else "无标题", flush=True)
+        except Exception:
+            print("无标题", flush=True)
         return
 
     if args.mode == "populate-picks":
