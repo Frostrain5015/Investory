@@ -6,7 +6,7 @@
   },
   {
     "name": "get_stock_report",
-    "description": "【重型审计工具】生成单只A股的可审计 Markdown 分析报告，并把完整报告作为对话任务产物存库。只有当用户明确要求“深度分析/审计报告/专业报告/完整分析/证据链/风险拆解/为什么能买或不能买”，或已经完成简单行情查询后仍要求更深入分析时才调用。简单问题不要调用：查股价、涨跌、PE/PB、名称匹配、简短解释、泛泛问一句“今天怎么样”时，优先用 search_stocks、get_stock_price、get_stock_price_history、web_search 或直接解释。回答必须基于报告 Markdown 和证据链，不得用总分替代结论。仅支持A股；港股/美股/指数改用行情+新闻+通用分析。",
+    "description": "【重型审计工具】生成单只A股的可审计 Markdown 分析报告，并把完整报告作为对话任务产物存库。只有当用户明确要求"深度分析/审计报告/专业报告/完整分析/证据链/风险拆解/为什么能买或不能买"，或已经完成简单行情查询后仍要求更深入分析时才调用。简单问题不要调用：查股价、涨跌、PE/PB、名称匹配、简短解释、泛泛问一句"今天怎么样"时，优先用 search_stocks、get_stock_price、web_search 或直接解释。回答必须基于报告 Markdown 和证据链，不得用总分替代结论。仅支持A股；港股/美股/指数改用行情+新闻+通用分析。",
     "category": "analysis"
   },
   {
@@ -30,13 +30,8 @@
     "category": "query"
   },
   {
-    "name": "list_strategies",
-    "description": "【数据铁律】获取用户已保存的策略列表。",
-    "category": "query"
-  },
-  {
-    "name": "get_strategy",
-    "description": "【数据铁律】获取策略的完整规则详情：入场、离场、参数、逻辑组合、仓位管理。用户要求评价或分析某个策略时必须调用。",
+    "name": "get_strategies",
+    "description": "【数据铁律】获取策略列表或单个策略详情。省略 id 参数返回全部策略列表；传 id 返回该策略的完整规则详情（入场、离场、参数、逻辑组合）。",
     "category": "query"
   },
   {
@@ -51,7 +46,7 @@
   },
   {
     "name": "get_stock_price",
-    "description": "【轻量工具】查询单只股票当前价格和今日涨跌，禁止凭记忆报价。简单行情问题优先用这个，不要启动 StockSage 报告。",
+    "description": "【数据铁律】查询单只股票行情。省略 days 或 days=1 返回最新价和涨跌；days>1 返回历史K线（OHLCV）。简单行情问题优先用这个，不要启动 StockSage 报告。",
     "category": "query"
   },
   {
@@ -62,11 +57,6 @@
   {
     "name": "get_transactions",
     "description": "【数据铁律】获取近期交易记录。",
-    "category": "query"
-  },
-  {
-    "name": "get_stock_price_history",
-    "description": "【轻量工具】获取个股历史K线（OHLCV）。简单技术走势、近几日涨跌和关键价位问题优先用这个，不要启动 StockSage 报告。",
     "category": "query"
   },
   {
@@ -95,13 +85,8 @@
     "category": "query"
   },
   {
-    "name": "remember",
-    "description": "【记忆铁律】用户要求记住偏好、事实或背景信息时调用。",
-    "category": "mutation"
-  },
-  {
-    "name": "forget",
-    "description": "删除包含关键词的长期记忆。用户要求忘掉/删除记忆时调用。",
+    "name": "manage_memory",
+    "description": "管理用户长期记忆。action='remember' → 记住偏好/事实/规则，传 fact 字段。action='forget' → 删除匹配关键词的记忆，传 keyword 字段。",
     "category": "mutation"
   },
   {
@@ -120,13 +105,8 @@
     "category": "analysis"
   },
   {
-    "name": "get_global_indices",
-    "description": "【数据铁律】获取全球主要股市指数、商品、汇率指标的最新行情，含可加入自选的 stockId。",
-    "category": "query"
-  },
-  {
-    "name": "get_world_news",
-    "description": "【数据铁律】获取今日全球财经/地缘要闻。问最新新闻、时事、今日大事时调用。",
+    "name": "get_world_market",
+    "description": "【数据铁律】获取全球主要股市指数、商品、汇率行情，以及今日全球财经/地缘要闻。问大盘、国际市场、最新新闻时调用。",
     "category": "query"
   },
   {
@@ -135,43 +115,23 @@
     "category": "query"
   },
   {
-    "name": "confirm_add_watchlist",
-    "description": "【必须调用】添加股票或指数到自选列表并弹出确认按钮。个股先用 search_stocks 获取 stockId；指数用 get_global_indices 获取 stockId。调用成功后不输出正文，等待 UI 确认。",
-    "category": "mutation"
-  },
-  {
-    "name": "confirm_remove_watchlist",
-    "description": "【必须调用】从自选列表移除股票并弹出确认按钮。先调用 get_watchlist 获取列表。调用成功后不输出正文，等待 UI 确认。",
+    "name": "confirm_watchlist",
+    "description": "【必须调用】管理自选列表并弹出确认按钮。action='add' → 加入自选，传 stockId/name（先用 search_stocks 或 get_global_indices 查 stockId）。action='remove' → 移除自选，传 ids 数组（先用 get_watchlist 获取列表）。调用成功后不输出正文，等待 UI 确认。",
     "category": "mutation"
   },
   {
     "name": "confirm_create_transaction",
-    "description": "【必须调用】创建交易记录并弹出确认按钮。用户要求买入、卖出、添加分红、转入转出资金时必须调用。所有参数必须完整，缺失先反问。",
+    "description": "【必须调用】创建交易记录并弹出确认按钮。单笔：直接传 stockId/type/shares/price 等字段。批量：传 transactions 数组，每项含同样字段。调用成功后不输出正文，等待 UI 确认。",
     "category": "mutation"
   },
   {
     "name": "confirm_update_transaction",
-    "description": "【必须调用】编辑交易记录并弹出确认按钮。先调用 get_transactions 查询现有记录获取 id。调用成功后不输出正文，等待 UI 确认。",
+    "description": "【必须调用】编辑交易记录并弹出确认按钮。单笔：直接传 id 及需修改字段。批量：传 updates 数组，每项含 id 及需修改字段。调用成功后不输出正文，等待 UI 确认。",
     "category": "mutation"
   },
   {
     "name": "confirm_delete_transaction",
-    "description": "【必须调用】删除交易记录并弹出确认按钮。先调用 get_transactions 查询现有记录获取 id。调用成功后不输出正文，等待 UI 确认。",
-    "category": "mutation"
-  },
-  {
-    "name": "confirm_bulk_create",
-    "description": "【交易铁律】批量创建多笔交易的唯一途径。每笔交易参数必须完整，调用成功后不输出正文，等待 UI 确认。",
-    "category": "mutation"
-  },
-  {
-    "name": "confirm_bulk_update",
-    "description": "【交易铁律】批量修改多笔交易的唯一途径。调用成功后不输出正文，等待 UI 确认。",
-    "category": "mutation"
-  },
-  {
-    "name": "confirm_bulk_delete",
-    "description": "【交易铁律】批量删除多条交易的唯一途径。调用成功后不输出正文，等待 UI 确认。",
+    "description": "【必须调用】删除交易记录并弹出确认按钮。传 ids 数组（含要删除的交易ID）。调用成功后不输出正文，等待 UI 确认。",
     "category": "mutation"
   }
 ]

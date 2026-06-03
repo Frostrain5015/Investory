@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText } from 'lucide-react'
+import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -60,31 +60,43 @@ function isStockSageTool(name: string) {
     || name === 'get_daily_picks_report'
 }
 
-/** Per-category visual treatment. StockSage keeps its engine marker;
- * query tools keep the magnifier; heavier non-engine tools use the wrench. */
+// ── Tool icon registry ────────────────────────────────────────────────
+// One map for all per-tool icon assignments. Tools not listed here fall
+// back to category defaults: query→Search, analysis→Wrench, mutation→Wrench.
+const TOOL_ICONS: Record<string, typeof Search> = {
+  get_stock_report: Sparkles,
+  get_portfolio_report: Sparkles,
+  get_daily_picks_report: Sparkles,
+  ask_user: HelpCircle,
+  consult_kb: BookOpen,
+}
+
+function getToolIcon(name: string, category: ToolCategory) {
+  return TOOL_ICONS[name] || (category === 'query' ? Search : Wrench)
+}
+
+/** Per-category visual treatment. Icons come from TOOL_ICONS; label
+ * colours are determined by category and done/error state. */
 function toolStyle(step: Extract<TimelineStep, { kind: 'tool' }>) {
   const cat: ToolCategory = step.category || 'query'
   const isStockSage = isStockSageTool(step.name)
+  const Icon = getToolIcon(step.name, cat)
   if (step.error) {
-    return { label: 'text-red-600', dot: 'bg-red-400', Icon: Wrench }
-  }
-  if (isStockSage) {
-    return step.done
-      ? { label: 'text-emerald-600', dot: 'bg-emerald-400', Icon: Sparkles }
-      : { label: 'text-purple-500', dot: 'bg-purple-400 animate-pulse', Icon: Sparkles }
-  }
-  if (cat === 'query') {
-    return step.done
-      ? { label: 'text-emerald-600', dot: 'bg-emerald-400', Icon: Search }
-      : { label: 'text-slate-500', dot: 'bg-slate-400 animate-pulse', Icon: Search }
+    return { label: 'text-red-600', dot: 'bg-red-400', Icon }
   }
   if (step.done) {
-    return { label: 'text-emerald-600', dot: 'bg-emerald-400', Icon: Wrench }
+    return { label: 'text-emerald-600', dot: 'bg-emerald-400', Icon }
+  }
+  if (isStockSage) {
+    return { label: 'text-purple-500', dot: 'bg-purple-400 animate-pulse', Icon }
   }
   if (cat === 'mutation') {
-    return { label: 'text-amber-600', dot: 'bg-amber-400 animate-pulse', Icon: Wrench }
+    return { label: 'text-amber-600', dot: 'bg-amber-400 animate-pulse', Icon }
   }
-  return { label: 'text-purple-500', dot: 'bg-purple-400 animate-pulse', Icon: Wrench }
+  if (cat === 'query') {
+    return { label: 'text-slate-500', dot: 'bg-slate-400 animate-pulse', Icon }
+  }
+  return { label: 'text-purple-500', dot: 'bg-purple-400 animate-pulse', Icon }
 }
 
 // ── Peer-level step renderers: each step is a standalone block ──────────
@@ -136,7 +148,7 @@ function ToolStepDisplay({ step, lang }: { step: Extract<TimelineStep, { kind: '
   const running = !step.done && !step.error
   const stockSage = isStockSageTool(step.name)
   const displayName = stockSage
-    ? (lang === 'en' ? 'StockSage engine' : 'StockSage引擎')
+    ? (lang === 'en' ? 'StockSage engine' : 'StockSage 量化引擎')
     : localizeToolName(step.name, lang)
   const statusText = running
     ? (lang === 'en' ? 'running' : '运行中')

@@ -37,14 +37,10 @@ _TRANSACTION_WRITE_SIGNALS = [
 ]
 
 _CONFIRM_TOOL_NAMES = {
-    "confirm_add_watchlist",
-    "confirm_remove_watchlist",
+    "confirm_watchlist",
     "confirm_create_transaction",
     "confirm_update_transaction",
     "confirm_delete_transaction",
-    "confirm_bulk_create",
-    "confirm_bulk_update",
-    "confirm_bulk_delete",
 }
 
 # Keywords that signal the user is asking about current events / news / external info
@@ -258,11 +254,6 @@ def tool_get_portfolio(portfolio_id: int) -> dict:
     cur.close(); conn.close()
     for h in holdings: h["weight"] = round(h["mv"]/total_value*100,1) if total_value>0 else 0
     return {"count": len(holdings), "totalValue": round(total_value,0), "holdings": holdings}
-
-
-def tool_get_stock_metrics(symbol: str) -> dict:
-    """[DEPRECATED] 重定向到 get_factor_scores"""
-    return tool_get_factor_scores(symbol)
 
 
 # ── StockSage engine invocation (resident HTTP, subprocess fallback) ────────
@@ -485,15 +476,11 @@ TOOL_CATEGORIES = {
     "get_stock_price": "query",
     "get_pnl_history": "query",
     "get_transactions": "query",
-    "get_stock_price_history": "query",
-    "get_strategy": "query",
-    "list_strategies": "query",
+    "get_strategies": "query",
     "get_backtests": "query",
     "get_watchlist": "query",
     "get_market_regime": "query",
-    "get_global_indices": "query",
-    "get_world_news": "query",
-    "get_style_analysis": "query",
+    "get_world_market": "query",
     # ── analysis (subprocess / external engine / network) ──────────────
     "get_stock_report": "analysis",
     "get_portfolio_report": "analysis",
@@ -508,16 +495,11 @@ TOOL_CATEGORIES = {
     "generate_strategy": "analysis",
     "run_backtest": "analysis",
     # ── mutation (writes; always Accept/Refuse-gated) ──────────────────
-    "confirm_add_watchlist": "mutation",
-    "confirm_remove_watchlist": "mutation",
+    "confirm_watchlist": "mutation",
     "confirm_create_transaction": "mutation",
     "confirm_update_transaction": "mutation",
     "confirm_delete_transaction": "mutation",
-    "confirm_bulk_create": "mutation",
-    "confirm_bulk_update": "mutation",
-    "confirm_bulk_delete": "mutation",
-    "remember": "mutation",
-    "forget": "mutation",
+    "manage_memory": "mutation",
     # Meta — not a real tool action but renders in the timeline
     "ask_user": "query",
 }
@@ -1080,10 +1062,6 @@ def tool_get_backtests(limit: int = 5) -> list:
     return results
 
 
-def tool_get_style_analysis(portfolio_id: int) -> dict:
-    """[DEPRECATED] 重定向到 get_portfolio_analysis"""
-    return tool_get_portfolio_analysis(portfolio_id)
-
 
 def tool_get_portfolio_analysis(portfolio_id: int) -> dict:
     """运行 StockSage 多因子组合分析：对每只持仓调用51因子引擎，按市值加权聚合。
@@ -1464,25 +1442,6 @@ def tool_get_daily_picks_report(strategy: str = "main", limit: int = 5) -> dict:
     return _report_llm_result(report)
 
 
-def tool_get_factor_scores(symbol: str) -> dict:
-    """Compatibility shim: old score tool now returns a report context."""
-    return {"error": "get_factor_scores 已下线，请使用 get_stock_report。", "removed_tool": True}
-
-
-def tool_get_stock_metrics(symbol: str) -> dict:
-    """Compatibility shim: old metrics tool now returns a report context."""
-    return {"error": "get_stock_metrics 已下线，请使用 get_stock_report。", "removed_tool": True}
-
-
-def tool_get_portfolio_analysis(portfolio_id: int) -> dict:
-    """Compatibility shim: old portfolio score tool now returns a report context."""
-    return {"error": "get_portfolio_analysis 已下线，请使用 get_portfolio_report。", "removed_tool": True}
-
-
-def tool_get_daily_picks(strategy: str = "main", limit: int = 5) -> dict:
-    """Compatibility shim: old daily-picks score card now returns a report context."""
-    return {"error": "get_daily_picks 已下线，请使用 get_daily_picks_report。", "removed_tool": True}
-
 
 # ── Portfolio optimization tool ─────────────────────────────────────────
 
@@ -1539,11 +1498,8 @@ _PARAM_SCHEMAS = {
         "query": {"type": "string", "description": "股票名称或代码"}
     }, "required": ["query"]},
     "get_stock_price": {"type": "object", "properties": {
-        "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
-    }, "required": ["symbol"]},
-    "get_stock_price_history": {"type": "object", "properties": {
-        "symbol": {"type": "string", "description": "DB格式symbol"},
-        "days": {"type": "integer", "description": "天数，默认60，最大500"}
+        "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"},
+        "days": {"type": "integer", "description": "查询天数：1或省略=最新价，>1=历史K线。默认1，最大500"}
     }, "required": ["symbol"]},
     "get_stock_report": {"type": "object", "properties": {
         "symbol": {"type": "string", "description": "DB格式A股symbol，例如1.600519"}
@@ -1553,9 +1509,6 @@ _PARAM_SCHEMAS = {
         "strategy": {"type": "string", "description": "策略类型: main/golden_cross/hot/chip"},
         "limit": {"type": "integer", "description": "返回给模型的候选数量，默认5"}
     }, "required": []},
-    "get_factor_scores": {"type": "object", "properties": {
-        "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
-    }, "required": ["symbol"]},
     "get_transactions": {"type": "object", "properties": {
         "limit": {"type": "integer", "description": "返回条数，默认20，最大50"}
     }, "required": []},
@@ -1566,61 +1519,48 @@ _PARAM_SCHEMAS = {
     "consult_kb": {"type": "object", "properties": {
         "topic": {"type": "string", "description": "知识库主题名，如 基本面分析 / 技术面分析 / 市场环境分析 / 指标解读 / 因子评分解读 / 投资原则"}
     }, "required": ["topic"]},
-    "get_daily_picks": {"type": "object", "properties": {
-        "strategy": {"type": "string", "description": "策略类型: main/golden_cross/hot/chip"},
-        "limit": {"type": "integer", "description": "返回条数，默认5"}
+    "get_world_market": {"type": "object", "properties": {
+        "limit": {"type": "integer", "description": "返回新闻条数，默认10"}
     }, "required": []},
-    "get_world_news": {"type": "object", "properties": {
-        "limit": {"type": "integer", "description": "返回条数，默认10"}
-    }, "required": []},
-    "remember": {"type": "object", "properties": {
-        "fact": {"type": "string", "description": "要记住的信息（投资偏好、事实、规则等）"}
-    }, "required": ["fact"]},
-    "forget": {"type": "object", "properties": {
-        "keyword": {"type": "string", "description": "要删除的记忆关键词"}
-    }, "required": ["keyword"]},
+    "manage_memory": {"type": "object", "properties": {
+        "action": {"type": "string", "description": "'remember'=记住, 'forget'=删除"},
+        "fact": {"type": "string", "description": "[remember时需要] 要记住的信息"},
+        "keyword": {"type": "string", "description": "[forget时需要] 要删除的记忆关键词"}
+    }, "required": ["action"]},
     "confirm_create_transaction": {"type": "object", "properties": {
         "stockId": {"type": "string", "description": "DB格式symbol或数字ID"},
-        "type": {"type": "string", "description": "BUY/SELL/TRANSFER_IN/TRANSFER_OUT"},
+        "type": {"type": "string", "description": "BUY/SELL/TRANSFER_IN/TRANSFER_OUT/DIV"},
         "shares": {"type": "number", "description": "股数（转账类为金额）"},
         "price": {"type": "number", "description": "成交价格"},
         "fee": {"type": "number", "description": "手续费，默认0"},
         "tradeDate": {"type": "string", "description": "交易日期 yyyy-MM-dd"},
         "currency": {"type": "string", "description": "货币，默认CNY"},
-        "note": {"type": "string", "description": "备注"}
-    }, "required": ["type", "shares", "price", "tradeDate"]},
+        "note": {"type": "string", "description": "备注"},
+        "transactions": {"type": "array", "items": {"type": "object"}, "description": "批量模式：交易对象数组，每项含stockId/type/shares/price等字段。同时只能使用单笔或批量模式"}
+    }, "required": []},
     "confirm_update_transaction": {"type": "object", "properties": {
         "id": {"type": "integer", "description": "要修改的交易记录ID"},
         "stockId": {"type": "string"}, "type": {"type": "string"},
         "shares": {"type": "number"}, "price": {"type": "number"},
         "fee": {"type": "number"}, "tradeDate": {"type": "string"},
-        "currency": {"type": "string"}, "note": {"type": "string"}
-    }, "required": ["id"]},
+        "currency": {"type": "string"}, "note": {"type": "string"},
+        "updates": {"type": "array", "items": {"type": "object"}, "description": "批量模式：更新对象数组，每项含id及需修改的字段。同时只能使用单笔或批量模式"}
+    }, "required": []},
     "confirm_delete_transaction": {"type": "object", "properties": {
         "ids": {"type": "array", "items": {"type": "integer"}, "description": "要删除的交易记录ID列表"}
     }, "required": ["ids"]},
-    "confirm_add_watchlist": {"type": "object", "properties": {
-        "stockId": {"type": "integer", "description": "股票ID"},
-        "name": {"type": "string", "description": "显示名称"}
-    }, "required": ["stockId"]},
-    "confirm_remove_watchlist": {"type": "object", "properties": {
-        "ids": {"type": "array", "items": {"type": "integer"}, "description": "要移除的watchlist项ID列表"}
-    }, "required": ["ids"]},
-    "confirm_bulk_create": {"type": "object", "properties": {
-        "transactions": {"type": "array", "description": "交易对象列表"}
-    }, "required": ["transactions"]},
-    "confirm_bulk_update": {"type": "object", "properties": {
-        "updates": {"type": "array", "description": "更新对象列表"}
-    }, "required": ["updates"]},
-    "confirm_bulk_delete": {"type": "object", "properties": {
-        "ids": {"type": "array", "items": {"type": "integer"}}
-    }, "required": ["ids"]},
+    "confirm_watchlist": {"type": "object", "properties": {
+        "action": {"type": "string", "description": "'add'=加入自选, 'remove'=移除自选"},
+        "stockId": {"type": "integer", "description": "[add时需要] 股票ID"},
+        "name": {"type": "string", "description": "[add时] 显示名称"},
+        "ids": {"type": "array", "items": {"type": "integer"}, "description": "[remove时需要] 要移除的watchlist项ID列表"}
+    }, "required": ["action"]},
     "analyze_backtest": {"type": "object", "properties": {
         "id": {"type": "integer", "description": "回测记录ID"}
     }, "required": []},
-    "get_strategy": {"type": "object", "properties": {
-        "id": {"type": "integer", "description": "策略ID"}
-    }, "required": ["id"]},
+    "get_strategies": {"type": "object", "properties": {
+        "id": {"type": "integer", "description": "策略ID，省略则返回全部策略列表"}
+    }, "required": []},
     "ask_user": {"type": "object", "properties": {
         "question": {"type": "string", "description": "要问用户的问题"},
         "options": {"type": "array", "items": {"type": "object"}, "description": "选项列表，每项含value和label"},
@@ -1647,16 +1587,6 @@ _PARAM_SCHEMAS = {
     }, "required": []},
 }
 
-_REMOVED_SCORE_TOOLS = {
-    "get_score",
-    "get_factor_scores",
-    "get_stock_metrics",
-    "get_fundamentals",
-    "get_portfolio_analysis",
-    "get_daily_picks",
-}
-for _removed_tool_name in _REMOVED_SCORE_TOOLS:
-    _PARAM_SCHEMAS.pop(_removed_tool_name, None)
 
 
 def _build_tools():
@@ -1714,9 +1644,10 @@ def tool_get_global_indices() -> dict:
                 "price": round(price, 2), "change": round(chg, 2),
                 "changePct": round(chg_pct, 2), "date": str(rows[0][1])})
     cur.close(); conn.close()
-    return {"indices": results, "note": f"共{len(results)}个指数。指数可加自选：用其 stockId 调 confirm_add_watchlist。"}
+    return {"indices": results, "note": f"共{len(results)}个指数。指数可加自选：用其 stockId 调 confirm_watchlist(action='add')。"}
 
 def tool_get_world_news(limit: int = 10) -> dict:
+    """Internal — called by tool_get_world_market"""
     conn = get_db_conn()
     cur = conn.cursor()
     cur.execute("""
@@ -1731,6 +1662,17 @@ def tool_get_world_news(limit: int = 10) -> dict:
     return {"news": news, "count": len(news),
         "note": f"今日共{len(news)}条要闻" if news else "今日暂无新闻"}
 
+def tool_get_world_market(limit: int = 10) -> dict:
+    """Get global indices + world news in one call."""
+    indices = tool_get_global_indices()
+    news = tool_get_world_news(limit)
+    return {
+        "indices": indices.get("indices", []),
+        "news": news.get("news", []),
+        "newsCount": news.get("count", 0),
+        "note": f"{len(indices.get('indices', []))} 个指数, {news.get('count', 0)} 条新闻",
+    }
+
 
 TOOLS = _build_tools()
 
@@ -1742,47 +1684,34 @@ TOOL_LABELS = {
     "get_portfolio_report": "生成StockSage组合报告",
     "get_daily_picks_report": "生成StockSage选股报告",
     "get_backtests": "获取回测记录",
-    "get_style_analysis": "分析组合风格",
-    "list_strategies": "获取策略列表",
-    "get_strategy": "读取策略详情",
     "generate_strategy": "生成策略",
     "run_backtest": "运行回测",
     "search_stocks": "搜索股票",
     "get_stock_price": "查询股价",
     "get_pnl_history": "获取组合走势",
     "get_transactions": "获取交易记录",
-    "get_stock_price_history": "加载K线数据",
     "compute_correlation": "计算相关性",
     "compute_sector_breakdown": "分析行业分布",
     "benchmark_compare": "对比基准",
     "analyze_backtest": "分析回测",
     "suggest_strategy_optimizations": "策略优化建议",
     "web_search": "联网搜索",
-    "get_fundamentals": "查询基本面",
     "optimize_portfolio": "组合优化",
-    "get_global_indices": "获取全球指数",
-    "get_world_news": "获取全球要闻",
-    "remember": "保存记忆",
-    "forget": "删除记忆",
+    "get_world_market": "获取世界市场",
+    "get_strategies": "获取策略",
+    "manage_memory": "管理记忆",
     "ask_user": "",
     "confirm_create_transaction": "生成交易确认",
     "confirm_update_transaction": "生成编辑确认",
     "confirm_delete_transaction": "生成删除确认",
-    "confirm_bulk_create": "生成批量创建确认",
-    "confirm_bulk_update": "生成批量编辑确认",
-    "confirm_bulk_delete": "生成批量删除确认",
     "get_watchlist": "读取自选列表",
-    "confirm_add_watchlist": "添加自选确认",
-    "confirm_remove_watchlist": "移除自选确认",
+    "confirm_watchlist": "自选列表操作确认",
 }
 
 def _trim_result(name: str, result: object) -> object:
     """Strip data the LLM doesn't need to keep tool results compact."""
     if not isinstance(result, dict):
         return result
-    if name == "get_style_analysis":
-        # holdings detail is redundant — get_portfolio already covers it
-        return {k: v for k, v in result.items() if k != "holdings"}
     if name == "get_pnl_history":
         points = result.get("points", [])
         if len(points) > 30:
@@ -1840,16 +1769,12 @@ def _build_tx_endpoint(body: dict) -> str:
 
 
 def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
-    if name in _REMOVED_SCORE_TOOLS:
-        return {
-            "error": f"{name} 已下线。请使用 get_stock_report / get_portfolio_report / get_daily_picks_report 这三个审计报告入口。",
-            "removed_tool": True,
-        }
     """Inner dispatcher — returns Python object, raises on failure."""
-    if name == "remember":
+    if name == "manage_memory":
+        action = args.get("action", "remember")
+        if action == "forget":
+            return {"status": tool_forget(user_id, args.get("keyword", ""))}
         return {"status": tool_remember(user_id, args.get("fact", ""))}
-    elif name == "forget":
-        return {"status": tool_forget(user_id, args.get("keyword", ""))}
     elif name == "ask_user":
         is_multi = args.get("multiSelect", False)
         q = {"question": args.get("question", ""), "options": args.get("options", []), "multiSelect": bool(is_multi)}
@@ -1875,14 +1800,14 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_get_daily_picks_report(args.get("strategy", "main"), args.get("limit", 5))
     elif name == "get_backtests":
         return tool_get_backtests(args.get("limit", 5))
-    elif name == "get_style_analysis":
-        return tool_get_portfolio_analysis(portfolio_id)
     elif name == "get_market_regime":
         return tool_get_market_regime()
-    elif name == "list_strategies":
+    elif name == "get_strategies":
+        # id optional: absent → list all, present → single detail
+        strategy_id = args.get("id")
+        if strategy_id is not None:
+            return tool_get_strategy(int(strategy_id))
         return tool_list_strategies()
-    elif name == "get_strategy":
-        return tool_get_strategy(args.get("id", 0))
     elif name == "run_backtest":
         return tool_run_backtest(
             args.get("strategy_id"), args.get("code"),
@@ -1902,13 +1827,14 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
     elif name == "search_stocks":
         return tool_search_stocks(args.get("query", ""))
     elif name == "get_stock_price":
+        days = args.get("days")
+        if days is not None and int(days) > 1:
+            return tool_get_stock_price_history(args.get("symbol", ""), int(days))
         return tool_get_stock_price(args.get("symbol", ""))
     elif name == "get_pnl_history":
         return tool_get_pnl_history(portfolio_id, args.get("days", 90))
     elif name == "get_transactions":
         return tool_get_transactions(portfolio_id, args.get("limit", 20))
-    elif name == "get_stock_price_history":
-        return tool_get_stock_price_history(args.get("symbol", ""), args.get("days", 60))
     elif name == "compute_correlation":
         return tool_compute_correlation(portfolio_id, args.get("symbols"))
     elif name == "compute_sector_breakdown":
@@ -1929,28 +1855,18 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
             float(args.get("max_weight", 0.30)),
             args.get("mode", "sharpe"),
         )
-    elif name == "get_global_indices":
-        return tool_get_global_indices()
-    elif name == "get_world_news":
-        return tool_get_world_news(args.get("limit", 10))
+    elif name == "get_world_market":
+        return tool_get_world_market(args.get("limit", 10))
     elif name == "get_watchlist":
         return tool_get_watchlist(user_id)
-    elif name == "confirm_add_watchlist":
-        return _confirm_add_watchlist(args)
-    elif name == "confirm_remove_watchlist":
-        return _confirm_remove_watchlist({**args, "_user_id": user_id})
+    elif name == "confirm_watchlist":
+        return _confirm_watchlist({**args, "_user_id": user_id})
     elif name == "confirm_create_transaction":
         return _confirm_create(args, user_id)
     elif name == "confirm_update_transaction":
         return _confirm_update(args)
     elif name == "confirm_delete_transaction":
         return _confirm_delete(args)
-    elif name == "confirm_bulk_create":
-        return _confirm_bulk_create(args)
-    elif name == "confirm_bulk_update":
-        return _confirm_bulk_update(args)
-    elif name == "confirm_bulk_delete":
-        return _confirm_bulk_delete(args)
     return {"error": f"unknown tool: {name}"}
 
 # ── Confirm tool implementations ──────────────────────────────────
@@ -1983,104 +1899,121 @@ def _resolve_stock_id(value) -> int:
     return 0
 
 def _confirm_create(args: dict, user_id: int = 0) -> dict:
-    """Build a single create-transaction confirmation."""
-    t = args.get("type", "BUY")
-    sid = _resolve_stock_id(args.get("stockId", 0))
-    shares = float(args.get("shares", 0) or 0)
+    """Build a create-transaction confirmation — single or bulk.
+    If `transactions` is present (array), each entry becomes one confirm item.
+    Otherwise the top-level fields describe a single transaction."""
+    txs = args.get("transactions")
+    if not isinstance(txs, list) or len(txs) == 0:
+        txs = [args]  # single-transaction mode
+    items = []
+    for tx in txs:
+        t = tx.get("type", "BUY")
+        sid = _resolve_stock_id(tx.get("stockId", 0))
+        shares = float(tx.get("shares", 0) or 0)
 
-    # Validate SELL: check holdings exist and have enough shares
-    if t == "SELL" and sid > 0 and user_id > 0:
-        try:
-            conn = get_db_conn()
-            cur = conn.cursor()
-            cur.execute("""SELECT p.id FROM portfolios p WHERE p.user_id = %s LIMIT 1""", (user_id,))
-            row = cur.fetchone()
-            pid = row[0] if row else 0
-            if pid > 0:
-                cur.execute("SELECT total_shares FROM holdings WHERE portfolio_id = %s AND stock_id = %s", (pid, sid))
-                hrow = cur.fetchone()
-                held = float(hrow[0]) if hrow else 0
-                if held < shares:
-                    cur.close(); conn.close()
-                    return {"error": f"持仓不足: 持有{held}股, 试图卖出{shares}股"}
-                if held <= 0:
-                    cur.close(); conn.close()
-                    return {"error": "未持有该股票，无法卖出"}
-            cur.close(); conn.close()
-        except Exception:
-            pass  # best-effort; backend will also validate
+        # Validate SELL: check holdings exist and have enough shares
+        if t == "SELL" and sid > 0 and user_id > 0:
+            try:
+                conn = get_db_conn()
+                cur = conn.cursor()
+                cur.execute("""SELECT p.id FROM portfolios p WHERE p.user_id = %s LIMIT 1""", (user_id,))
+                row = cur.fetchone()
+                pid = row[0] if row else 0
+                if pid > 0:
+                    cur.execute("SELECT total_shares FROM holdings WHERE portfolio_id = %s AND stock_id = %s", (pid, sid))
+                    hrow = cur.fetchone()
+                    held = float(hrow[0]) if hrow else 0
+                    if held < shares:
+                        cur.close(); conn.close()
+                        return {"error": f"持仓不足: 持有{held}股, 试图卖出{shares}股"}
+                    if held <= 0:
+                        cur.close(); conn.close()
+                        return {"error": "未持有该股票，无法卖出"}
+                cur.close(); conn.close()
+            except Exception:
+                pass  # best-effort; backend will also validate
 
-    label_parts = []
-    if t == "DIV":
-        label_parts.append(f"分红 {args.get('shares', 0)}/股")
-    elif t in ("TRANSFER_IN", "TRANSFER_OUT"):
-        label_parts.append(f"{'转入' if t == 'TRANSFER_IN' else '转出'} {args.get('shares', 0)} {args.get('currency', 'CNY')}")
-    else:
-        label_parts.append(f"{'买入' if t == 'BUY' else '卖出'} {shares}股")
-    if args.get("tradeDate"):
-        label_parts.append(f"日期 {args['tradeDate']}")
-    trade_date = args.get("tradeDate") or _today_str()
-    body = _clean_body({
-        "stockId": sid, "type": t, "shares": args.get("shares"),
-        "price": args.get("price", 0), "fee": args.get("fee", 0),
-        "tradeDate": trade_date, "currency": args.get("currency", "CNY"),
-        "note": args.get("note", ""),
-    })
-    if t == "DIV":
-        body["amountPerShare"] = args.get("amountPerShare") or args.get("shares", 0)
-    # Resolve stock name for display
-    stock_name = args.get("stockName", "")
-    if not stock_name and sid > 0:
-        try:
-            conn = get_db_conn()
-            cur = conn.cursor()
-            cur.execute("SELECT name FROM stocks WHERE id = %s", (sid,))
-            row = cur.fetchone()
-            cur.close(); conn.close()
-            if row: stock_name = row[0]
-        except: pass
-    if stock_name:
-        body["stockName"] = stock_name
-    endpoint = _build_tx_endpoint(body)
-    return _emit_confirm([{
-        "action": "create", "label": " | ".join(label_parts),
-        "endpoint": endpoint, "method": "POST", "body": _clean_body(body),
-    }], " | ".join(label_parts))
+        label_parts = []
+        if t == "DIV":
+            label_parts.append(f"分红 {tx.get('shares', 0)}/股")
+        elif t in ("TRANSFER_IN", "TRANSFER_OUT"):
+            label_parts.append(f"{'转入' if t == 'TRANSFER_IN' else '转出'} {tx.get('shares', 0)} {tx.get('currency', 'CNY')}")
+        else:
+            label_parts.append(f"{'买入' if t == 'BUY' else '卖出'} {shares}股")
+        if tx.get("tradeDate"):
+            label_parts.append(f"日期 {tx['tradeDate']}")
+        trade_date = tx.get("tradeDate") or _today_str()
+        body = _clean_body({
+            "stockId": sid, "type": t, "shares": tx.get("shares"),
+            "price": tx.get("price", 0), "fee": tx.get("fee", 0),
+            "tradeDate": trade_date, "currency": tx.get("currency", "CNY"),
+            "note": tx.get("note", ""),
+        })
+        if t == "DIV":
+            body["amountPerShare"] = tx.get("amountPerShare") or tx.get("shares", 0)
+        # Resolve stock name for display
+        stock_name = tx.get("stockName", "")
+        if not stock_name and sid > 0:
+            try:
+                conn = get_db_conn()
+                cur = conn.cursor()
+                cur.execute("SELECT name FROM stocks WHERE id = %s", (sid,))
+                row = cur.fetchone()
+                cur.close(); conn.close()
+                if row: stock_name = row[0]
+            except: pass
+        if stock_name:
+            body["stockName"] = stock_name
+        endpoint = _build_tx_endpoint(body)
+        items.append({
+            "action": "create", "label": " | ".join(label_parts),
+            "endpoint": endpoint, "method": "POST", "body": _clean_body(body),
+        })
+    title = f"批量创建 {len(items)} 笔交易" if len(items) > 1 else items[0]["label"]
+    return _emit_confirm(items, title)
 
 def _confirm_update(args: dict) -> dict:
-    """Build a single update-transaction confirmation — looks up existing record."""
-    tid = args.get("id")
-    body = {"id": tid}
-    for k in ("stockId", "type", "shares", "price", "fee", "tradeDate", "currency", "note", "amountPerShare"):
-        if k in args and args[k] is not None:
-            body[k] = args[k]
-    if "tradeDate" not in body:
-        body["tradeDate"] = _today_str()
-    t = body.get("type", "")
-    endpoint = "/api/dividends" if t == "DIV" else "/api/transactions"
-    # Look up existing record for display label
-    label = f"编辑交易 #{tid}"
-    if tid:
-        try:
-            conn = get_db_conn()
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT t.type, s.name, s.symbol, t.shares, t.price, t.trade_date
-                FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
-                WHERE t.id = %s
-            """, (tid,))
-            row = cur.fetchone()
-            cur.close(); conn.close()
-            if row:
-                ttype, name, sym, shares, price, tdate = row[0], row[1], row[2], row[3], row[4], row[5]
-                label = f"编辑: {'买入' if ttype == 'BUY' else '卖出' if ttype == 'SELL' else ttype} {name or sym or '?'} {shares}股 @ {price} ({tdate})"
-                if not body.get("type"): body["type"] = ttype
-        except:
-            pass
-    return _emit_confirm([{
-        "action": "update", "label": label,
-        "endpoint": f"{endpoint}/{tid}", "method": "PUT", "body": _clean_body(body),
-    }], label)
+    """Build a single or batch update-transaction confirmation.
+    If `updates` is present (array), each entry becomes one confirm item.
+    Otherwise the top-level fields describe a single update."""
+    updates = args.get("updates")
+    if not isinstance(updates, list) or len(updates) == 0:
+        updates = [args]  # single-update mode
+    items = []
+    for u in updates:
+        tid = u.get("id")
+        body = {"id": tid}
+        for k in ("stockId", "type", "shares", "price", "fee", "tradeDate", "currency", "note", "amountPerShare"):
+            if k in u and u[k] is not None:
+                body[k] = u[k]
+        if "tradeDate" not in body:
+            body["tradeDate"] = _today_str()
+        t = body.get("type", "")
+        endpoint = "/api/dividends" if t == "DIV" else "/api/transactions"
+        label = f"编辑交易 #{tid}"
+        if tid:
+            try:
+                conn = get_db_conn()
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT t.type, s.name, s.symbol, t.shares, t.price, t.trade_date
+                    FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
+                    WHERE t.id = %s
+                """, (tid,))
+                row = cur.fetchone()
+                cur.close(); conn.close()
+                if row:
+                    ttype, name, sym, shares, price, tdate = row[0], row[1], row[2], row[3], row[4], row[5]
+                    label = f"编辑: {'买入' if ttype == 'BUY' else '卖出' if ttype == 'SELL' else ttype} {name or sym or '?'} {shares}股 @ {price} ({tdate})"
+                    if not body.get("type"): body["type"] = ttype
+            except:
+                pass
+        items.append({
+            "action": "update", "label": label,
+            "endpoint": f"{endpoint}/{tid}", "method": "PUT", "body": _clean_body(body),
+        })
+    title = f"批量编辑 {len(items)} 笔交易" if len(items) > 1 else items[0]["label"]
+    return _emit_confirm(items, title)
 
 def _confirm_delete(args: dict) -> dict:
     """Build a delete confirmation — looks up transaction details for display."""
@@ -2125,69 +2058,7 @@ def _confirm_delete(args: dict) -> dict:
     conn.close()
     return _emit_confirm(items, f"删除 {len(items)} 笔交易") if items else {"error": "未找到可删除的交易"}
 
-def _confirm_bulk_create(args: dict) -> dict:
-    """Build a bulk create confirmation."""
-    txs = args.get("transactions", [])
-    items = []
-    for tx in txs:
-        t = tx.get("type", "BUY")
-        body = {
-            "stockId": tx.get("stockId"), "type": t, "shares": tx.get("shares"),
-            "price": tx.get("price", 0), "fee": tx.get("fee", 0),
-            "tradeDate": tx.get("tradeDate") or _today_str(), "currency": tx.get("currency", "CNY"),
-            "note": tx.get("note", ""),
-        }
-        if t == "DIV":
-            body["amountPerShare"] = tx.get("shares", 0)
-        endpoint = _build_tx_endpoint(body)
-        items.append({
-            "action": "create", "label": f"{t} {tx.get('shares', 0)}股 @ {tx.get('price', 0)}",
-            "endpoint": endpoint, "method": "POST", "body": body,
-        })
-    return _emit_confirm(items, f"批量创建 {len(items)} 笔交易")
 
-def _confirm_bulk_update(args: dict) -> dict:
-    """Build a bulk update confirmation."""
-    updates = args.get("updates", [])
-    items = []
-    for u in updates:
-        tid = u.get("id")
-        body = {k: v for k, v in u.items() if v is not None}
-        if "tradeDate" not in body:
-            body["tradeDate"] = _today_str()
-        t = body.get("type", "")
-        endpoint = "/api/dividends" if t == "DIV" else "/api/transactions"
-        items.append({
-            "action": "update", "label": f"编辑交易 #{tid}",
-            "endpoint": f"{endpoint}/{tid}", "method": "PUT", "body": body,
-        })
-    return _emit_confirm(items, f"批量编辑 {len(items)} 笔交易")
-
-def _confirm_bulk_delete(args: dict) -> dict:
-    """Build a bulk delete confirmation — resolves DIV vs transaction endpoints."""
-    ids = args.get("ids", [])
-    conn = get_db_conn()
-    items = []
-    for tid in ids:
-        endpoint = f"/api/transactions/{tid}"  # default
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT type FROM transactions WHERE id = %s", (tid,))
-            row = cur.fetchone()
-            if row is None:
-                # Check dividends table
-                cur.execute("SELECT 1 FROM dividends WHERE id = %s", (tid,))
-                if cur.fetchone():
-                    endpoint = f"/api/dividends/{tid}"
-            cur.close()
-        except Exception:
-            pass
-        items.append({
-            "action": "delete", "label": f"删除交易 #{tid}",
-            "endpoint": endpoint, "method": "DELETE", "body": {},
-        })
-    conn.close()
-    return _emit_confirm(items, f"批量删除 {len(items)} 笔交易")
 
 # ── Watchlist tools ────────────────────────────────────────────────
 
@@ -2217,8 +2088,35 @@ def tool_get_watchlist(user_id: int) -> dict:
     conn.close()
     return {"count": len(items), "items": items}
 
-def _confirm_add_watchlist(args: dict) -> dict:
-    """Build add-to-watchlist confirmation."""
+def _confirm_watchlist(args: dict) -> dict:
+    """Build add-to-watchlist or remove-from-watchlist confirmation.
+    action='add' → requires stockId/name. action='remove' → requires ids array."""
+    action = args.get("action", "add")
+    if action == "remove":
+        ids = args.get("ids", [])
+        user_id = args.get("_user_id", 0)
+        if not ids:
+            return {"error": "no ids provided"}
+        conn = get_db_conn()
+        items = []
+        for wid in ids:
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT w.id, w.stock_id, s.symbol, s.name FROM watchlist w JOIN stocks s ON w.stock_id=s.id WHERE w.id=%s AND w.user_id=%s", (wid, user_id))
+                row = cur.fetchone()
+                cur.close()
+                if row:
+                    stock_id = row[1]
+                    items.append({
+                        "action": "remove_watchlist", "label": f"移除自选: {row[3]} ({row[2]})",
+                        "endpoint": f"/api/watchlist/{stock_id}", "method": "DELETE",
+                        "body": {"id": wid, "stockId": stock_id, "symbol": row[2], "name": row[3]},
+                    })
+            except:
+                pass
+        conn.close()
+        return _emit_confirm(items, f"从自选移除 {len(items)} 项") if items else {"error": "未找到要移除的自选项"}
+    # add
     sid = _resolve_stock_id(args.get("stockId", 0))
     if sid <= 0:
         return {"error": f"未找到股票: {args.get('symbol', args.get('stockId', '?'))}，请先用 search_stocks 查询"}
@@ -2228,32 +2126,6 @@ def _confirm_add_watchlist(args: dict) -> dict:
         "endpoint": "/api/watchlist", "method": "POST",
         "body": {"stockId": sid, "name": name},
     }], f"添加 {name} 到自选列表")
-
-def _confirm_remove_watchlist(args: dict) -> dict:
-    """Build remove-from-watchlist confirmation. Looks up item details for display."""
-    ids = args.get("ids", [])
-    user_id = args.get("_user_id", 0)
-    if not ids:
-        return {"error": "no ids provided"}
-    conn = get_db_conn()
-    items = []
-    for wid in ids:
-        try:
-            cur = conn.cursor()
-            cur.execute("SELECT w.id, w.stock_id, s.symbol, s.name FROM watchlist w JOIN stocks s ON w.stock_id=s.id WHERE w.id=%s AND w.user_id=%s", (wid, user_id))
-            row = cur.fetchone()
-            cur.close()
-            if row:
-                stock_id = row[1]
-                items.append({
-                    "action": "remove_watchlist", "label": f"移除自选: {row[3]} ({row[2]})",
-                    "endpoint": f"/api/watchlist/{stock_id}", "method": "DELETE",
-                    "body": {"id": wid, "stockId": stock_id, "symbol": row[2], "name": row[3]},
-                })
-        except:
-            pass
-    conn.close()
-    return _emit_confirm(items, f"从自选移除 {len(items)} 项") if items else {"error": "未找到要移除的自选项"}
 
 
 # Heavy analytic tools (full-market scans, multi-factor portfolio analysis,
@@ -2270,7 +2142,7 @@ _TOOL_TIMEOUTS = {
     "optimize_portfolio": 120,       # subprocess 110s
     "analyze_backtest": 45,
     "web_search": 30,
-    "get_world_news": 30,
+    "get_world_market": 30,
     "run_backtest": 120,             # subprocess 110s
 }
 def _tool_timeout(name: str) -> int:
@@ -2306,9 +2178,9 @@ def _tool_summary(name: str, result: object) -> str:
         if name in ("get_stock_report", "get_portfolio_report", "get_daily_picks_report"):
             title = result.get("report_title") or (result.get("artifact") or {}).get("title")
             return str(title)[:40] if title else "报告已生成"
-        if name == "get_world_news":
-            n = result.get("count")
-            return f"{n} 条" if n is not None else ""
+        if name == "get_world_market":
+            n = result.get("newsCount")
+            return f"{n} 条新闻" if n is not None else ""
         if name == "run_backtest":
             tr = result.get("totalReturnPct")
             return f"收益 {tr:+.1f}%" if isinstance(tr, (int, float)) else "完成"
@@ -2318,7 +2190,7 @@ def _tool_summary(name: str, result: object) -> str:
         if name == "ask_user":
             q = result.get("question")
             return str(q)[:60] if q else ""
-        if name in ("get_transactions", "get_backtests", "list_strategies"):
+        if name in ("get_transactions", "get_backtests", "get_strategies"):
             items = result if isinstance(result, list) else result.get("points")
             return f"{len(items)} 条" if isinstance(items, list) else ""
         # Generic fallback: a top-level count if present
@@ -2454,9 +2326,8 @@ def _is_retryable(error_msg: str) -> bool:
 # strategy-generation tools when there's strategy/backtest intent. Conservative
 # on purpose: read tools are never withheld, so proactiveness can't regress.
 _WRITE_CONFIRM_TOOLS = {
-    "confirm_add_watchlist", "confirm_remove_watchlist", "confirm_create_transaction",
-    "confirm_update_transaction", "confirm_delete_transaction", "confirm_bulk_create",
-    "confirm_bulk_update", "confirm_bulk_delete",
+    "confirm_watchlist", "confirm_create_transaction",
+    "confirm_update_transaction", "confirm_delete_transaction",
 }
 _STRATEGY_WRITE_TOOLS = {"generate_strategy", "run_backtest", "suggest_strategy_optimizations"}
 _WRITE_INTENT = [
@@ -2490,7 +2361,7 @@ def _select_tools(messages: list, expose_web: bool) -> list:
 # tools returned last turn. We emit a compact digest of this turn's tool
 # results as a [CONTEXT] line; Java persists it and re-injects it next turn so
 # the assistant can reference "the portfolio you just pulled" without re-querying.
-_CONTEXT_SKIP_TOOLS = _WRITE_CONFIRM_TOOLS | {"ask_user", "remember", "forget"}
+_CONTEXT_SKIP_TOOLS = _WRITE_CONFIRM_TOOLS | {"ask_user", "manage_memory"}
 
 def _emit_context(gathered: dict) -> None:
     if not gathered:
