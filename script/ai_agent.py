@@ -345,19 +345,41 @@ def resolve_symbol(conn, symbol: str):
     """将用户输入的 symbol 转换为 DB 格式"""
     cur = conn.cursor()
     try:
+        symbol = (symbol or "").strip()
+        if not symbol:
+            return None
         cur.execute("SELECT symbol FROM stocks WHERE symbol=%s", (symbol,))
+        row = cur.fetchone()
+        if row: return row[0]
+        # Direct Chinese/common-name match. The agent and tool schemas allow
+        # passing names like "贵州茅台" directly, so resolver must cover names,
+        # not only DB symbols.
+        clean_name = symbol.replace(" ", "")
+        cur.execute(
+            """SELECT symbol FROM stocks
+               WHERE name=%s OR REPLACE(name, ' ', '')=%s
+               ORDER BY CASE market WHEN 'SH' THEN 1 WHEN 'SZ' THEN 2 WHEN 'BJ' THEN 3 ELSE 9 END
+               LIMIT 1""",
+            (symbol, clean_name),
+        )
         row = cur.fetchone()
         if row: return row[0]
         if '.' in symbol:
             parts = symbol.rsplit('.', 1)
             code, market = parts[0], parts[1].upper()
-            if market in ('SH','SZ'):
+            if market in ('SH','SZ','BJ'):
                 prefix = '1' if market == 'SH' else '0'
                 db_sym = f"{prefix}.{code}"
                 cur.execute("SELECT symbol FROM stocks WHERE symbol=%s", (db_sym,))
                 row = cur.fetchone()
                 if row: return row[0]
-        cur.execute("SELECT symbol FROM stocks WHERE symbol LIKE %s", (f"%{symbol}%",))
+        cur.execute(
+            """SELECT symbol FROM stocks
+               WHERE symbol LIKE %s OR name LIKE %s OR REPLACE(name, ' ', '') LIKE %s
+               ORDER BY CASE market WHEN 'SH' THEN 1 WHEN 'SZ' THEN 2 WHEN 'BJ' THEN 3 ELSE 9 END
+               LIMIT 1""",
+            (f"%{symbol}%", f"%{symbol}%", f"%{clean_name}%"),
+        )
         row = cur.fetchone()
         return row[0] if row else None
     finally:
