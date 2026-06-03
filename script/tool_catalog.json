@@ -40,6 +40,11 @@
     "category": "analysis"
   },
   {
+    "name": "run_backtest",
+    "description": "【策略铁律】运行一次量化策略回测。优先使用 strategy_id（已保存策略）；若无则用 code 参数直接回测刚生成的策略。回测标的：显式 stocks 优先，否则默认回测当前组合持仓。",
+    "category": "analysis"
+  },
+  {
     "name": "search_stocks",
     "description": "【数据铁律】根据股票名称或代码搜索真实股票数据，返回 stockId、symbol、name、market。若返回多只同名不同市场股票，必须调用 ask_user 让用户选择。",
     "category": "query"
@@ -77,6 +82,11 @@
   {
     "name": "analyze_backtest",
     "description": "获取回测结果并从收益、风险、稳定性和改进方向给出客观评价。",
+    "category": "analysis"
+  },
+  {
+    "name": "suggest_strategy_optimizations",
+    "description": "基于回测结果和策略，提出3-5个参数变体优化建议。",
     "category": "analysis"
   },
   {
