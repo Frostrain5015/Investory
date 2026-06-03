@@ -2251,19 +2251,15 @@ def _needs_proxy(api_base: str) -> bool:
 FAST_MODEL_CHAIN = [
     "qwen3.7-plus",
     "qwen3.6-plus",
-    "deepseek-v3.2",
-    "glm-5.1",
-    "qwen-plus",
     "qwen-flash",
 ]
 
 # Reasoning models: deep thinking, complex multi-step analysis.
 # Ordered: deepseek-v4-pro > qwen3.7-max > deepseek-r1 > qwq-plus > qwen3.6-max-preview.
 REASONING_MODEL_CHAIN = [
-    "deepseek-v4-pro",
+    "glm-5.1",
     "qwen3.7-max",
-    "deepseek-r1",
-    "qwq-plus",
+    "deepseek-v4-pro",
     "qwen3.6-max-preview",
 ]
 
