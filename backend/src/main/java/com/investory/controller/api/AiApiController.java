@@ -228,10 +228,21 @@ public class AiApiController {
                 final String[] toolContext = { null };
                 // Pointer to the current open thinking step (so we can keep appending to it).
                 final Map<String, Object>[] openThinking = new Map[]{ null };
+                // Stamp _elapsed on the current open thinking step and close it.
+                // Called before a tool/KB line or at process end so persisted
+                // timeline steps carry actual timing (not 0s after history reload).
+                final Runnable closeThinking = () -> {
+                    if (openThinking[0] != null) {
+                        long started = (long) openThinking[0].getOrDefault("_ts", 0L);
+                        if (started > 0) openThinking[0].put("_elapsed", System.currentTimeMillis() - started);
+                        openThinking[0] = null;
+                    }
+                };
                 java.util.function.Consumer<String> appendThinking = (chunk) -> {
                     if (openThinking[0] == null) {
                         Map<String, Object> step = new LinkedHashMap<>();
                         step.put("kind", "thinking"); step.put("text", "");
+                        step.put("_ts", System.currentTimeMillis());  // for _elapsed on reload
                         timeline.add(step);
                         openThinking[0] = step;
                     }
@@ -275,7 +286,7 @@ public class AiApiController {
                         } else if (line.startsWith("[KB]")) {
                             // Payload: "<topic>" — agent consulted the knowledge base.
                             String topic = line.substring(4).trim();
-                            openThinking[0] = null;
+                            closeThinking.run();
                             Map<String, Object> kbStep = new LinkedHashMap<>();
                             kbStep.put("kind", "kb"); kbStep.put("topic", topic);
                             timeline.add(kbStep);
@@ -287,7 +298,7 @@ public class AiApiController {
                             String category = parts.length > 1 ? parts[1].trim() : "query";
                             String callId = parts.length > 2 ? parts[2].trim() : "";
                             // A new tool call closes the current thinking segment
-                            openThinking[0] = null;
+                            closeThinking.run();
                             Map<String, Object> step = new LinkedHashMap<>();
                             step.put("kind", "tool"); step.put("name", name);
                             step.put("category", category); step.put("done", false);
@@ -326,6 +337,10 @@ public class AiApiController {
                 boolean finished = p.waitFor(10, TimeUnit.MINUTES);
                 if (!finished) { p.destroyForcibly(); session.emitError(uid, "AI 对话超时"); }
                 Files.deleteIfExists(tmpInput);
+
+                // Stamp _elapsed on the final thinking segment (if any) so
+                // reloaded history doesn't show 0s.
+                closeThinking.run();
 
                 // Persist assistant turn (content + structured timeline) once generation completes
                 if (uid > 0 && accumContent.length() > 0) {
