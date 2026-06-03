@@ -143,6 +143,10 @@ public class AiSessionManager {
         emitToAll(get(userId), "strategy", data);
     }
 
+    public void emitArtifact(long userId, Map<String, Object> data) {
+        emitToAll(get(userId), "artifact", data);
+    }
+
     public void emitAsk(long userId, Map<String, Object> data) {
         emitToAll(get(userId), "ask", data);
     }

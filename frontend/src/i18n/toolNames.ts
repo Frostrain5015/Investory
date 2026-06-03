@@ -1,16 +1,13 @@
-// Tool display labels per language. Keys must match the OpenAI/Anthropic
-// tool `name` defined in script/ai_agent.py. Unknown tools fall back to the raw name.
-
 import type { Lang } from './translations'
 
 type ToolLabelMap = Record<string, string>
 
 const zh: ToolLabelMap = {
   get_portfolio: '读取持仓',
-  get_factor_scores: '多因子评分',
-  get_portfolio_analysis: '组合因子分析',
+  get_stock_report: '生成个股审计报告',
+  get_portfolio_report: '生成组合审计报告',
+  get_daily_picks_report: '生成候选股审计报告',
   get_market_regime: '市场环境',
-  get_daily_picks: '今日选股',
   get_backtests: '回测记录',
   list_strategies: '策略列表',
   get_strategy: '策略详情',
@@ -24,14 +21,12 @@ const zh: ToolLabelMap = {
   benchmark_compare: '基准对比',
   analyze_backtest: '回测点评',
   suggest_strategy_optimizations: '策略优化建议',
-  ask_user: '请你选择',
-  remember: '记忆已存',
+  ask_user: '等待选择',
+  remember: '保存记忆',
   forget: '删除记忆',
   web_search: '联网搜索',
-  get_fundamentals: '基本面',
   optimize_portfolio: '组合优化',
   get_global_indices: '全球指数',
-  get_style_analysis: '风格分析',
   run_backtest: '运行回测',
   generate_strategy: '生成策略',
   get_world_news: '全球财经',
@@ -48,10 +43,10 @@ const zh: ToolLabelMap = {
 
 const en: ToolLabelMap = {
   get_portfolio: 'Loading portfolio',
-  get_factor_scores: 'Factor scoring',
-  get_portfolio_analysis: 'Portfolio factor analysis',
+  get_stock_report: 'Generating stock audit report',
+  get_portfolio_report: 'Generating portfolio audit report',
+  get_daily_picks_report: 'Generating picks audit report',
   get_market_regime: 'Market regime',
-  get_daily_picks: "Today's picks",
   get_backtests: 'Backtest history',
   list_strategies: 'Strategy list',
   get_strategy: 'Strategy details',
@@ -64,15 +59,13 @@ const en: ToolLabelMap = {
   compute_sector_breakdown: 'Sector breakdown',
   benchmark_compare: 'Benchmark compare',
   analyze_backtest: 'Backtest review',
-  suggest_strategy_optimizations: 'Optimisation ideas',
+  suggest_strategy_optimizations: 'Optimization ideas',
   ask_user: 'Awaiting your choice',
   remember: 'Saving memory',
   forget: 'Clearing memory',
   web_search: 'Web search',
-  get_fundamentals: 'Fundamentals',
   optimize_portfolio: 'Portfolio optimization',
   get_global_indices: 'Global indices',
-  get_style_analysis: 'Style analysis',
   run_backtest: 'Run backtest',
   generate_strategy: 'Generate strategy',
   get_world_news: 'World news',
@@ -89,14 +82,14 @@ const en: ToolLabelMap = {
 
 const hk: ToolLabelMap = {
   get_portfolio: '讀取持倉',
-  get_factor_scores: '多因子評分',
-  get_portfolio_analysis: '組合因子分析',
+  get_stock_report: '生成個股審計報告',
+  get_portfolio_report: '生成組合審計報告',
+  get_daily_picks_report: '生成候選股審計報告',
   get_market_regime: '市場環境',
-  get_daily_picks: '今日選股',
   get_backtests: '回測記錄',
   list_strategies: '策略列表',
   get_strategy: '策略詳情',
-  search_stocks: '股票搜索',
+  search_stocks: '股票搜尋',
   get_stock_price: '查詢股價',
   get_pnl_history: '盈虧走勢',
   get_transactions: '交易記錄',
@@ -106,14 +99,12 @@ const hk: ToolLabelMap = {
   benchmark_compare: '基準對比',
   analyze_backtest: '回測點評',
   suggest_strategy_optimizations: '策略優化建議',
-  ask_user: '請你選擇',
-  remember: '記憶已存',
+  ask_user: '等待選擇',
+  remember: '保存記憶',
   forget: '刪除記憶',
-  web_search: '聯網搜索',
-  get_fundamentals: '基本面',
+  web_search: '聯網搜尋',
   optimize_portfolio: '組合優化',
   get_global_indices: '全球指數',
-  get_style_analysis: '風格分析',
   run_backtest: '運行回測',
   generate_strategy: '生成策略',
   get_world_news: '全球財經',
@@ -130,7 +121,6 @@ const hk: ToolLabelMap = {
 
 const MAPS: Record<Lang, ToolLabelMap> = { zh, en, hk }
 
-/** Translate a raw tool name (e.g. "get_portfolio") to a localized label. */
 export function localizeToolName(rawName: string, lang: Lang): string {
   if (!rawName) return ''
   return MAPS[lang]?.[rawName] || rawName

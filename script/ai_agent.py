@@ -159,21 +159,21 @@ def build_system_prompt(kb: dict) -> str:
 【知识库（按需查阅）】
 专业分析框架、指标解读、评分标准已收录在知识库，需要时调用 consult_kb(topic) 查阅，不要凭记忆作答。可查阅的主题：
 {kb_index}
-查阅规则：
-- 做基本面/技术面/市场环境分析前，先 consult_kb 对应主题，再按框架步骤调工具取数、按框架格式作答。
-- 需要某指标的定义或好坏阈值、某因子评分的解读标准时，先 consult_kb 再下结论。
-- 一次只查所需主题，不要一次性查阅全部。
 
 【工具调用规则】
+- ⚠ 分析铁律：做任何基本面/技术面/市场环境的分析、评估、拆解、审查前，第一步必须 consult_kb 查阅对应主题（如 基本面分析 / 技术面分析 / 市场环境分析），再调数据工具取数，最后按 KB 框架作答。读报告时也要先 consult_kb 了解评分标准再下结论。禁止跳过 KB 直接分析。
 - ⚠ 数据铁律：凡涉及具体数据必须先调工具拿真实数据再回答，禁凭记忆编造数字。不确定用什么工具时先 search_stocks / get_portfolio。
 - ⚠ 交易铁律：用户要求买卖/入金/出金/分红/删改交易 → 只允许调用 confirm_create/update/delete，严禁用文字代替。
 - ⚠ 卡片铁律：confirm_* / ask_user 弹出卡片后不得复述卡片内容；用户对卡片提修改要求 → 重调同一个工具带修正参数，禁调 remember。
+- 轻重分流：简单行情、涨跌、名称匹配、短期K线、PE/PB、新闻事实、术语解释，不调用 StockSage 报告；优先用轻量查询工具或直接解释。
+- 只有用户明确要求”深度分析、审计报告、完整报告、专业分析、证据链、风险拆解、组合体检、今日候选理由”，或轻量回答后用户继续追问更深层原因时，才调用 get_stock_report / get_portfolio_report / get_daily_picks_report。
+- StockSage 报告返回的是可阅读 Markdown 任务产物；你应像读取文件一样先读 report_markdown，再按需引用摘要，不要把完整 JSON 或 raw_factors 展开给用户。
 - 连续工具调用上限 20 次。
 
 【回复规则】
 - 每次不超过 3 句。涉及策略代码、风险展开、多空对比时可适度延长，但不堆词
-- 有部分数据但不完整时，先分享已有的，再说"以上信息不完整"
-- 没有数据时直说"没有相关数据"，不说"不确定"这种模糊词
+- 有部分数据但不完整时，先分享已有的，再说”以上信息不完整”
+- 没有数据时直说”没有相关数据”，不说”不确定”这种模糊词
 - 工具时间线和结构化卡片已经展示的信息，正文不要逐项复述；只补充卡片没有承载的结论、风险或下一步。
 - 不带表情，不带感叹号
 - 不使用绝对化表述（稳赚/必涨/保本/零风险）
@@ -271,7 +271,7 @@ def tool_get_stock_metrics(symbol: str) -> dict:
 # spawning bridge.py if the service is down, so the factor/regime/scan/portfolio
 # tools share one invocation path.
 ENGINE_BASE = "http://127.0.0.1:8200"
-_ENGINE_POST_CMDS = {"portfolio_analysis", "prefetch_data"}
+_ENGINE_POST_CMDS = {"portfolio_analysis", "prefetch_data", "stocksage_report"}
 
 
 def _bridge_path():
@@ -321,6 +321,22 @@ def _engine_subprocess(command, params, timeout):
             _json.dump(holdings_obj, f)
             tmp_path = f.name
         argv += ["--holdings", f"@{tmp_path}"]
+    elif command == "stocksage_report":
+        argv += ["--report-type", params.get("report_type", "stock_report")]
+        if params.get("symbol"):
+            argv += ["--symbol", params.get("symbol", "")]
+        if params.get("scan_type"):
+            argv += ["--scan-type", params.get("scan_type", "main")]
+        if params.get("holdings") is not None:
+            import tempfile
+            holdings = params.get("holdings")
+            holdings_obj = _json.loads(holdings) if isinstance(holdings, str) else holdings
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                _json.dump(holdings_obj, f)
+                tmp_path = f.name
+            argv += ["--holdings", f"@{tmp_path}"]
+    elif command == "stock_report":
+        argv += ["--symbol", params.get("symbol", "")]
     try:
         result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout,
                                 cwd=os.path.dirname(bridge))
@@ -474,15 +490,14 @@ TOOL_CATEGORIES = {
     "list_strategies": "query",
     "get_backtests": "query",
     "get_watchlist": "query",
-    "get_fundamentals": "query",
     "get_market_regime": "query",
     "get_global_indices": "query",
     "get_world_news": "query",
     "get_style_analysis": "query",
     # ── analysis (subprocess / external engine / network) ──────────────
-    "get_factor_scores": "analysis",
-    "get_portfolio_analysis": "analysis",
-    "get_daily_picks": "analysis",
+    "get_stock_report": "analysis",
+    "get_portfolio_report": "analysis",
+    "get_daily_picks_report": "analysis",
     "compute_correlation": "analysis",
     "compute_sector_breakdown": "analysis",
     "benchmark_compare": "analysis",
@@ -1338,6 +1353,137 @@ def tool_get_fundamentals(symbol: str) -> dict:
     }
 
 
+# ── StockSage auditable report tools ────────────────────────────────────────
+
+def _jsonable(obj):
+    try:
+        json.dumps(obj, ensure_ascii=False)
+        return obj
+    except Exception:
+        return str(obj)
+
+
+def _emit_report_artifact(report: dict) -> None:
+    """Emit a full StockSage report as an artifact side-channel for Java/SSE."""
+    if not isinstance(report, dict) or report.get("error"):
+        return
+    summary = report.get("summary", "")
+    if isinstance(summary, dict):
+        summary_text = summary.get("headline") or summary.get("summary") or json.dumps(summary, ensure_ascii=False)
+    else:
+        summary_text = str(summary or "")
+    content_json = {k: _jsonable(v) for k, v in report.items() if k != "markdown"}
+    payload = {
+        "type": report.get("report_type", "stocksage_report"),
+        "title": report.get("title") or "StockSage 分析报告",
+        "summary": summary_text[:1000],
+        "content_json": content_json,
+        "content_markdown": report.get("markdown", ""),
+    }
+    print(f"[ARTIFACT] {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}", flush=True)
+
+
+def _report_llm_result(report: dict) -> dict:
+    if not isinstance(report, dict):
+        return {"error": "StockSage 报告引擎无响应"}
+    if report.get("error"):
+        return {"error": report.get("error"), "degraded": True}
+    _emit_report_artifact(report)
+    return {
+        "report_type": report.get("report_type"),
+        "report_title": report.get("title"),
+        "summary": report.get("summary"),
+        "llm_context": report.get("llm_context", {}),
+        "report_markdown": report.get("markdown", ""),
+        "artifact": {
+            "type": report.get("report_type"),
+            "title": report.get("title"),
+            "summary": report.get("summary"),
+        },
+        "instruction": "优先阅读 report_markdown 并按报告证据作答；不要把 raw_factors 或总分当作主结论。",
+    }
+
+
+def _portfolio_report_holdings(portfolio_id: int) -> list:
+    conn = get_db_conn()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT s.symbol, s.name, h.total_invested
+        FROM holdings h JOIN stocks s ON h.stock_id=s.id
+        WHERE h.portfolio_id=%s AND h.total_shares>0
+    """, (portfolio_id,))
+    rows = cur.fetchall()
+    cur.close(); conn.close()
+    total_val = sum(float(r[2] or 0) for r in rows)
+    return [
+        {
+            "symbol": r[0].split(".")[-1] if "." in r[0] else r[0],
+            "name": r[1],
+            "weight": round(float(r[2] or 0) / total_val * 100, 1) if total_val > 0 else 0,
+        }
+        for r in rows
+    ]
+
+
+def tool_get_stock_report(symbol: str) -> dict:
+    """Generate an auditable StockSage report for one A-share stock."""
+    if not _is_a_share(symbol):
+        return {
+            "error": f"StockSage 审计报告当前仅覆盖A股，{symbol} 不是A股标的。请改用行情、新闻和通用分析工具。",
+            "symbol": symbol,
+            "unsupported_market": True,
+        }
+    report = _engine("stocksage_report", {"report_type": "stock_report", "symbol": symbol}, 110)
+    return _report_llm_result(report)
+
+
+def tool_get_portfolio_report(portfolio_id: int) -> dict:
+    """Generate an auditable StockSage report for the active portfolio."""
+    holdings = _portfolio_report_holdings(portfolio_id)
+    if not holdings:
+        return {"error": "暂无持仓，无法生成 StockSage 组合报告。"}
+    report = _engine(
+        "stocksage_report",
+        {"report_type": "portfolio_report", "holdings": json.dumps(holdings, ensure_ascii=False)},
+        140,
+    )
+    return _report_llm_result(report)
+
+
+def tool_get_daily_picks_report(strategy: str = "main", limit: int = 5) -> dict:
+    """Generate an auditable StockSage daily-picks report."""
+    report = _engine(
+        "stocksage_report",
+        {"report_type": "daily_picks_report", "scan_type": strategy},
+        120,
+    )
+    if isinstance(report, dict) and isinstance(report.get("llm_context"), dict):
+        picks = report["llm_context"].get("top_picks")
+        if isinstance(picks, list):
+            report["llm_context"]["top_picks"] = picks[:max(1, min(int(limit or 5), 10))]
+    return _report_llm_result(report)
+
+
+def tool_get_factor_scores(symbol: str) -> dict:
+    """Compatibility shim: old score tool now returns a report context."""
+    return {"error": "get_factor_scores 已下线，请使用 get_stock_report。", "removed_tool": True}
+
+
+def tool_get_stock_metrics(symbol: str) -> dict:
+    """Compatibility shim: old metrics tool now returns a report context."""
+    return {"error": "get_stock_metrics 已下线，请使用 get_stock_report。", "removed_tool": True}
+
+
+def tool_get_portfolio_analysis(portfolio_id: int) -> dict:
+    """Compatibility shim: old portfolio score tool now returns a report context."""
+    return {"error": "get_portfolio_analysis 已下线，请使用 get_portfolio_report。", "removed_tool": True}
+
+
+def tool_get_daily_picks(strategy: str = "main", limit: int = 5) -> dict:
+    """Compatibility shim: old daily-picks score card now returns a report context."""
+    return {"error": "get_daily_picks 已下线，请使用 get_daily_picks_report。", "removed_tool": True}
+
+
 # ── Portfolio optimization tool ─────────────────────────────────────────
 
 def tool_optimize_portfolio(portfolio_id: int, max_weight: float = 0.30, mode: str = "sharpe") -> dict:
@@ -1399,6 +1545,14 @@ _PARAM_SCHEMAS = {
         "symbol": {"type": "string", "description": "DB格式symbol"},
         "days": {"type": "integer", "description": "天数，默认60，最大500"}
     }, "required": ["symbol"]},
+    "get_stock_report": {"type": "object", "properties": {
+        "symbol": {"type": "string", "description": "DB格式A股symbol，例如1.600519"}
+    }, "required": ["symbol"]},
+    "get_portfolio_report": {"type": "object", "properties": {}, "required": []},
+    "get_daily_picks_report": {"type": "object", "properties": {
+        "strategy": {"type": "string", "description": "策略类型: main/golden_cross/hot/chip"},
+        "limit": {"type": "integer", "description": "返回给模型的候选数量，默认5"}
+    }, "required": []},
     "get_factor_scores": {"type": "object", "properties": {
         "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
     }, "required": ["symbol"]},
@@ -1493,6 +1647,17 @@ _PARAM_SCHEMAS = {
     }, "required": []},
 }
 
+_REMOVED_SCORE_TOOLS = {
+    "get_score",
+    "get_factor_scores",
+    "get_stock_metrics",
+    "get_fundamentals",
+    "get_portfolio_analysis",
+    "get_daily_picks",
+}
+for _removed_tool_name in _REMOVED_SCORE_TOOLS:
+    _PARAM_SCHEMAS.pop(_removed_tool_name, None)
+
 
 def _build_tools():
     """Generate the TOOLS list from catalog + inline param schemas.
@@ -1573,6 +1738,9 @@ TOOLS = _build_tools()
 TOOL_LABELS = {
     "get_portfolio": "读取持仓",
     "get_stock_metrics": "查询量化指标",
+    "get_stock_report": "生成StockSage个股报告",
+    "get_portfolio_report": "生成StockSage组合报告",
+    "get_daily_picks_report": "生成StockSage选股报告",
     "get_backtests": "获取回测记录",
     "get_style_analysis": "分析组合风格",
     "list_strategies": "获取策略列表",
@@ -1672,6 +1840,11 @@ def _build_tx_endpoint(body: dict) -> str:
 
 
 def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
+    if name in _REMOVED_SCORE_TOOLS:
+        return {
+            "error": f"{name} 已下线。请使用 get_stock_report / get_portfolio_report / get_daily_picks_report 这三个审计报告入口。",
+            "removed_tool": True,
+        }
     """Inner dispatcher — returns Python object, raises on failure."""
     if name == "remember":
         return {"status": tool_remember(user_id, args.get("fact", ""))}
@@ -1689,24 +1862,23 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         answer = _read_answer_with_timeout(240)
         if not answer:
             return {"selected": "", "timed_out": True,
+                    "question": args.get("question", ""),
                     "note": "用户未在限期内通过选择卡片作答。不要再调用 ask_user，请用一句话直接请用户在对话框回复，然后结束本轮。"}
-        return {"selected": answer}
+        return {"selected": answer, "question": args.get("question", "")}
     elif name == "get_portfolio":
         return tool_get_portfolio(portfolio_id)
-    elif name == "get_stock_metrics":
-        return tool_get_factor_scores(args.get("symbol", ""))
+    elif name == "get_stock_report":
+        return tool_get_stock_report(args.get("symbol", ""))
+    elif name == "get_portfolio_report":
+        return tool_get_portfolio_report(portfolio_id)
+    elif name == "get_daily_picks_report":
+        return tool_get_daily_picks_report(args.get("strategy", "main"), args.get("limit", 5))
     elif name == "get_backtests":
         return tool_get_backtests(args.get("limit", 5))
     elif name == "get_style_analysis":
         return tool_get_portfolio_analysis(portfolio_id)
-    elif name == "get_factor_scores":
-        return tool_get_factor_scores(args.get("symbol", ""))
-    elif name == "get_portfolio_analysis":
-        return tool_get_portfolio_analysis(portfolio_id)
     elif name == "get_market_regime":
         return tool_get_market_regime()
-    elif name == "get_daily_picks":
-        return tool_get_daily_picks(args.get("strategy", "main"), args.get("limit", 5))
     elif name == "list_strategies":
         return tool_list_strategies()
     elif name == "get_strategy":
@@ -1751,12 +1923,6 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_consult_kb(args.get("topic", ""))
     elif name == "web_search":
         return tool_web_search(args.get("query", ""), args.get("count", 5))
-    elif name == "get_fundamentals":
-        # Redirect to factor scores for richer analysis
-        result = tool_get_factor_scores(args.get("symbol", ""))
-        if "error" not in result:
-            result["_note"] = "已升级为多因子分析。旧的基本面数据(PE/PB/ROE)已包含在价值和质量因子中。"
-        return result
     elif name == "optimize_portfolio":
         return tool_optimize_portfolio(
             args.get("portfolio_id", portfolio_id),
@@ -2095,9 +2261,9 @@ def _confirm_remove_watchlist(args: dict) -> dict:
 # unlisted defaults to 25s — fast enough that an unresponsive tool can't stall
 # the entire agent loop, but room for typical DB queries.
 _TOOL_TIMEOUTS = {
-    "get_daily_picks": 90,           # subprocess 80s
-    "get_portfolio_analysis": 120,   # subprocess 110s
-    "get_factor_scores": 90,         # subprocess 80s
+    "get_stock_report": 120,
+    "get_portfolio_report": 150,
+    "get_daily_picks_report": 130,
     "get_market_regime": 45,         # subprocess 35s
     "compute_correlation": 45,
     "benchmark_compare": 45,
@@ -2137,21 +2303,21 @@ def _tool_summary(name: str, result: object) -> str:
             p, c = result.get("price"), result.get("changePct")
             if p is None: return "无价格"
             return f"{p} ({c:+.2f}%)" if isinstance(c, (int, float)) else str(p)
-        if name in ("get_factor_scores", "get_portfolio_analysis"):
-            sc = result.get("total_score", result.get("portfolio_score"))
-            return f"综合 {sc}" if sc is not None else ""
+        if name in ("get_stock_report", "get_portfolio_report", "get_daily_picks_report"):
+            title = result.get("report_title") or (result.get("artifact") or {}).get("title")
+            return str(title)[:40] if title else "报告已生成"
         if name == "get_world_news":
             n = result.get("count")
             return f"{n} 条" if n is not None else ""
-        if name == "get_daily_picks":
-            picks = result.get("picks")
-            return f"{len(picks)} 只" if isinstance(picks, list) else ""
         if name == "run_backtest":
             tr = result.get("totalReturnPct")
             return f"收益 {tr:+.1f}%" if isinstance(tr, (int, float)) else "完成"
         if name == "get_watchlist":
             n = result.get("count")
             return f"{n} 只自选" if n is not None else ""
+        if name == "ask_user":
+            q = result.get("question")
+            return str(q)[:60] if q else ""
         if name in ("get_transactions", "get_backtests", "list_strategies"):
             items = result if isinstance(result, list) else result.get("points")
             return f"{len(items)} 条" if isinstance(items, list) else ""
@@ -2378,7 +2544,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     # Pure smalltalk stays on the fast, no-thinking path for low latency.
     is_complex = _is_complex_query(messages)
     want_thinking = is_dashscope and (deep_think or is_complex)
-    max_tokens = 4096 if (deep_think or want_thinking) else 1024
+    max_tokens = 4096
     # Explicitly pin enable_thinking both ways so we never inherit an ambiguous
     # server-side default that silently suppresses tool calls.
     extra_body = {"enable_thinking": bool(want_thinking)} if is_dashscope else {}
@@ -2597,7 +2763,7 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
     gathered = {}  # tool name -> latest result JSON, replayed next turn via [CONTEXT] (#1)
 
     while True:
-        max_tokens = 8192 if deep_think else 1024
+        max_tokens = 8192 if deep_think else 4096
         stream_kwargs = {"model": model, "messages": formatted, "max_tokens": max_tokens, "tools": anthropic_tools}
         if system_block:
             stream_kwargs["system"] = system_block

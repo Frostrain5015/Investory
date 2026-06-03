@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, Database, BookOpen, MessageSquare, ArrowRight } from 'lucide-react'
+import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -12,6 +12,18 @@ import { BASE } from '@/services/api'
 
 interface PortfolioCard { portfolio_score: number; holdings_scored: number; top_holdings: { symbol: string; name: string; total_score: number }[]; bottom_holdings: { symbol: string; name: string; total_score: number }[]; group_exposure: Record<string, { buy_score: number }> }
 interface PicksCard { regime: string; picks: { code: string; name: string; total_score: number; buy_score: number; bullish: string[] }[]; scanned: number }
+interface ReportArtifact {
+  id?: number
+  type: string
+  title: string
+  summary?: string
+  contentJson?: unknown
+  content_json?: unknown
+  contentMarkdown?: string
+  content_markdown?: string
+  createdAt?: string
+  created_at?: string
+}
 /** A single step in the agent's reasoning trace. Either a chunk of native
  * reasoning_content, or a tool call (with its eventual completion status). */
 export type ToolCategory = 'query' | 'analysis' | 'mutation'
@@ -19,7 +31,7 @@ export type TimelineStep =
   | { kind: 'thinking'; text: string; _ts?: number; _elapsed?: number }
   | { kind: 'kb'; topic: string }
   | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string; summary?: string; callId?: string }
-interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard }
+interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard; artifacts?: ReportArtifact[] }
 interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
 interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
 type ConfirmStatus = 'pending' | 'accepted' | 'refused' | 'failed'
@@ -42,32 +54,37 @@ let gMessages: Message[] = []
 let gListeners: (() => void)[] = []
 function notify() { gListeners.forEach(fn => fn()) }
 
-/** Per-category visual treatment. Three tool families get three palettes:
- *   query     → slate  (read-only, cheap, instant — lowest visual weight)
- *   analysis  → purple (engine / external calls — medium weight; web_search is sky)
- *   mutation  → amber  (writes DB / state — highest, draws the eye)
- * Errors override to red. Done state shifts to emerald.                  */
+function isStockSageTool(name: string) {
+  return name === 'get_stock_report'
+    || name === 'get_portfolio_report'
+    || name === 'get_daily_picks_report'
+}
+
+/** Per-category visual treatment. StockSage keeps its engine marker;
+ * query tools keep the magnifier; heavier non-engine tools use the wrench. */
 function toolStyle(step: Extract<TimelineStep, { kind: 'tool' }>) {
   const cat: ToolCategory = step.category || 'query'
-  const isWeb = step.name === 'web_search'
+  const isStockSage = isStockSageTool(step.name)
   if (step.error) {
     return { label: 'text-red-600', dot: 'bg-red-400', Icon: Wrench }
   }
-  if (step.done) {
-    return { label: 'text-emerald-600', dot: 'bg-emerald-400',
-             Icon: cat === 'mutation' ? Database : cat === 'analysis' ? (isWeb ? Globe : Sparkles) : Search }
-  }
-  // running
-  if (cat === 'mutation') {
-    return { label: 'text-amber-600', dot: 'bg-amber-400 animate-pulse', Icon: Database }
-  }
-  if (cat === 'analysis') {
-    return isWeb
-      ? { label: 'text-sky-600', dot: 'bg-sky-400 animate-pulse', Icon: Globe }
+  if (isStockSage) {
+    return step.done
+      ? { label: 'text-emerald-600', dot: 'bg-emerald-400', Icon: Sparkles }
       : { label: 'text-purple-500', dot: 'bg-purple-400 animate-pulse', Icon: Sparkles }
   }
-  // query
-  return { label: 'text-slate-500', dot: 'bg-slate-400 animate-pulse', Icon: Search }
+  if (cat === 'query') {
+    return step.done
+      ? { label: 'text-emerald-600', dot: 'bg-emerald-400', Icon: Search }
+      : { label: 'text-slate-500', dot: 'bg-slate-400 animate-pulse', Icon: Search }
+  }
+  if (step.done) {
+    return { label: 'text-emerald-600', dot: 'bg-emerald-400', Icon: Wrench }
+  }
+  if (cat === 'mutation') {
+    return { label: 'text-amber-600', dot: 'bg-amber-400 animate-pulse', Icon: Wrench }
+  }
+  return { label: 'text-purple-500', dot: 'bg-purple-400 animate-pulse', Icon: Wrench }
 }
 
 // ── Peer-level step renderers: each step is a standalone block ──────────
@@ -117,9 +134,16 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
 function ToolStepDisplay({ step, lang }: { step: Extract<TimelineStep, { kind: 'tool' }>; lang: 'zh' | 'en' | 'hk' }) {
   const { label, dot, Icon } = toolStyle(step)
   const running = !step.done && !step.error
-  // Match the running dot colour to the category palette for the bounce trio.
-  const bounce = step.category === 'mutation' ? 'bg-amber-400'
-    : step.category === 'analysis' ? (step.name === 'web_search' ? 'bg-sky-400' : 'bg-purple-400')
+  const stockSage = isStockSageTool(step.name)
+  const displayName = stockSage
+    ? (lang === 'en' ? 'StockSage engine' : 'StockSage引擎')
+    : localizeToolName(step.name, lang)
+  const statusText = running
+    ? (lang === 'en' ? 'running' : '运行中')
+    : (lang === 'en' ? 'completed' : '已完成')
+  const bounce = stockSage ? 'bg-purple-400'
+    : step.category === 'mutation' ? 'bg-amber-400'
+    : step.category === 'analysis' ? 'bg-purple-400'
     : 'bg-slate-400'
   return (
     <motion.div initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
@@ -127,20 +151,22 @@ function ToolStepDisplay({ step, lang }: { step: Extract<TimelineStep, { kind: '
       <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
       <div className={`flex-1 flex items-center gap-1.5 ${label}`}>
         <Icon className={`w-3 h-3 ${running ? 'animate-pulse' : ''}`} />
-        <span className="font-medium">{localizeToolName(step.name, lang)}</span>
+        <span className="font-medium">{displayName}</span>
+        {!step.error && !stockSage && <span className="text-[10px] opacity-70">{statusText}</span>}
         {running && (
-          <>
-            <span className="text-[10px] opacity-70">{lang === 'en' ? 'running…' : '调用中…'}</span>
-            <span className="inline-flex gap-0.5 ml-0.5">
-              <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} />
-              <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} style={{ animationDelay: '0.15s' }} />
-              <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} style={{ animationDelay: '0.3s' }} />
-            </span>
-          </>
+          <span className="inline-flex gap-0.5 ml-0.5" aria-label={statusText}>
+            <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} />
+            <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} style={{ animationDelay: '0.15s' }} />
+            <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} style={{ animationDelay: '0.3s' }} />
+          </span>
         )}
         {step.done && !step.error && <Check className="w-3 h-3 opacity-70" />}
-        {step.done && !step.error && step.summary && (
+        {step.done && !step.error && step.summary && !stockSage && (
           <span className="text-[10px] text-slate-400">· {step.summary}</span>
+        )}
+        {/* StockSage engine: status shown as summary instead of inline */}
+        {!step.error && stockSage && (
+          <span className="text-[10px] text-slate-400">{statusText}</span>
         )}
         {step.error && (
           <>
@@ -227,10 +253,12 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
   const pendingCard = useRef<{ type: string; data: any } | null>(null)
+  const pendingArtifacts = useRef<ReportArtifact[]>([])
   const streamAccum = useRef('')
   // Authoritative timeline ref — frontend builds it from SSE events as the agent runs.
   // We mutate the ref then mirror into state for re-renders so we don't lose ordering.
   const timelineRef = useRef<TimelineStep[]>([])
+  const [selectedArtifact, setSelectedArtifact] = useState<ReportArtifact | null>(null)
   /** Stamp _elapsed on every thinking step that isn't the last element (i.e. has
    *  already been closed by a subsequent tool or newer thinking segment). This
    *  ensures previous segments never show "用时0s" when a new step arrives. */
@@ -265,7 +293,9 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     if (idx >= 0) { tl[idx] = { ...(tl[idx] as Extract<TimelineStep, { kind: 'tool' }>), ...patch } }
     pushTimeline()
   }
-  const [askData, setAskData] = useState<{ question: string; options: string[]; multiSelect: boolean } | null>(null)
+  const [askData, setAskData] = useState<{ question: string; options: (string | { value: string; label: string })[]; multiSelect: boolean } | null>(null)
+  const optionDisplay = (o: string | { value: string; label: string }) => typeof o === 'string' ? o : (o.label || o.value || '')
+  const optionValue = (o: string | { value: string; label: string }) => typeof o === 'string' ? o : (o.value || o.label || '')
   const [askChecked, setAskChecked] = useState<Set<number>>(new Set())
   const [askOther, setAskOther] = useState('')
   const [confirmData, setConfirmData] = useState<ConfirmData | null>(null)
@@ -316,7 +346,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       .then(r => r.json())
       .then(d => {
         if (Array.isArray(d.messages) && d.messages.length > 0) {
-          const restored: Message[] = d.messages.map((m: { role: string; content: string; thinking?: string }) => {
+          const restored: Message[] = d.messages.map((m: { role: string; content: string; thinking?: string; artifacts?: ReportArtifact[] }) => {
             // The backend stores the structured timeline as JSON in the `thinking` field.
             // Older rows contain a raw thinking string — handle both shapes.
             let timeline: TimelineStep[] | undefined
@@ -337,6 +367,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               content: m.content,
               ...(timeline ? { timeline } : {}),
               ...(thinkingLegacy ? { thinking: thinkingLegacy } : {}),
+              ...(m.artifacts?.length ? { artifacts: m.artifacts } : {}),
             }
           })
           setMessages(restored)
@@ -385,6 +416,12 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       es.addEventListener('strategy', (e) => { const d = JSON.parse(e.data); pendingStrategy.current = { name: d.name, desc: d.description, code: d.code } })
       es.addEventListener('portfolio_card', (e) => { pendingCard.current = { type: 'portfolio', data: JSON.parse(e.data) } })
       es.addEventListener('picks_card', (e) => { pendingCard.current = { type: 'picks', data: JSON.parse(e.data) } })
+      es.addEventListener('artifact', (e) => {
+        try {
+          const artifact = JSON.parse(e.data) as ReportArtifact
+          if (artifact?.title) pendingArtifacts.current = [...pendingArtifacts.current, artifact]
+        } catch {}
+      })
       es.addEventListener('ask', (e) => { const d = JSON.parse(e.data); setAskData({ question: d.question, options: d.options || [], multiSelect: d.multiSelect || false }); setAskChecked(new Set()); setAskOther('') })
       es.addEventListener('confirm', (e) => {
         try {
@@ -450,7 +487,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         streamAccum.current = ''; timelineRef.current = []
         setStreamText(''); setStreamTimeline([])
         const hasTimeline = finalTimeline.length > 0
-        if (!raw.trim() && !hasTimeline) { setStreaming(false); es.close(); esRef.current = null; return }
+        if (!raw.trim() && !hasTimeline && pendingArtifacts.current.length === 0) { setStreaming(false); es.close(); esRef.current = null; return }
         // Native reasoning channel takes precedence; fall back to <think> tag for legacy/custom providers
         let content = raw
         let timelineOut: TimelineStep[] | undefined = hasTimeline ? finalTimeline : undefined
@@ -461,11 +498,13 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             content = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').trim()
           }
         }
-        const msg: Message = { role: 'assistant', content: content.trim() || raw, timeline: timelineOut }
+        const msg: Message = { role: 'assistant', content: content.trim() || raw || 'StockSage 报告已生成。', timeline: timelineOut }
         const s = pendingStrategy.current
         if (s) { msg.hasCode = true; msg.strategyName = s.name; msg.strategyDesc = s.desc; msg.strategyCode = s.code; pendingStrategy.current = null }
         const card = pendingCard.current
         if (card) { if (card.type === 'portfolio') msg.portfolioCard = card.data; else if (card.type === 'picks') msg.picksCard = card.data; pendingCard.current = null }
+        const artifacts = pendingArtifacts.current
+        if (artifacts.length > 0) { msg.artifacts = artifacts; pendingArtifacts.current = [] }
         if (!s && !card) {
           const codeMatch = raw.match(/```(?:python)?\s*\n(def decide\(ctx[^)]*\):[\s\S]*?)```/)
           if (codeMatch) { const nameMatch = raw.match(/(?:策略名称|策略)[：:]\s*(.+)/); msg.hasCode = true; msg.strategyName = nameMatch ? nameMatch[1].trim() : ''; msg.strategyCode = codeMatch[1].trim(); msg.strategyDesc = '' }
@@ -474,6 +513,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       })
       es.addEventListener('error', (e) => {
         pendingStrategy.current = null
+        pendingArtifacts.current = []
         let errMsg = t.chat.errorNetwork
         try {
           const raw = (e as MessageEvent).data
@@ -497,7 +537,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     let cancelled = false
     fetch(`${BASE}/api/ai/status`, { credentials: 'include' }).then(r => r.json()).then(d => {
       if (cancelled || !d?.active || streaming || esRef.current) return
-      setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []
+      setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; pendingArtifacts.current = []
       const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
       attachStream(es, gMessages)
     }).catch(() => {})
@@ -511,7 +551,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     setInput('')
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
-    setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; setAskData(null); setAskChecked(new Set()); setAskOther(''); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
+    setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; pendingArtifacts.current = []; setAskData(null); setAskChecked(new Set()); setAskOther(''); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
     try {
       const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, webSearch, conversationId: convIdRef.current || undefined }) })
       if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
@@ -535,7 +575,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   function openConv(id: number) {
     fetch(`${BASE}/api/ai/conversations/${id}`, { credentials: 'include' })
       .then(r => r.json()).then((d: any) => {
-        const restored = (d.messages || []).map((m: { role: string; content: string; thinking?: string }) => {
+        const restored = (d.messages || []).map((m: { role: string; content: string; thinking?: string; artifacts?: ReportArtifact[] }) => {
           let timeline: TimelineStep[] | undefined
           let thinkingLegacy: string | undefined
           const raw = m.thinking?.trim()
@@ -543,7 +583,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             if (raw.startsWith('[')) { try { const p = JSON.parse(raw); if (Array.isArray(p)) timeline = p } catch { thinkingLegacy = raw } }
             else thinkingLegacy = raw
           }
-          return { role: m.role === 'user' ? 'user' as const : m.role === 'assistant' ? 'assistant' as const : 'system' as const, content: m.content, ...(timeline ? { timeline } : {}), ...(thinkingLegacy ? { thinking: thinkingLegacy } : {}) }
+          return { role: m.role === 'user' ? 'user' as const : m.role === 'assistant' ? 'assistant' as const : 'system' as const, content: m.content, ...(timeline ? { timeline } : {}), ...(thinkingLegacy ? { thinking: thinkingLegacy } : {}), ...(m.artifacts?.length ? { artifacts: m.artifacts } : {}) }
         })
         gMessages = restored; setMessages(restored); convIdRef.current = id; setShowConvList(false)
       }).catch(() => {})
@@ -750,6 +790,13 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               )}
               {m.portfolioCard && <DataCard title="组合因子分析" score={m.portfolioCard.portfolio_score ?? 0} top={m.portfolioCard.top_holdings} bottom={m.portfolioCard.bottom_holdings} />}
               {m.picksCard && <PicksCardDisplay card={m.picksCard} />}
+              {m.artifacts?.length ? (
+                <div className="mt-3 pt-3 border-t border-slate-200 flex flex-wrap gap-2">
+                  {m.artifacts.map((artifact, index) => (
+                    <ReportArtifactChip key={`${artifact.id ?? artifact.title}-${index}`} artifact={artifact} onOpen={setSelectedArtifact} />
+                  ))}
+                </div>
+              ) : null}
             </div>
           </div>
         ))}
@@ -801,8 +848,10 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               {askData.multiSelect && (
                 <p className="text-[10px] text-slate-400 -mt-1">可多选</p>
               )}
-              {askData.options.map((o: string, i: number) => {
+              {askData.options.map((o, i) => {
                 const checked = askChecked.has(i)
+                const display = optionDisplay(o)
+                const val = optionValue(o)
                 const toggle = () => {
                   if (askData.multiSelect) {
                     const next = new Set(askChecked)
@@ -814,7 +863,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                     fetch(`${BASE}/api/ai/answer`, {
                       method: 'POST', credentials: 'include',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ answer: o }),
+                      body: JSON.stringify({ answer: val }),
                     })
                   }
                 }
@@ -830,7 +879,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                         {checked ? '✓' : ''}
                       </span>
                     )}
-                    {o}
+                    {display}
                   </button>
                 )
               })}
@@ -863,7 +912,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               {/* Multi-select submit button */}
               {askData.multiSelect && askChecked.size > 0 && (
                 <button onClick={() => {
-                  const selected = askData.options.filter((_, i) => askChecked.has(i)).join('、')
+                  const selected = askData.options.filter((_, i) => askChecked.has(i)).map(optionValue).join('、')
                   setAskData(null); setAskChecked(new Set()); setAskOther('')
                   fetch(`${BASE}/api/ai/answer`, {
                     method: 'POST', credentials: 'include',
@@ -1106,6 +1155,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             </motion.div>
           )}
         </AnimatePresence>
+        <ReportDetailModal artifact={selectedArtifact} onClose={() => setSelectedArtifact(null)} />
       </div>
       </div>
     </>
@@ -1113,6 +1163,157 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
 }
 
 // ── Shared card components ──
+
+function artifactLabel(type: string) {
+  if (type === 'stock_report') return 'StockSage 个股报告'
+  if (type === 'portfolio_report') return 'StockSage 组合报告'
+  if (type === 'daily_picks_report') return 'StockSage 选股报告'
+  return 'StockSage 报告'
+}
+
+function artifactContent(artifact: ReportArtifact): Record<string, unknown> {
+  const raw = artifact.contentJson ?? artifact.content_json
+  if (!raw) return {}
+  if (typeof raw === 'string') {
+    try {
+      const parsed = JSON.parse(raw)
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {}
+    } catch {
+      return {}
+    }
+  }
+  return raw && typeof raw === 'object' && !Array.isArray(raw) ? raw as Record<string, unknown> : {}
+}
+
+function stringItems(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value.map(item => {
+    if (typeof item === 'string') return item
+    if (item && typeof item === 'object') {
+      const row = item as Record<string, unknown>
+      return String(row.text ?? row.signal ?? row.name ?? JSON.stringify(row))
+    }
+    return String(item)
+  }).filter(Boolean)
+}
+
+function objectList(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return []
+  return value.filter(item => item && typeof item === 'object' && !Array.isArray(item)) as Record<string, unknown>[]
+}
+
+function objectEntries(value: unknown): string[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  return Object.entries(value as Record<string, unknown>).map(([key, val]) => `${key}: ${typeof val === 'object' ? JSON.stringify(val) : String(val)}`)
+}
+
+function ReportArtifactChip({ artifact, onOpen }: { artifact: ReportArtifact; onOpen: (artifact: ReportArtifact) => void }) {
+  return (
+    <button onClick={() => onOpen(artifact)}
+      className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50/70 px-3 py-1.5 text-[11px] font-medium text-indigo-700 hover:bg-indigo-100 hover:border-indigo-200 transition-colors">
+      <FileText className="w-3.5 h-3.5" />
+      <span>{artifactLabel(artifact.type)}</span>
+    </button>
+  )
+}
+
+function ReportSection({ title, items, tone = 'slate' }: { title: string; items: string[]; tone?: 'slate' | 'green' | 'red' | 'amber' }) {
+  if (items.length === 0) return null
+  const color = tone === 'green' ? 'text-emerald-700 bg-emerald-50 border-emerald-100'
+    : tone === 'red' ? 'text-red-700 bg-red-50 border-red-100'
+    : tone === 'amber' ? 'text-amber-700 bg-amber-50 border-amber-100'
+    : 'text-slate-700 bg-slate-50 border-slate-100'
+  return (
+    <section className="space-y-2">
+      <h4 className="text-xs font-semibold text-slate-700">{title}</h4>
+      <div className="space-y-1.5">
+        {items.map((item, index) => (
+          <div key={index} className={`rounded-lg border px-3 py-2 text-[12px] leading-relaxed ${color}`}>{item}</div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function ReportDetailModal({ artifact, onClose }: { artifact: ReportArtifact | null; onClose: () => void }) {
+  if (!artifact) return null
+  const content = artifactContent(artifact)
+  const evidenceFor = stringItems(content.evidence_for)
+  const evidenceAgainst = stringItems(content.evidence_against)
+  const conflicts = stringItems(content.conflicts)
+  const sources = stringItems(content.data_sources)
+  const auditTrail = stringItems(content.audit_trail).length > 0 ? stringItems(content.audit_trail) : objectEntries(content.audit_trail)
+  const rawFactors = objectList(content.raw_factors).slice(0, 12)
+  const markdown = artifact.contentMarkdown ?? artifact.content_markdown
+  const regime = content.regime_adjustment && typeof content.regime_adjustment === 'object'
+    ? content.regime_adjustment as Record<string, unknown>
+    : null
+  const dataQuality = content.data_quality && typeof content.data_quality === 'object'
+    ? content.data_quality as Record<string, unknown>
+    : null
+
+  return (
+    <AnimatePresence>
+      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="fixed inset-0 z-50 bg-slate-950/40 flex items-end lg:items-center justify-center lg:p-6"
+        onClick={onClose}>
+        <motion.div initial={{ y: 32, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }}
+          transition={{ type: 'spring', stiffness: 360, damping: 34 }}
+          onClick={e => e.stopPropagation()}
+          className="w-full lg:max-w-3xl max-h-[86vh] bg-white rounded-t-3xl lg:rounded-3xl shadow-2xl border border-slate-100 overflow-hidden flex flex-col">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-start justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 mb-2">
+                <FileText className="w-3.5 h-3.5" />{artifactLabel(artifact.type)}
+              </div>
+              <h3 className="text-base font-semibold text-slate-900">{artifact.title}</h3>
+              {artifact.summary && <p className="text-xs text-slate-500 mt-1 leading-relaxed">{artifact.summary}</p>}
+            </div>
+            <button onClick={onClose} className="p-2 rounded-full text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="overflow-auto px-5 py-4 space-y-5">
+            {markdown && (
+              <section className="rounded-xl border border-slate-100 bg-white px-3 py-3">
+                <div className="prose prose-sm prose-slate max-w-none text-[13px] [&_h1]:text-base [&_h2]:text-sm [&_h2]:mt-4 [&_h2]:mb-2 [&_li]:my-0.5">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+                </div>
+              </section>
+            )}
+            {regime && (
+              <section className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+                <div className="font-semibold mb-1">市场环境折扣</div>
+                <div>{String(regime.label ?? regime.signal ?? '未知环境')} · {String(regime.message ?? regime.description ?? '报告已记录环境调整。')}</div>
+              </section>
+            )}
+            <ReportSection title="正向证据" items={evidenceFor} tone="green" />
+            <ReportSection title="风险 / 反向证据" items={evidenceAgainst} tone="red" />
+            <ReportSection title="冲突信号" items={conflicts} tone="amber" />
+            {dataQuality && Array.isArray(dataQuality.missing) && dataQuality.missing.length > 0 && (
+              <ReportSection title="数据缺失" items={stringItems(dataQuality.missing)} tone="amber" />
+            )}
+            {rawFactors.length > 0 && (
+              <section className="space-y-2">
+                <h4 className="text-xs font-semibold text-slate-700">因子审计底稿</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {rawFactors.map((factor, index) => (
+                    <div key={index} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px]">
+                      <div className="font-medium text-slate-700">{String(factor.label ?? factor.name ?? `因子 ${index + 1}`)}</div>
+                      <div className="text-slate-500 mt-0.5">{String(factor.signal ?? factor.group ?? '已记录')}</div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            )}
+            <ReportSection title="数据来源" items={sources} />
+            <ReportSection title="审计轨迹" items={auditTrail} />
+          </div>
+        </motion.div>
+      </motion.div>
+    </AnimatePresence>
+  )
+}
 
 function DataCard({ title, score, top, bottom }: { title: string; score: number; top?: { symbol: string; name: string; total_score: number }[]; bottom?: { symbol: string; name: string; total_score: number }[] }) {
   return (

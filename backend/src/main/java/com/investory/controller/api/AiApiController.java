@@ -242,6 +242,7 @@ public class AiApiController {
                 // Compact digest of this turn's tool results (#1), emitted by the
                 // agent as a [CONTEXT] line; persisted and replayed next turn.
                 final String[] toolContext = { null };
+                final List<Map<String, Object>> pendingArtifacts = new ArrayList<>();
                 // Pointer to the current open thinking step (so we can keep appending to it).
                 final Map<String, Object>[] openThinking = new Map[]{ null };
                 // Stamp _elapsed on the current open thinking step and close it.
@@ -321,6 +322,15 @@ public class AiApiController {
                             if (!callId.isEmpty()) step.put("callId", callId);
                             timeline.add(step);
                             session.emitTool(uid, name, category, callId);
+                        } else if (line.startsWith("[ARTIFACT]")) {
+                            try {
+                                String jsonStr = line.substring(10).trim();
+                                Map<String, Object> artifact = json.readValue(jsonStr, Map.class);
+                                long artifactId = persistArtifact(uid, convId, artifact);
+                                if (artifactId > 0) artifact.put("id", artifactId);
+                                pendingArtifacts.add(artifact);
+                                session.emitArtifact(uid, artifact);
+                            } catch (Exception ignored) {}
                         } else if (line.startsWith("[CONTEXT]")) {
                             // Compact tool-result digest for cross-turn continuity (#1)
                             toolContext[0] = line.substring(9).trim();
@@ -542,6 +552,7 @@ public class AiApiController {
             m.put("role", role); m.put("content", content);
             out.add(m);
         }
+        attachArtifactsToMessages(uid, id, out);
         return Map.of("messages", out);
     }
 
@@ -549,6 +560,7 @@ public class AiApiController {
     public Map<String, Object> deleteConversation(@PathVariable long id, HttpServletRequest req) {
         long uid = userIdOf(req);
         if (uid <= 0) return Map.of("error", "未登录");
+        jdbc.update("DELETE FROM ai_artifacts WHERE user_id = ? AND conversation_id = ?", uid, id);
         jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND conversation_id = ?", uid, id);
         jdbc.update("DELETE FROM ai_conversations WHERE id = ? AND user_id = ?", id, uid);
         return Map.of("status", "deleted");
@@ -559,6 +571,7 @@ public class AiApiController {
         long uid = userIdOf(req);
         session.clearSession(uid);
         if (uid > 0) {
+            try { jdbc.update("DELETE FROM ai_artifacts WHERE user_id = ?", uid); } catch (Exception ignored) {}
             try { jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role IN ('user','assistant','thinking','tooldata')", uid); } catch (Exception ignored) {}
         }
         return Map.of("status", "cleared");
@@ -748,6 +761,53 @@ public class AiApiController {
         });
     }
 
+    private long persistArtifact(long userId, long conversationId, Map<String, Object> artifact) {
+        if (userId <= 0 || artifact == null || artifact.isEmpty()) return 0;
+        try {
+            String type = String.valueOf(artifact.getOrDefault("type", "stocksage_report"));
+            String title = String.valueOf(artifact.getOrDefault("title", "StockSage 分析报告"));
+            String summary = String.valueOf(artifact.getOrDefault("summary", ""));
+            Object contentJson = artifact.get("content_json");
+            String contentJsonStr = contentJson == null ? json.writeValueAsString(artifact) : json.writeValueAsString(contentJson);
+            String contentMarkdown = String.valueOf(artifact.getOrDefault("content_markdown", ""));
+            Object cid = conversationId > 0 ? conversationId : null;
+            jdbc.update("""
+                INSERT INTO ai_artifacts
+                    (user_id, conversation_id, type, title, summary, content_json, content_markdown)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, userId, cid, type, title, summary, contentJsonStr, contentMarkdown);
+            Long id = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+            return id == null ? 0 : id;
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private void attachArtifactsToMessages(long userId, long conversationId, List<Map<String, Object>> messages) {
+        if (userId <= 0 || conversationId <= 0 || messages == null || messages.isEmpty()) return;
+        try {
+            List<Map<String, Object>> artifacts = jdbc.queryForList("""
+                SELECT id, type, title, summary,
+                       content_json AS contentJson,
+                       content_markdown AS contentMarkdown,
+                       created_at AS createdAt
+                FROM ai_artifacts
+                WHERE user_id = ? AND conversation_id = ?
+                ORDER BY id ASC
+                """, userId, conversationId);
+            if (artifacts.isEmpty()) return;
+            Map<String, Object> target = null;
+            for (int i = messages.size() - 1; i >= 0; i--) {
+                Map<String, Object> msg = messages.get(i);
+                if ("assistant".equals(msg.get("role"))) {
+                    target = msg;
+                    break;
+                }
+            }
+            if (target != null) target.put("artifacts", artifacts);
+        } catch (Exception ignored) {}
+    }
+
     private String buildPortfolioHint(long portfolioId) {
         try {
             // Pull all holdings (not just top 5) so we can compute concentration + style signals
@@ -832,7 +892,7 @@ public class AiApiController {
                   .append(pnlPct >= 0 ? " +" : " ").append(String.format("%.1f%%", pnlPct)).append("；");
                 shown++;
             }
-            sb.append("\n如需完整持仓数据或量化分析，请调用 get_portfolio / get_portfolio_analysis 等工具。");
+            sb.append("\n如需完整持仓数据或量化分析，请调用 get_portfolio / get_portfolio_report 等工具。");
             return sb.toString();
         } catch (Exception e) {
             return "";
