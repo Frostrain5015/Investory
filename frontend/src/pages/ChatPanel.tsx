@@ -797,11 +797,19 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                     const code = m.strategyCode || m.content
                     try {
                       const res = await fetch(`${BASE}/api/backtest/strategies`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, strategyType: 'advanced', strategy: { code } }) })
+                      if (!res.ok) {
+                        // Network-level failure (e.g. server down, CORS blocked, session expired → 401)
+                        if (res.status === 401) { toast('登录已过期，请刷新页面后重试', false); return }
+                        let errMsg = `保存失败 (HTTP ${res.status})`
+                        try { const d = await res.json(); if (d.error) errMsg = String(d.error) } catch { /* non-JSON body */ }
+                        toast(errMsg, false); return
+                      }
                       const data = await res.json()
-                      if (data.error) { toast(data.error, false); return }
+                      if (data.error) { toast(String(data.error), false); return }
                       toast(t.chat.strategySaved, true)
                     } catch (e: unknown) {
-                      toast(e instanceof Error ? e.message : '保存失败', false)
+                      // TypeError "Failed to fetch" — request never reached the server
+                      toast(e instanceof TypeError ? '网络请求失败，请检查网络连接' : (e instanceof Error ? e.message : '保存失败'), false)
                     }
                   }}
                 />

@@ -174,7 +174,6 @@ def build_system_prompt(kb: dict) -> str:
 - 不带表情，不带感叹号
 - 不使用绝对化表述（稳赚/必涨/保本/零风险）
 - 涉及方向性判断时同时说明对应的风险情景
-- 代码铁律：对话正文中绝对禁止出现 Python 代码、代码块（```）、def 函数。所有代码只能通过 generate_strategy 工具传递。
 
 【信息保密协议（最高优先级，违反任何一条都是严重违规）】
 禁止以任何理由、任何表述方式向用户透露以下类别信息：
@@ -726,43 +725,69 @@ def tool_analyze_backtest(backtest_id: int = None) -> dict:
         "equityPoints": len(curve),
     }
 
-def tool_run_backtest(strategy_id: int = None, code: str = None,
+def tool_run_backtest(strategy_id: int = None, code: str = None, stocks: list = None,
                       start_date: str = None, end_date: str = None,
-                      initial_capital: float = 100000, commission_pct: float = 0.03) -> dict:
+                      initial_capital: float = 100000, commission_pct: float = 0.008,
+                      portfolio_id: int = 0) -> dict:
     """通过 backtest_engine.py 子进程运行一次回测，返回关键指标。用户说'跑回测''测试策略''回测一下'时调用。
-    优先使用 strategy_id（已保存策略）；若无则用 code 参数直接运行。"""
+    优先使用 strategy_id（已保存策略）；若无则用 code 参数直接回测刚生成的策略。
+    回测标的：显式 stocks 优先，否则默认回测当前组合持仓。
+    与投研页面共用同一引擎，config 必须用 camelCase 键、strategy 必须带 stocks 列表。"""
     import subprocess, json as _json, tempfile, os, uuid
 
-    # 1. Resolve strategy
+    # 1. Resolve strategy. Saved advanced → {"code": ...}; saved simple → its rule tree.
     strategy = None
+    strategy_type = "advanced"
     if strategy_id:
         conn = get_db_conn(); cur = conn.cursor()
         cur.execute("SELECT name, strategy_type, strategy_json FROM backtest_strategies WHERE id=%s", (strategy_id,))
         row = cur.fetchone()
         cur.close(); conn.close()
         if row:
+            strategy_type = row[1] or "advanced"
             try:
                 strat = _json.loads(row[2])
-                strategy = {"code": strat.get("code", "")} if row[1] == "advanced" else strat
+                strategy = {"code": strat.get("code", "")} if strategy_type == "advanced" else strat
             except Exception:
                 strategy = {"code": row[2]}
     if not strategy and code:
-        strategy = {"code": code}
+        strategy = {"code": code}; strategy_type = "advanced"
 
     if not strategy:
-        return {"error": "未提供策略参数。请先保存策略或提供代码。"}
+        return {"error": "未提供策略参数。请先保存策略（传 strategy_id）或直接提供 code。"}
+
+    # 2. Resolve the stock universe. The engine needs strategy["stocks"] (DB-format
+    #    symbols like "1.600519"); without it both simple and advanced paths return
+    #    "没有可用的股票数据". Explicit stocks win; otherwise fall back to holdings.
+    conn = get_db_conn()
+    resolved_stocks = []
+    if stocks:
+        for s in stocks:
+            r = resolve_symbol(conn, str(s))
+            resolved_stocks.append(r or str(s))
+    elif portfolio_id:
+        cur = conn.cursor()
+        cur.execute("SELECT s.symbol FROM holdings h JOIN stocks s ON h.stock_id=s.id "
+                    "WHERE h.portfolio_id=%s AND h.total_shares>0", (portfolio_id,))
+        resolved_stocks = [r[0] for r in cur.fetchall()]
+        cur.close()
+    conn.close()
+    if not resolved_stocks:
+        return {"error": "没有可回测的标的。请指定股票（stocks），或确认当前组合有持仓。"}
+    strategy = {**strategy, "stocks": resolved_stocks}
 
     today = str(__import__('datetime').date.today())
     one_year_ago = str(__import__('datetime').date.today() - __import__('datetime').timedelta(days=365))
+    # camelCase keys — the engine reads config["startDate"]/commissionPct/etc.; the
+    # old snake_case config silently KeyError'd, which is why backtests never ran.
     config = {
-        "start_date": start_date or one_year_ago,
-        "end_date": end_date or today,
-        "initial_capital": initial_capital,
-        "commission_pct": commission_pct,
-        "slippage_pct": 0.1,
+        "startDate": start_date or one_year_ago,
+        "endDate": end_date or today,
+        "initialCapital": initial_capital,
+        "commissionPct": commission_pct,
+        "slippagePct": 0.001,
     }
     result_id = int(uuid.uuid4().int % (10**9))
-    strategy_type = "advanced" if "code" in strategy else "simple"
     input_payload = {
         "strategy_type": strategy_type,
         "strategy": strategy,
@@ -779,27 +804,41 @@ def tool_run_backtest(strategy_id: int = None, code: str = None,
     tmp_path = tmp.name
     tmp.close()
 
+    output_file = SCRIPT_DIR / f"backtest_output_{result_id}.json"
+    error_file = SCRIPT_DIR / f"backtest_error_{result_id}.json"
     try:
+        # sys.executable matches the interpreter Java launched us with — cross-platform
+        # (python on Windows, python3 on Linux); hardcoded "python3" would break local dev.
         proc = subprocess.run(
-            ["python3", str(engine), "--input", tmp_path],
+            [sys.executable, "-u", str(engine), "--input", tmp_path],
             capture_output=True, text=True, timeout=110, cwd=str(SCRIPT_DIR))
-        output_file = SCRIPT_DIR / f"backtest_output_{result_id}.json"
         if output_file.exists():
             data = _json.loads(output_file.read_text(encoding="utf-8"))
             metrics = data.get("metrics", {})
-            trades = len(data.get("trade_log", []))
-            os.unlink(output_file)
+            # Engine emits camelCase "tradeLog"; the old "trade_log" key never matched
+            # so totalTrades was always 0.
+            trades = len(data.get("tradeLog", []))
             metrics["totalTrades"] = trades
             metrics["_note"] = "回测完成。指标含义：totalReturnPct=总收益率(%), sharpeRatio=夏普, maxDrawdownPct=最大回撤(%), winRatePct=胜率(%), profitFactor=盈亏比, totalTrades=交易次数"
             return metrics
-        return {"error": f"回测引擎无输出 (exit={proc.returncode})"}
+        # No output — surface the engine's structured error if it wrote one.
+        if error_file.exists():
+            try:
+                err = _json.loads(error_file.read_text(encoding="utf-8"))
+                return {"error": f"回测引擎异常: {err.get('error', '')}".strip()[:300]}
+            except Exception:
+                pass
+        tail = (proc.stdout or proc.stderr or "").strip().splitlines()
+        detail = tail[-1] if tail else ""
+        return {"error": f"回测引擎无输出 (exit={proc.returncode}) {detail}".strip()[:300]}
     except subprocess.TimeoutExpired:
-        return {"error": "回测超时（120s）"}
+        return {"error": "回测超时（110s）"}
     except Exception as e:
         return {"error": str(e)[:200]}
     finally:
-        try: os.unlink(tmp_path)
-        except: pass
+        for f in (tmp_path, output_file, error_file):
+            try: os.unlink(f)
+            except OSError: pass
 
 
 def tool_suggest_strategy_optimizations(backtest_id: int = None, strategy_id: int = None) -> dict:
@@ -1572,12 +1611,14 @@ _PARAM_SCHEMAS = {
         "code": {"type": "string", "description": "完整Python代码，def decide(ctx)函数"}
     }, "required": ["name", "description", "code"]},
     "run_backtest": {"type": "object", "properties": {
-        "strategy_id": {"type": "integer", "description": "策略ID"},
-        "start_date": {"type": "string"},
-        "end_date": {"type": "string"},
-        "initial_capital": {"type": "number"},
-        "commission_pct": {"type": "number"}
-    }, "required": ["strategy_id"]},
+        "strategy_id": {"type": "integer", "description": "已保存策略的ID。与code二选一，优先用此项"},
+        "code": {"type": "string", "description": "未保存策略时直接传入的完整Python代码，须含def decide(ctx)函数。刚用generate_strategy生成、用户未保存时用这个回测"},
+        "stocks": {"type": "array", "items": {"type": "string"}, "description": "回测标的代码列表，如['600519.SH','000001.SZ']。省略则默认回测当前组合持仓"},
+        "start_date": {"type": "string", "description": "回测起始日期 YYYY-MM-DD，默认一年前"},
+        "end_date": {"type": "string", "description": "回测结束日期 YYYY-MM-DD，默认今天"},
+        "initial_capital": {"type": "number", "description": "初始资金，默认100000"},
+        "commission_pct": {"type": "number", "description": "手续费率(小数)，默认0.008即千分之八"}
+    }, "required": []},
     "get_fundamentals": {"type": "object", "properties": {
         "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
     }, "required": ["symbol"]},
@@ -1810,10 +1851,11 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_list_strategies()
     elif name == "run_backtest":
         return tool_run_backtest(
-            args.get("strategy_id"), args.get("code"),
+            args.get("strategy_id"), args.get("code"), args.get("stocks"),
             args.get("start_date"), args.get("end_date"),
             float(args.get("initial_capital", 100000)),
-            float(args.get("commission_pct", 0.03)),
+            float(args.get("commission_pct", 0.008)),
+            portfolio_id,
         )
     elif name == "generate_strategy":
         code = args.get("code", "")

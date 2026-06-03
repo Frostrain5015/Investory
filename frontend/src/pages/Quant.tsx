@@ -387,7 +387,7 @@ export function BacktestSection() {
     let strategyData: any
     try { strategyData = JSON.parse(savedStrat.strategy_json || '{}') } catch { console.error('Invalid strategy JSON'); return }
     const strategy = { ...strategyData, stocks }
-    const config: any = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.0003, slippagePct: 0.001 }
+    const config: any = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.008, slippagePct: 0.001 }
     const effectiveStrategyType = optimize ? 'optimize' : wfEnabled ? 'walk_forward' : savedStrat.strategy_type
     if (wfEnabled) {
       Object.assign(config, { windowMonths: wfWindow, stepMonths: wfStep, oosMonths: wfOos })
@@ -451,9 +451,20 @@ export function BacktestSection() {
       : { entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules } }
     const body: any = { name: strategyName || (strategyType === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple), strategyType, strategy }
     if (editId) body.id = editId
-    const resp = await fetch(`${BASE}/api/backtest/strategies`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    let resp: Response
+    try {
+      resp = await fetch(`${BASE}/api/backtest/strategies`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    } catch {
+      toast('网络请求失败，请检查网络连接', false); return
+    }
+    if (!resp.ok) {
+      if (resp.status === 401) { toast('登录已过期，请刷新页面后重试', false); return }
+      let errMsg = `保存失败 (HTTP ${resp.status})`
+      try { const d = await resp.json(); if (d.error) errMsg = String(d.error) } catch { /* non-JSON body */ }
+      toast(errMsg, false); return
+    }
     const data = await resp.json()
-    if (data.error) { toast(data.error, false); return }
+    if (data.error) { toast(String(data.error), false); return }
     toast(editId ? q.toastStrategyUpdated : q.toastStrategySaved, true)
     setView('list'); setEditId(null)
     loadStrategies()

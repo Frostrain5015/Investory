@@ -212,7 +212,7 @@ def run_simple_backtest(strategy: dict, config: dict, conn, result_id: int) -> d
     start_date = config["startDate"]
     end_date = config["endDate"]
     initial_capital = float(config.get("initialCapital", 100000))
-    commission_pct = float(config.get("commissionPct", 0.0003))
+    commission_pct = float(config.get("commissionPct", 0.008))
     slippage_pct = float(config.get("slippagePct", 0.001))
     min_commission = float(config.get("minCommission", 5))
 
@@ -424,6 +424,12 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
     start_date = config["startDate"]
     end_date = config["endDate"]
     initial_capital = float(config.get("initialCapital", 100000))
+    # Apply the same trading costs the simple path uses — otherwise custom-code
+    # (advanced) backtests, which is what Guanlan generates, would show unrealistic
+    # cost-free P&L and ignore the configured commission entirely.
+    commission_pct = float(config.get("commissionPct", 0.008))
+    slippage_pct = float(config.get("slippagePct", 0.001))
+    min_commission = float(config.get("minCommission", 5))
     stocks = strategy.get("stocks", [])
 
     # Load data for stocks specified
@@ -480,11 +486,16 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
         print(f"[ERROR] 策略代码编译失败: {e}", flush=True)
         return None
 
-    # Timeout: use signal on Unix, threading.Timer fallback on Windows
-    if hasattr(signal, 'alarm'):
-        signal.alarm(60)
-    else:
+    # Timeout: signal.alarm exists only on Unix. On Windows it's absent, so wrap
+    # every alarm call — the loop and finally below call it unconditionally and
+    # would otherwise raise AttributeError and crash the whole advanced backtest.
+    _has_alarm = hasattr(signal, 'alarm')
+    def _alarm(secs):
+        if _has_alarm:
+            signal.alarm(secs)
+    if not _has_alarm:
         print("[WARN] 当前平台不支持 signal.alarm，策略执行无超时保护", flush=True)
+    _alarm(60)
 
     try:
         cash = initial_capital
@@ -523,9 +534,9 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
                 }
 
                 try:
-                    signal.alarm(5)  # 5 seconds per decision
+                    _alarm(5)  # 5 seconds per decision
                     result = decide_fn(ctx)
-                    signal.alarm(60)  # reset to global timeout
+                    _alarm(60)  # reset to global timeout
 
                     if result is None:
                         continue
@@ -535,26 +546,33 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
 
                     if action == "BUY" and not positions.get(sym):
                         price = float(sd["close"][idx])
-                        cost = qty * price
-                        if cost <= cash and qty > 0:
-                            cash -= cost
-                            positions[sym] = {"shares": qty, "avg_cost": price}
+                        exec_price = price * (1 + slippage_pct / 100)
+                        cost = qty * exec_price
+                        comm = max(cost * commission_pct, min_commission)
+                        total_cost = cost + comm
+                        if total_cost <= cash and qty > 0:
+                            cash -= total_cost
+                            # Fold buy commission into avg_cost so P&L nets the fee.
+                            positions[sym] = {"shares": qty, "avg_cost": exec_price + comm / qty}
                             trade_log.append({
                                 "date": date, "symbol": sym, "action": "BUY",
-                                "quantity": qty, "price": round(price, 2),
+                                "quantity": qty, "price": round(exec_price, 2),
                                 "pnl": None, "pnlPct": None, "reason": "自定义策略",
                             })
                     elif action == "SELL" and sym in positions:
                         price = float(sd["close"][idx])
+                        exec_price = price * (1 - slippage_pct / 100)
                         pos = positions[sym]
                         sell_qty = min(qty, pos["shares"]) if qty > 0 else pos["shares"]
-                        proceeds = sell_qty * price
+                        proceeds = sell_qty * exec_price
+                        comm = max(proceeds * commission_pct, min_commission)
+                        proceeds -= comm
                         pnl = proceeds - sell_qty * pos["avg_cost"]
-                        pnl_pct = (price / pos["avg_cost"] - 1) * 100
+                        pnl_pct = (exec_price / pos["avg_cost"] - 1) * 100
                         cash += proceeds
                         trade_log.append({
                             "date": date, "symbol": sym, "action": "SELL",
-                            "quantity": sell_qty, "price": round(price, 2),
+                            "quantity": sell_qty, "price": round(exec_price, 2),
                             "pnl": round(float(pnl), 2), "pnlPct": round(float(pnl_pct), 2),
                             "reason": "自定义策略",
                         })
@@ -577,7 +595,7 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
                 "date": date, "equity": round(total_equity, 2), "cash": round(cash, 2),
             })
 
-        signal.alarm(0)  # cancel timeout
+        _alarm(0)  # cancel timeout
         metrics = compute_metrics(equity_curve, trade_log)
         return {"equityCurve": equity_curve, "metrics": metrics, "tradeLog": trade_log}
 
@@ -586,7 +604,7 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
         traceback.print_exc()
         return None
     finally:
-        signal.alarm(0)
+        _alarm(0)
 
 
 # ── Walk-Forward 回测 ────────────────────────────────────────────────────
