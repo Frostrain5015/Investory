@@ -10,6 +10,11 @@ import concurrent.futures
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
+# Ensure sibling modules (agent_message) import regardless of cwd.
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from agent_message import AgentMessage, to_openai_messages, to_anthropic_messages
+
 KB_FILE = SCRIPT_DIR / "ai_knowledge_base.json"
 AGENT_SKILLS_DIR = SCRIPT_DIR / "agent_skills"
 STOCKSAGE_ENGINE_TIMEOUT_S = 80
@@ -2802,28 +2807,212 @@ def _compact_dag_result(name: str, result_json: str) -> dict:
     return data
 
 
-def _run_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_web: bool) -> dict:
-    """Run deterministic read-only workflow steps before the model when safe.
+# ── Declarative workflow DAGs (Phase 3) ──────────────────────────────────
+# A workflow is data, not prose. The model owns intent detection and final
+# synthesis; the DAG runner owns *deterministic forensics* — running the safe,
+# read-only first round up front so the model never has to "plan before tools,
+# then re-plan after tools". Only read-only tools whose arguments are fully
+# determined from (symbol, portfolio_id, user_id, text) appear here; writes and
+# anything needing model judgment (generate_strategy, run_backtest, the
+# confirm_* tools) stay in the normal tool loop.
+#
+# Step grammar:
+#   {"parallel": [task, ...]}                      run the listed tasks
+#   {"tool": ..., "args": ..., "condition": name}  a single (optionally gated) step
+#   {"synthesize": "<template>"}                   metadata: output template name
+# A task is {"tool", "args", optional "condition"}.
+# args values support $-substitution against the run context:
+#   "$symbol" / "$text" → string interpolation;
+#   a value that is exactly "$portfolio_id" / "$user_id" → the int itself.
+# All collected tasks run concurrently in one pool (the parallel/step split is
+# for readability and conditions; execution is a single fan-out like before).
+WORKFLOW_DAGS = {
+    "stock-diagnosis": {
+        "id": "stock_diagnosis",
+        "trigger": ["为什么跌", "出什么问题", "还能持有", "基本面", "异动",
+                    "暴跌", "大跌", "能买吗", "技术面", "估值"],
+        "requires": ["symbol"],
+        "synthesize": "stock_diagnosis_template",
+        "steps": [
+            {"parallel": [
+                {"tool": "get_stock_price", "args": {"symbol": "$symbol", "days": 90}},
+                {"tool": "get_market_regime", "args": {}},
+                {"tool": "get_stock_report", "args": {"symbol": "$symbol"},
+                 "condition": "needs_report"},
+            ]},
+            {"tool": "web_search",
+             "args": {"query": "$symbol 最新 公告 利空 业绩", "count": 5},
+             "condition": "needs_fresh_news"},
+            {"synthesize": "stock_diagnosis_template"},
+        ],
+    },
+    "portfolio-review": {
+        "id": "portfolio_review",
+        "trigger": ["组合", "持仓", "仓位", "集中", "分散", "体检", "调仓",
+                    "再平衡", "风险暴露"],
+        "requires": ["portfolio"],
+        "synthesize": "portfolio_review_template",
+        "steps": [
+            {"parallel": [
+                {"tool": "get_portfolio", "args": {}},
+                {"tool": "get_market_regime", "args": {}, "condition": "portfolio_risk"},
+                {"tool": "compute_sector_breakdown", "args": {}, "condition": "portfolio_risk"},
+            ]},
+            {"synthesize": "portfolio_review_template"},
+        ],
+    },
+    "watchlist-management": {
+        "id": "watchlist_management",
+        "trigger": ["自选", "关注列表", "观察列表"],
+        "requires": [],
+        "synthesize": "watchlist_template",
+        "steps": [
+            {"parallel": [
+                {"tool": "get_watchlist", "args": {}},
+            ]},
+            {"synthesize": "watchlist_template"},
+        ],
+    },
+    "market-news": {
+        "id": "market_news",
+        "trigger": ["大盘", "市场", "行情", "全球", "美股", "港股", "宏观", "最新消息"],
+        "requires": [],
+        "synthesize": "market_news_template",
+        "steps": [
+            {"parallel": [
+                {"tool": "get_market_regime", "args": {}},
+                {"tool": "get_world_market", "args": {"limit": 10},
+                 "condition": "needs_world_market"},
+            ]},
+            {"tool": "web_search", "args": {"query": "$text", "count": 5},
+             "condition": "needs_fresh_news"},
+            {"synthesize": "market_news_template"},
+        ],
+    },
+}
 
-    First version intentionally covers only stock-diagnosis. If symbol extraction
-    is uncertain, it returns no-op and the normal model/tool loop handles it.
-    """
+# When several skills match, prefetch the most specific workflow's forensics.
+# transaction-recording / strategy-backtest are intentionally absent: their
+# first round is a write-confirm or model-authored artifact, not safe to prefetch.
+_DAG_PRIORITY = ["stock-diagnosis", "portfolio-review", "watchlist-management", "market-news"]
+
+
+def _resolve_dag_value(value, ctx: dict):
+    """Substitute $-placeholders in a single DAG arg value."""
+    if not isinstance(value, str):
+        return value
+    if value == "$portfolio_id":
+        return ctx.get("portfolio_id", 0)
+    if value == "$user_id":
+        return ctx.get("user_id", 0)
+    out = value.replace("$symbol", str(ctx.get("symbol", "")))
+    out = out.replace("$text", str(ctx.get("text", "")))
+    return out
+
+
+def _resolve_dag_args(args: dict, ctx: dict) -> dict:
+    return {k: _resolve_dag_value(v, ctx) for k, v in (args or {}).items()}
+
+
+def _dag_condition(name: str, ctx: dict) -> bool:
+    """Evaluate a named DAG gate. Unknown names default to True (fail-open)."""
+    text = ctx.get("text", "")
+    if name == "needs_report":
+        return _stock_dag_needs_report(text)
+    if name == "needs_fresh_news":
+        return bool(ctx.get("expose_web") or _should_use_web_search(ctx.get("messages", [])))
+    if name == "portfolio_risk":
+        return any(k in text for k in (
+            "风险", "集中", "分散", "体检", "调仓", "再平衡", "健康", "风险暴露", "怎么样", "怎么办"))
+    if name == "needs_world_market":
+        return any(k in text for k in (
+            "全球", "美股", "港股", "外盘", "隔夜", "海外", "汇率", "商品", "纳指", "道指", "标普", "原油", "黄金"))
+    return True
+
+
+def _build_dag_tasks(dag: dict, ctx: dict) -> tuple:
+    """Flatten a DAG's steps into a concrete task list + the synthesize template,
+    honouring per-task and per-step conditions. Returns (tasks, synth_template)."""
+    tasks = []
+    synth_template = dag.get("synthesize", "")
+    for step in dag.get("steps", []):
+        if "synthesize" in step:
+            synth_template = step["synthesize"]
+            continue
+        if "parallel" in step:
+            for task in step["parallel"]:
+                cond = task.get("condition")
+                if cond and not _dag_condition(cond, ctx):
+                    continue
+                tasks.append((task["tool"], _resolve_dag_args(task.get("args"), ctx)))
+            continue
+        cond = step.get("condition")
+        if cond and not _dag_condition(cond, ctx):
+            continue
+        if step.get("tool"):
+            tasks.append((step["tool"], _resolve_dag_args(step.get("args"), ctx)))
+    return tasks, synth_template
+
+
+def _select_workflow_dag(messages: list) -> tuple:
+    """Pick the highest-priority active workflow DAG. Returns (skill, dag) or (None, None)."""
     active = _detect_agent_skills(messages)
-    if "stock-diagnosis" not in active:
-        return {}
-    text = _latest_user_text(messages)
-    symbol = _extract_stock_symbol_for_dag(text)
-    if not symbol:
-        return {}
+    for skill in _DAG_PRIORITY:
+        if skill in active and skill in WORKFLOW_DAGS:
+            return skill, WORKFLOW_DAGS[skill]
+    return None, None
 
-    tasks = [
-        ("get_stock_price", {"symbol": symbol, "days": 90}),
-        ("get_market_regime", {}),
-    ]
-    if _stock_dag_needs_report(text):
-        tasks.append(("get_stock_report", {"symbol": symbol}))
-    if expose_web or _should_use_web_search(messages):
-        tasks.append(("web_search", {"query": f"{symbol} {text}", "count": 5}))
+
+def _plan_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_web: bool) -> dict:
+    """Resolve the active workflow into a concrete, *unexecuted* plan.
+
+    Pure and side-effect free: it picks the workflow, checks requirements (a
+    symbol it can extract, or a portfolio it can read), flattens the gated steps
+    into a task list and drops web_search when fresh facts aren't warranted.
+    Separated from execution so the eval harness can assert what *would* run
+    (correct tools, parallel, no search/KB ritual) without any tool/network call.
+    Returns {"workflow", "tasks", "synthesize", "symbol"}; workflow is None and
+    tasks is [] when the DAG should no-op and defer to the normal tool loop.
+    """
+    empty = {"workflow": None, "tasks": [], "synthesize": "", "symbol": None}
+    skill, dag = _select_workflow_dag(messages)
+    if not dag:
+        return empty
+    text = _latest_user_text(messages)
+    ctx = {"text": text, "messages": messages, "expose_web": expose_web,
+           "portfolio_id": portfolio_id, "user_id": user_id}
+
+    requires = dag.get("requires", [])
+    if "symbol" in requires:
+        symbol = _extract_stock_symbol_for_dag(text)
+        if not symbol:
+            return empty
+        ctx["symbol"] = symbol
+    if "portfolio" in requires and not portfolio_id:
+        return empty
+
+    tasks, synth_template = _build_dag_tasks(dag, ctx)
+    # web_search only fires when the toggle/heuristic allows fresh facts.
+    if not (expose_web or _should_use_web_search(messages)):
+        tasks = [(n, a) for (n, a) in tasks if n != "web_search"]
+    if not tasks:
+        return empty
+    return {"workflow": dag.get("id", skill), "tasks": tasks,
+            "synthesize": synth_template, "symbol": ctx.get("symbol")}
+
+
+def _run_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_web: bool) -> dict:
+    """Run a workflow's deterministic read-only first round before the model.
+
+    Plans via _plan_workflow_dag, then executes the read-only tasks concurrently
+    and hands the model compacted evidence. Returns {} (no-op) whenever the plan
+    is empty, so the normal model/tool loop fully handles those cases.
+    """
+    plan = _plan_workflow_dag(messages, portfolio_id, user_id, expose_web)
+    tasks = plan["tasks"]
+    if not tasks:
+        return {}
+    synth_template = plan["synthesize"]
 
     results = {}
     successful_tools = set()
@@ -2844,11 +3033,13 @@ def _run_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_we
                 successful_tools.add(name)
 
     context = {
-        "workflow": "stock-diagnosis",
-        "symbol": symbol,
-        "instruction": "以下是工作流DAG已预取的第一轮证据。回答时优先使用这些结果；除非结果报错或问题需要额外证据，不要重复调用已成功完成的同名工具。",
+        "workflow": plan["workflow"],
+        "synthesize": synth_template,
+        "instruction": "以下是工作流DAG已确定性预取的第一轮证据。回答时优先使用这些结果；除非结果报错或问题需要额外证据，不要重复调用已成功完成的同名工具。按 synthesize 指定的输出模板组织回答。",
         "results": results,
     }
+    if plan.get("symbol"):
+        context["symbol"] = plan["symbol"]
     return {
         "system_message": "【工作流DAG预取结果】\n" + json.dumps(context, ensure_ascii=False),
         "successful_tools": successful_tools,
@@ -2957,21 +3148,13 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         # All models failed — re-raise last error
         raise RuntimeError(f"All {len(fallback_models)} models in chain exhausted")
 
-    formatted = []
-    for m in messages:
-        role = m.get("role", "user")
-        if role not in ("system", "user", "assistant", "tool"): role = "user"
-        content = m.get("content", "")
-        # DashScope supports cache_control on system blocks (same format as Anthropic).
-        # Wrapping the system prompt reduces TTFT on subsequent turns by avoiding
-        # re-encoding the ~500-token persona + KB block on every request.
-        if role == "system" and is_dashscope and isinstance(content, str):
-            entry = {"role": role, "content": [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]}
-        else:
-            entry = {"role": role, "content": content}
-        if "tool_calls" in m: entry["tool_calls"] = m["tool_calls"]
-        if "tool_call_id" in m: entry["tool_call_id"] = m["tool_call_id"]
-        formatted.append(entry)
+    # Converge on the unified AgentMessage model, then emit OpenAI wire format.
+    # DashScope supports cache_control on system blocks (same format as Anthropic);
+    # wrapping the system prompt cuts TTFT by not re-encoding the persona+KB block.
+    formatted = to_openai_messages(
+        [AgentMessage.from_wire(m) for m in messages],
+        cache_system=is_dashscope,
+    )
 
     def _emit_delta(delta):
         # Reasoning content (DeepSeek-reasoner, Qwen3 with enable_thinking, GLM-Zero, Moonshot k1.5, etc.)
@@ -3157,16 +3340,13 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
         client_kwargs["http_client"] = httpx.Client(proxy=proxy_url)
     client = anthropic.Anthropic(**client_kwargs)
 
-    system_prompt = None
-    formatted = []
-    for m in messages:
-        role = m.get("role", "user")
-        if role == "system":
-            system_prompt = m.get("content", "")
-            continue
-        if role not in ("user", "assistant"):
-            role = "user"
-        formatted.append({"role": role, "content": m.get("content", "")})
+    # Converge on the unified AgentMessage model, then emit Anthropic wire format.
+    # to_anthropic_messages merges ALL system messages (persona+KB, workflow hint,
+    # DAG prefetch) into one block — the old per-message loop overwrote them and
+    # kept only the last, silently dropping the persona/safety prompt.
+    system_prompt, formatted = to_anthropic_messages(
+        [AgentMessage.from_wire(m) for m in messages]
+    )
 
     # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)

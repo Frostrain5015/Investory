@@ -1,0 +1,19 @@
+{
+  "id": "strategy_generation",
+  "profiles": ["smoke", "full"],
+  "description": "策略生成：模型自撰代码，不应被 DAG 预取；consult_kb('策略引擎') 在此工作流是合理的，不算仪式化。",
+  "input": "帮我写一个双均线金叉策略并回测",
+  "portfolio_id": 1,
+  "user_id": 1,
+  "web_search": false,
+  "expect": {
+    "skill": "strategy-backtest",
+    "dag_workflow": null,
+    "no_dag_prefetch": true,
+    "parallel": false,
+    "symbol_clear": false,
+    "kb_allowed": true,
+    "available_includes": ["generate_strategy", "run_backtest", "consult_kb"],
+    "grounded": false
+  }
+}

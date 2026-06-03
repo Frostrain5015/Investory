@@ -1,0 +1,20 @@
+{
+  "id": "portfolio_concentration",
+  "profiles": ["smoke", "full"],
+  "description": "组合体检：应并行 get_portfolio + 风险工具，不让单股画像喧宾夺主。",
+  "input": "我的组合集中度风险大不大，需要调仓吗",
+  "portfolio_id": 1,
+  "user_id": 1,
+  "web_search": false,
+  "expect": {
+    "skill": "portfolio-review",
+    "dag_workflow": "portfolio_review",
+    "first_round_tools": ["get_portfolio", "get_market_regime", "compute_sector_breakdown"],
+    "parallel": true,
+    "symbol_clear": false,
+    "forbid_first_round": ["search_stocks", "consult_kb"],
+    "available_includes": ["get_portfolio_report", "optimize_portfolio"],
+    "grounded": true,
+    "max_sentences": 6
+  }
+}
