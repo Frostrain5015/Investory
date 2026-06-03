@@ -1085,11 +1085,11 @@ def tool_web_search(query: str, count: int = 5) -> dict:
     except Exception as e:
         return {"error": f"搜索失败: {str(e)[:100]}"}
 
-def tool_get_backtests(limit: int = 5) -> list:
+def tool_get_backtests(user_id: int, limit: int = 5) -> list:
     """获取最近的回测结果"""
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, strategy_type, start_date, end_date, metrics_json FROM backtest_results ORDER BY id DESC LIMIT %s", (limit,))
+    cur.execute("SELECT id, name, strategy_type, start_date, end_date, metrics_json FROM backtest_results WHERE user_id=%s ORDER BY id DESC LIMIT %s", (user_id, limit))
     rows = cur.fetchall()
     results = []
     for r in rows:
@@ -1242,11 +1242,11 @@ def tool_get_daily_picks(strategy: str = "main", limit: int = 5) -> dict:
             "scanned": data.get("scanned")}
 
 
-def tool_list_strategies() -> list:
+def tool_list_strategies(user_id: int) -> list:
     """获取用户保存的策略列表"""
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("SELECT id, name, strategy_type, created_at FROM backtest_strategies ORDER BY id DESC")
+    cur.execute("SELECT id, name, strategy_type, created_at FROM backtest_strategies WHERE user_id=%s ORDER BY id DESC", (user_id,))
     rows = cur.fetchall()
     cur.close(); conn.close()
     return [{"id": r[0], "name": r[1], "type": r[2], "created": str(r[3])} for r in rows]
@@ -1840,7 +1840,7 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
     elif name == "get_daily_picks_report":
         return tool_get_daily_picks_report(args.get("strategy", "main"), args.get("limit", 5))
     elif name == "get_backtests":
-        return tool_get_backtests(args.get("limit", 5))
+        return tool_get_backtests(user_id, args.get("limit", 5))
     elif name == "get_market_regime":
         return tool_get_market_regime()
     elif name == "get_strategies":
@@ -1848,7 +1848,7 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         strategy_id = args.get("id")
         if strategy_id is not None:
             return tool_get_strategy(int(strategy_id))
-        return tool_list_strategies()
+        return tool_list_strategies(user_id)
     elif name == "run_backtest":
         return tool_run_backtest(
             args.get("strategy_id"), args.get("code"), args.get("stocks"),
