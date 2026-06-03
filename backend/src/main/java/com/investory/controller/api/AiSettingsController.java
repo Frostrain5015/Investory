@@ -198,18 +198,14 @@ public class AiSettingsController {
         if (!isSupportedProvider(provider)) return Map.of("error", "请选择 API 格式");
         if (model.isBlank()) return Map.of("error", "model required");
 
-        // Upsert: only update api_key if provided (non-empty)
-        if (apiKey != null && !apiKey.isBlank()) {
-            jdbc.update(
-                "INSERT INTO ai_settings (user_id, provider, model, base_url, api_key) VALUES (?, ?, ?, ?, ?) " +
-                "ON DUPLICATE KEY UPDATE provider=VALUES(provider), model=VALUES(model), base_url=VALUES(base_url), api_key=VALUES(api_key)",
-                userId, provider, model, baseUrl, apiKey);
-        } else {
-            jdbc.update(
-                "INSERT INTO ai_settings (user_id, provider, model, base_url) VALUES (?, ?, ?, ?) " +
-                "ON DUPLICATE KEY UPDATE provider=VALUES(provider), model=VALUES(model), base_url=VALUES(base_url)",
-                userId, provider, model, baseUrl);
-        }
+        // Upsert: when apiKey is blank, explicitly clear it so that switching
+        // back to "default" mode removes a previously saved custom key.
+        // Column is NOT NULL DEFAULT '' — use empty string, not null.
+        String key = apiKey.isBlank() ? "" : apiKey;
+        jdbc.update(
+            "INSERT INTO ai_settings (user_id, provider, model, base_url, api_key) VALUES (?, ?, ?, ?, ?) " +
+            "ON DUPLICATE KEY UPDATE provider=VALUES(provider), model=VALUES(model), base_url=VALUES(base_url), api_key=VALUES(api_key)",
+            userId, provider, model, baseUrl, key);
 
         return Map.of("status", "ok");
     }

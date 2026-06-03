@@ -353,6 +353,9 @@ public class AiApiController {
                             String decoded = sb.toString();
                             appendThinking.accept(decoded);
                             session.emitReasoning(uid, decoded);
+                        } else if (isTracebackLine(line)) {
+                            // Python traceback leaked to stdout — silently drop it.
+                            // Normal errors are emitted via [ERROR] protocol lines.
                         } else {
                             String tok = line.isEmpty() ? "\n" : line;
                             accumContent.append(tok);
@@ -897,5 +900,28 @@ public class AiApiController {
         } catch (Exception e) {
             return "";
         }
+    }
+
+    /** Detect Python traceback lines that would pollute the chat UI.
+     *  Matches patterns like "Traceback (most recent call last):",
+     *  "  File \"/path/to/file.py\", line 42, in foo", error indicator
+     *  arrows, and exception class names. */
+    private static boolean isTracebackLine(String line) {
+        if (line == null) return false;
+        String t = line.strip();
+        if (t.isEmpty()) return false;
+        // Traceback header
+        if (t.startsWith("Traceback (most recent call last):")) return true;
+        // File references: "  File \"...\", line N, in ..."
+        if (t.startsWith("File \"") && t.contains("line ")) return true;
+        // Exception class names (may be chained): module.ExceptionName: message
+        if (t.matches("^[\\w.]+(Error|Exception|Timeout|Warning)(:.*)?$")) return true;
+        // Chained exception marker
+        if (t.startsWith("The above exception was the direct cause")) return true;
+        // Error indicator arrows: ^^^^ or ^~~~
+        if (t.matches("^\\^+~*$") && t.length() >= 2) return true;
+        // httpcore / httpx internal module tracebacks (sometimes printed without "File " prefix)
+        if (t.matches("^\\s+File \".*\", line \\d+.*")) return true;
+        return false;
     }
 }

@@ -315,7 +315,14 @@ export default function Settings() {
       <Modal open={open === 'ai'} onClose={() => setOpen(null)} title="观澜">
         {/* Mode toggle */}
         <div className="w-fit pb-3 border-b border-slate-100 dark:border-slate-800 mb-3">
-          <Segments value={aiMode} onChange={v => setAiMode(v as 'default' | 'custom')} options={[
+          <Segments value={aiMode} onChange={v => {
+              const mode = v as 'default' | 'custom'
+              if (mode === 'default') {
+                // Clear the key so the save request doesn't leak the old custom key.
+                setAiKey('')
+              }
+              setAiMode(mode)
+            }} options={[
             { value: 'default', label: '默认' },
             { value: 'custom', label: '自定义' },
           ]} />
@@ -377,17 +384,26 @@ export default function Settings() {
 
         <div className="flex gap-2 pt-4">
             <button onClick={async () => {
-              if (!aiProvider) { toast('请先选择 API 格式', false); return }
-              if (!aiModel) { toast('请先获取并选择模型', false); return }
-              const body: Record<string, string> = { provider: aiProvider, model: aiModel, baseUrl: aiBaseUrl }
-              if (aiKey) body.apiKey = aiKey
+              // In default mode, always send the system defaults and clear the key
+              const isDefault = aiMode === 'default'
+              const p = isDefault ? 'openai_compat' : aiProvider
+              if (!p) { toast('请先选择 API 格式', false); return }
+              const m = isDefault ? DEFAULT_OPENAI_COMPAT_MODEL : aiModel
+              if (!m) { toast('请先获取并选择模型', false); return }
+              const body: Record<string, string> = {
+                provider: p,
+                model: m,
+                baseUrl: isDefault ? DEFAULT_OPENAI_COMPAT_BASE_URL : aiBaseUrl,
+              }
+              if (!isDefault && aiKey) body.apiKey = aiKey
               const res = await fetch(`${BASE}/api/ai/settings`, {
                 method: 'POST', credentials: 'include',
                 headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
               })
               const data = await res.json()
               if (data.error) { toast(data.error, false); return }
-              if (aiKey) setAiHasKey(true)
+              setAiHasKey(!isDefault && !!aiKey)
+              if (isDefault) setAiKey('')
               toast(t.settings.aiSaveSuccess, true)
             }} className="flex-1 h-10 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 text-sm font-medium hover:bg-slate-800 dark:hover:bg-white transition-colors cursor-pointer">
               {t.settings.aiSaveBtn}

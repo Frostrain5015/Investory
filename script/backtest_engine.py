@@ -25,6 +25,7 @@ import time
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Optional
 
 import numpy as np
@@ -449,7 +450,8 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
     trading_dates = sorted(all_dates)
     total_days = len(trading_dates)
 
-    # Sandbox: block dangerous builtins and escape vectors
+    # Sandbox: block dangerous builtins and escape vectors.
+    # __import__ is required for the `import` statement itself to work inside exec().
     _SAFE_BUILTINS = {
         "abs": abs, "all": all, "any": any, "bool": bool, "dict": dict,
         "enumerate": enumerate, "filter": filter, "float": float, "int": int,
@@ -458,17 +460,20 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
         "tuple": tuple, "zip": zip, "print": print,
         "True": True, "False": False, "None": None,
         "isinstance": isinstance, "str": str, "type": type,
+        "__import__": __import__,
     }
     imports = {"math": math, "np": np}
     globals_ns = {"__builtins__": _SAFE_BUILTINS, **imports}
 
-    # Pre-validate: reject code containing escape patterns
+    # Pre-validate: reject code containing escape patterns.
+    # Check is case-insensitive to catch obfuscated payloads.
     _FORBIDDEN = [
-        "os.", "subprocess", "__import__", "eval(", "exec(", "compile(",
+        "os.", "subprocess", "import os", "import sys", "import subprocess",
+        "from os", "from sys", "__import__", "eval(", "exec(", "compile(",
         "open(", "__class__", "__bases__", "__subclasses__", "__globals__",
         "__code__", "__dict__", "sys.", "shutil", "socket", "importlib",
     ]
-    code_lower = user_code
+    code_lower = user_code.lower()
     for pattern in _FORBIDDEN:
         if pattern in code_lower:
             print(f"[ERROR] 策略代码包含禁止的模式: {pattern}", flush=True)
@@ -513,14 +518,19 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
                     continue
                 idx = sd["dates"].index(date)
 
-                ctx = {
+                # Provide full history up to current date so AI-generated
+                # strategies can compute MAs, std, etc. on ctx.close etc.
+                prices = {
+                    "open":  sd["open"][:idx+1],
+                    "high":  sd["high"][:idx+1],
+                    "low":   sd["low"][:idx+1],
+                    "close": sd["close"][:idx+1],
+                    "volume":sd["volume"][:idx+1],
+                }
+                ctx_dict = {
                     "symbol": sym,
                     "date": date,
-                    "open": float(sd["open"][idx]),
-                    "high": float(sd["high"][idx]),
-                    "low": float(sd["low"][idx]),
-                    "close": float(sd["close"][idx]),
-                    "volume": float(sd["volume"][idx]),
+                    **prices,
                     "has_position": sym in positions,
                     "shares": positions.get(sym, {}).get("shares", 0),
                     "avg_cost": positions.get(sym, {}).get("avg_cost", 0),
@@ -532,6 +542,9 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
                         for s in positions
                     ),
                 }
+                # Wrap in SimpleNamespace so both ctx["close"] (dict key) and
+                # ctx.close (attribute) work — the AI agent generates the latter.
+                ctx = SimpleNamespace(**ctx_dict, __getitem__=ctx_dict.__getitem__)
 
                 try:
                     _alarm(5)  # 5 seconds per decision
@@ -539,6 +552,20 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
                     _alarm(60)  # reset to global timeout
 
                     if result is None:
+                        continue
+
+                    # Accept int returns from AI-generated strategies:
+                    #   1 → BUY (use all cash), -1 → SELL (all shares), 0 → HOLD
+                    if isinstance(result, (int, float)):
+                        val = int(result)
+                        if val > 0:
+                            result = {"action": "BUY", "quantity": max(1, int(cash / (float(sd["close"][idx]) * 1.01)))}
+                        elif val < 0:
+                            pos = positions.get(sym)
+                            result = {"action": "SELL", "quantity": pos["shares"] if pos else 0}
+                        else:
+                            continue
+                    elif not isinstance(result, dict):
                         continue
 
                     action = result.get("action", "HOLD")

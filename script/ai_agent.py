@@ -152,14 +152,18 @@ def build_system_prompt(kb: dict) -> str:
 【安全网（最高优先级，违反任何一条都是错误回答）】
 {safety_text}
 
-【知识库（按需查阅）】
-专业分析框架、指标解读、评分标准已收录在知识库，需要时调用 consult_kb(topic) 查阅，不要凭记忆作答。可查阅的主题：
+【知识库（你的外脑——遇到不确定就查，不要硬想）】
+专业分析框架、指标合理区间、估值方法、风险与仓位、回测解读、行业特性、宏观、A股/港美股规则、常见场景应对、行为偏误都已收录在知识库。consult_kb(topic) 是低成本、高确定性的动作，应主动、频繁使用：
+- 当你对某个指标'算高还是低'拿不准、对某种分析方法或某类场景的标准应对感到模糊、或开始在思考链里反复推演同一件事时——第一反应是 consult_kb 查对应主题，而不是凭记忆硬答或空转。
+- 过度思考几乎总是'缺知识'或'怕出错'的表现：缺知识就查库，怕出错就把不确定性如实说出来（缺哪块数据/证据是否冲突/受何约束）。证据和框架到手后，果断给结论，不要犹豫和自我质疑。
+- 查阅知识库不丢人，凭记忆编造区间和框架才是错误。可查阅的主题：
 {kb_index}
 
 【工具调用规则】
 - ⚠ 分析铁律：做任何基本面/技术面/市场环境的分析、评估、拆解、审查前，第一步必须 consult_kb 查阅对应主题（如 基本面分析 / 技术面分析 / 市场环境分析），再调数据工具取数，最后按 KB 框架作答。读报告时也要先 consult_kb 了解评分标准再下结论。禁止跳过 KB 直接分析。
 - ⚠ 数据铁律：凡涉及具体数据必须先调工具拿真实数据再回答，禁凭记忆编造数字。不确定用什么工具时先 search_stocks / get_portfolio。
 - ⚠ 交易铁律：用户要求买卖/入金/出金/分红/删改交易 → 只允许调用 confirm_create/update/delete，严禁用文字代替。
+- ⚠ 策略铁律：用户要求写策略、生成策略、设计规则、构建量化交易系统时，第一步必须 consult_kb('策略引擎（生成与回测）') 查阅可用指标标识符（如 sma/ema/rsi/macd_histogram/stop_loss 等）、判断条件（above/below/overbought/oversold）、离场专用规则（stop_loss/take_profit/trailing_stop）、仓位方法（equal_weight/fixed_pct）和 advanced 模式的 ctx 接口。禁止凭记忆编造指标名或参数格式。
 - ⚠ 卡片铁律：confirm_* / ask_user 弹出卡片后不得复述卡片内容；用户对卡片提修改要求 → 重调同一个工具带修正参数，禁调 remember。
 - 轻重分流：简单行情、涨跌、名称匹配、短期K线、PE/PB、新闻事实、术语解释，不调用 StockSage 报告；优先用轻量查询工具或直接解释。
 - 只有用户明确要求”深度分析、审计报告、完整报告、专业分析、证据链、风险拆解、组合体检、今日候选理由”，或轻量回答后用户继续追问更深层原因时，才调用 get_stock_report / get_portfolio_report / get_daily_picks_report。
@@ -725,40 +729,119 @@ def tool_analyze_backtest(backtest_id: int = None) -> dict:
         "equityPoints": len(curve),
     }
 
-def tool_run_backtest(strategy_id: int = None, code: str = None, stocks: list = None,
+def _save_backtest_to_db(user_id: int, portfolio_id: int, name: str, strategy_type: str,
+                         strategy_json: str, config: dict, data: dict) -> int:
+    """Persist a completed backtest to backtest_results. Returns the new row ID."""
+    conn = get_db_conn(); cur = conn.cursor()
+    try:
+        import json as _json
+        eq_json  = _json.dumps(data.get("equityCurve", []), ensure_ascii=False)
+        met_json = _json.dumps(data.get("metrics", {}), ensure_ascii=False)
+        tl_json  = _json.dumps(data.get("tradeLog", []), ensure_ascii=False)
+        cfg_json = _json.dumps(config, ensure_ascii=False)
+        cur.execute(
+            """INSERT INTO backtest_results
+               (user_id, portfolio_id, name, strategy_type,
+                strategy_json, config_json, start_date, end_date,
+                equity_curve_json, metrics_json, trade_log_json)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (user_id, portfolio_id if portfolio_id > 0 else None, name, strategy_type,
+             strategy_json, cfg_json, config.get("startDate"), config.get("endDate"),
+             eq_json, met_json, tl_json))
+        conn.commit()
+        cur.execute("SELECT LAST_INSERT_ID()")
+        rid = cur.fetchone()[0]
+        return rid
+    finally:
+        cur.close(); conn.close()
+
+
+def _build_backtest_markdown(name: str, strategy_type: str, config: dict,
+                             metrics: dict, trade_log: list) -> str:
+    """Render a human-readable Markdown report for the backtest artifact."""
+    import datetime as _dt
+    m = metrics or {}
+    tr = m.get("totalReturnPct", 0)
+    ar = m.get("annualReturnPct", 0)
+    sh = m.get("sharpeRatio", 0)
+    md = m.get("maxDrawdownPct", 0)
+    wr = m.get("winRatePct", 0)
+    nt = m.get("totalTrades", len(trade_log or []))
+    ap = m.get("avgProfitPct", 0)
+    al = m.get("avgLossPct", 0)
+    pf = m.get("profitFactor", 0)
+
+    ts = _dt.datetime.now().strftime("%Y-%m-%d %H:%M")
+    sign = "+" if tr >= 0 else ""
+    lines = [
+        f"# {name}",
+        f"",
+        f"**类型**: {strategy_type}　|　**区间**: {config.get('startDate')} ~ {config.get('endDate')}　|　**初始资金**: {config.get('initialCapital', 0):,.0f}　|　**生成时间**: {ts}",
+        f"",
+        f"## 核心指标",
+        f"",
+        f"| 指标 | 值 |",
+        f"|------|----|",
+        f"| 总收益率 | **{sign}{tr:.2f}%** |",
+        f"| 年化收益率 | {sign}{ar:.2f}% |",
+        f"| 夏普比率 | {sh:.2f} |",
+        f"| 最大回撤 | {md:.2f}% |",
+        f"| 胜率 | {wr:.1f}% |",
+        f"| 总交易次数 | {nt} |",
+        f"| 平均盈利 | {ap:.2f}% |",
+        f"| 平均亏损 | {al:.2f}% |",
+        f"| 盈亏比 | {pf:.2f} |",
+        f"",
+    ]
+    if trade_log and len(trade_log) > 0:
+        lines.append(f"## 最近 20 笔交易")
+        lines.append(f"")
+        lines.append(f"| 日期 | 标的 | 操作 | 数量 | 价格 | 盈亏% |")
+        lines.append(f"|------|------|------|------|------|-------|")
+        for t in trade_log[-20:]:
+            pnl = t.get("pnlPct")
+            pnl_str = f"{pnl:+.2f}%" if isinstance(pnl, (int, float)) else "—"
+            lines.append(f"| {t.get('date','')} | {t.get('symbol','')} | {t.get('action','')} | {t.get('quantity','')} | {t.get('price','')} | {pnl_str} |")
+        lines.append(f"")
+    lines.append(f"*Investory 回测引擎 · 仅供参考，不构成投资建议*")
+    return "\n".join(lines)
+
+
+def tool_run_backtest(strategy_id: int = None, stocks: list = None,
                       start_date: str = None, end_date: str = None,
                       initial_capital: float = 100000, commission_pct: float = 0.008,
-                      portfolio_id: int = 0) -> dict:
-    """通过 backtest_engine.py 子进程运行一次回测，返回关键指标。用户说'跑回测''测试策略''回测一下'时调用。
-    优先使用 strategy_id（已保存策略）；若无则用 code 参数直接回测刚生成的策略。
-    回测标的：显式 stocks 优先，否则默认回测当前组合持仓。
-    与投研页面共用同一引擎，config 必须用 camelCase 键、strategy 必须带 stocks 列表。"""
+                      portfolio_id: int = 0, user_id: int = 0) -> dict:
+    """通过 backtest_engine.py 子进程运行一次回测，完整结果入库并通过载体卡片返回。
+    策略必须先经由 generate_strategy 保存到数据库，此处只能用 strategy_id 指定。
+    回测标的：显式 stocks 优先，否则默认回测当前组合持仓。"""
     import subprocess, json as _json, tempfile, os, uuid
 
-    # 1. Resolve strategy. Saved advanced → {"code": ...}; saved simple → its rule tree.
+    # 1. Resolve strategy from DB — code param removed; must be saved first.
+    if not strategy_id:
+        return {"error": "请先保存策略（通过 generate_strategy 卡片确认保存），然后传入 strategy_id 回测。"}
     strategy = None
     strategy_type = "advanced"
-    if strategy_id:
-        conn = get_db_conn(); cur = conn.cursor()
+    strategy_name = ""
+    strategy_raw = ""
+    conn = get_db_conn(); cur = conn.cursor()
+    try:
         cur.execute("SELECT name, strategy_type, strategy_json FROM backtest_strategies WHERE id=%s", (strategy_id,))
         row = cur.fetchone()
-        cur.close(); conn.close()
         if row:
+            strategy_name = row[0] or "未命名策略"
             strategy_type = row[1] or "advanced"
+            strategy_raw = row[2] or ""
             try:
-                strat = _json.loads(row[2])
+                strat = _json.loads(strategy_raw)
                 strategy = {"code": strat.get("code", "")} if strategy_type == "advanced" else strat
             except Exception:
-                strategy = {"code": row[2]}
-    if not strategy and code:
-        strategy = {"code": code}; strategy_type = "advanced"
-
+                strategy = {"code": strategy_raw}
+    finally:
+        cur.close(); conn.close()
     if not strategy:
-        return {"error": "未提供策略参数。请先保存策略（传 strategy_id）或直接提供 code。"}
+        return {"error": f"未找到策略 #{strategy_id}，请确认策略已保存。"}
 
-    # 2. Resolve the stock universe. The engine needs strategy["stocks"] (DB-format
-    #    symbols like "1.600519"); without it both simple and advanced paths return
-    #    "没有可用的股票数据". Explicit stocks win; otherwise fall back to holdings.
+    # 2. Resolve the stock universe.
     conn = get_db_conn()
     resolved_stocks = []
     if stocks:
@@ -773,13 +856,11 @@ def tool_run_backtest(strategy_id: int = None, code: str = None, stocks: list = 
         cur.close()
     conn.close()
     if not resolved_stocks:
-        return {"error": "没有可回测的标的。请指定股票（stocks），或确认当前组合有持仓。"}
+        return {"error": "没有可回测的标的。请指定 stocks，或确认当前组合有持仓。"}
     strategy = {**strategy, "stocks": resolved_stocks}
 
     today = str(__import__('datetime').date.today())
     one_year_ago = str(__import__('datetime').date.today() - __import__('datetime').timedelta(days=365))
-    # camelCase keys — the engine reads config["startDate"]/commissionPct/etc.; the
-    # old snake_case config silently KeyError'd, which is why backtests never ran.
     config = {
         "startDate": start_date or one_year_ago,
         "endDate": end_date or today,
@@ -807,30 +888,91 @@ def tool_run_backtest(strategy_id: int = None, code: str = None, stocks: list = 
     output_file = SCRIPT_DIR / f"backtest_output_{result_id}.json"
     error_file = SCRIPT_DIR / f"backtest_error_{result_id}.json"
     try:
-        # sys.executable matches the interpreter Java launched us with — cross-platform
-        # (python on Windows, python3 on Linux); hardcoded "python3" would break local dev.
         proc = subprocess.run(
             [sys.executable, "-u", str(engine), "--input", tmp_path],
             capture_output=True, text=True, timeout=110, cwd=str(SCRIPT_DIR))
-        if output_file.exists():
-            data = _json.loads(output_file.read_text(encoding="utf-8"))
-            metrics = data.get("metrics", {})
-            # Engine emits camelCase "tradeLog"; the old "trade_log" key never matched
-            # so totalTrades was always 0.
-            trades = len(data.get("tradeLog", []))
-            metrics["totalTrades"] = trades
-            metrics["_note"] = "回测完成。指标含义：totalReturnPct=总收益率(%), sharpeRatio=夏普, maxDrawdownPct=最大回撤(%), winRatePct=胜率(%), profitFactor=盈亏比, totalTrades=交易次数"
-            return metrics
-        # No output — surface the engine's structured error if it wrote one.
-        if error_file.exists():
+
+        if not output_file.exists():
+            # Surface engine error
+            if error_file.exists():
+                try:
+                    err = _json.loads(error_file.read_text(encoding="utf-8"))
+                    return {"error": f"回测引擎异常: {err.get('error', '')}".strip()[:300]}
+                except Exception:
+                    pass
+            tail = (proc.stdout or proc.stderr or "").strip().splitlines()
+            detail = tail[-1] if tail else ""
+            return {"error": f"回测引擎无输出 (exit={proc.returncode}) {detail}".strip()[:300]}
+
+        # 3. Read full output from engine
+        data = _json.loads(output_file.read_text(encoding="utf-8"))
+        metrics = data.get("metrics", {})
+        trade_log = data.get("tradeLog", [])
+        equity_curve = data.get("equityCurve", [])
+        metrics["totalTrades"] = len(trade_log)
+
+        # 4. Persist to backtest_results DB
+        db_id = 0
+        if user_id > 0:
             try:
-                err = _json.loads(error_file.read_text(encoding="utf-8"))
-                return {"error": f"回测引擎异常: {err.get('error', '')}".strip()[:300]}
+                db_id = _save_backtest_to_db(
+                    user_id=user_id, portfolio_id=portfolio_id,
+                    name=strategy_name, strategy_type=strategy_type,
+                    strategy_json=strategy_raw, config=config, data=data)
             except Exception:
-                pass
-        tail = (proc.stdout or proc.stderr or "").strip().splitlines()
-        detail = tail[-1] if tail else ""
-        return {"error": f"回测引擎无输出 (exit={proc.returncode}) {detail}".strip()[:300]}
+                pass  # best-effort; don't fail the turn over a DB write
+
+        # 5. Build markdown report and emit as artifact
+        md = _build_backtest_markdown(strategy_name, strategy_type, config, metrics, trade_log)
+        _emit_report_artifact({
+            "report_type": "backtest_result",
+            "title": f"回测: {strategy_name}",
+            "summary": f"总收益 {metrics.get('totalReturnPct', 0):+.2f}%　|　"
+                       f"Sharpe {metrics.get('sharpeRatio', 0):.2f}　|　"
+                       f"最大回撤 {metrics.get('maxDrawdownPct', 0):.2f}%　|　"
+                       f"{metrics.get('totalTrades', 0)} 笔交易",
+            "markdown": md,
+            "llm_context": {
+                "backtest_id": db_id,
+                "strategy_id": strategy_id,
+                "metrics": metrics,
+                "trade_count": len(trade_log),
+                "equity_points": len(equity_curve),
+            },
+        })
+
+        # 6. Return complete data to LLM
+        return {
+            "backtest_id": db_id,
+            "strategy_id": strategy_id,
+            "name": strategy_name,
+            "period": f"{config['startDate']} ~ {config['endDate']}",
+            "stocks": resolved_stocks,
+            "metrics": metrics,
+            "equity_summary": {
+                "points": len(equity_curve),
+                "start": equity_curve[0]["equity"] if equity_curve else None,
+                "end": equity_curve[-1]["equity"] if equity_curve else None,
+                "peak": max(p["equity"] for p in equity_curve) if equity_curve else None,
+                "trough": min(p["equity"] for p in equity_curve) if equity_curve else None,
+            } if equity_curve else None,
+            "trade_summary": {
+                "total": len(trade_log),
+                "buys": sum(1 for t in trade_log if t.get("action") == "BUY"),
+                "sells": sum(1 for t in trade_log if t.get("action") == "SELL"),
+                "recent_5": trade_log[-5:] if trade_log else [],
+            },
+            "artifact": {
+                "type": "backtest_result",
+                "title": f"回测: {strategy_name}",
+                "summary": metrics.get("totalReturnPct", 0),
+            },
+            "instruction": (
+                "回测已完整保存。先阅读 artifact 中的 Markdown 报告来理解回测表现，"
+                "然后用 analyze_backtest 做深入分析，或用 suggest_strategy_optimizations 获取优化方向。"
+                "核心指标已在上面，不要逐项重复罗列——直接给结论和风险。"
+            ),
+        }
     except subprocess.TimeoutExpired:
         return {"error": "回测超时（110s）"}
     except Exception as e:
@@ -1611,14 +1753,13 @@ _PARAM_SCHEMAS = {
         "code": {"type": "string", "description": "完整Python代码，def decide(ctx)函数"}
     }, "required": ["name", "description", "code"]},
     "run_backtest": {"type": "object", "properties": {
-        "strategy_id": {"type": "integer", "description": "已保存策略的ID。与code二选一，优先用此项"},
-        "code": {"type": "string", "description": "未保存策略时直接传入的完整Python代码，须含def decide(ctx)函数。刚用generate_strategy生成、用户未保存时用这个回测"},
-        "stocks": {"type": "array", "items": {"type": "string"}, "description": "回测标的代码列表，如['600519.SH','000001.SZ']。省略则默认回测当前组合持仓"},
+        "strategy_id": {"type": "integer", "description": "已保存策略的ID。必须先用 generate_strategy 保存策略，然后用此ID回测"},
+        "stocks": {"type": "array", "items": {"type": "string"}, "description": "回测标的代码列表，如['600036.SH','000001.SZ']。省略则默认回测当前组合持仓"},
         "start_date": {"type": "string", "description": "回测起始日期 YYYY-MM-DD，默认一年前"},
         "end_date": {"type": "string", "description": "回测结束日期 YYYY-MM-DD，默认今天"},
         "initial_capital": {"type": "number", "description": "初始资金，默认100000"},
         "commission_pct": {"type": "number", "description": "手续费率(小数)，默认0.008即千分之八"}
-    }, "required": []},
+    }, "required": ["strategy_id"]},
     "get_fundamentals": {"type": "object", "properties": {
         "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
     }, "required": ["symbol"]},
@@ -1851,11 +1992,11 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_list_strategies(user_id)
     elif name == "run_backtest":
         return tool_run_backtest(
-            args.get("strategy_id"), args.get("code"), args.get("stocks"),
+            args.get("strategy_id"), args.get("stocks"),
             args.get("start_date"), args.get("end_date"),
             float(args.get("initial_capital", 100000)),
             float(args.get("commission_pct", 0.008)),
-            portfolio_id,
+            portfolio_id, user_id,
         )
     elif name == "generate_strategy":
         code = args.get("code", "")
@@ -2950,7 +3091,19 @@ def main():
             print(f"[ERROR] API 额度不足", flush=True)
         else:
             print(f"[ERROR] 请求失败: {msg[:200]}", flush=True)
-        traceback.print_exc(file=sys.stderr)
+        # Log full traceback to file only — never to stdout/stderr.
+        # redirectErrorStream(true) merges stderr into stdout, so any
+        # stderr output would appear as raw chat text in the frontend.
+        try:
+            import datetime as _dt2
+            tb = traceback.format_exc()
+            with open(SCRIPT_DIR / "ai_errors.log", "a", encoding="utf-8") as _ef:
+                _ef.write(f"\n{'='*60}\n"
+                          f"{_dt2.datetime.now().isoformat(timespec='seconds')} "
+                          f"provider={args.provider} model={args.model}\n"
+                          f"{tb}\n")
+        except Exception:
+            pass
         sys.exit(1)
 
 

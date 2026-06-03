@@ -41,7 +41,7 @@
   },
   {
     "name": "run_backtest",
-    "description": "【策略铁律】运行一次量化策略回测。优先使用 strategy_id（已保存策略）；若无则用 code 参数直接回测刚生成的策略。回测标的：显式 stocks 优先，否则默认回测当前组合持仓。",
+    "description": "【策略铁律】运行一次量化策略回测。策略必须先用 generate_strategy 保存（用户确认卡片），然后传入已保存的 strategy_id。回测标的：显式 stocks 优先，否则默认回测当前组合持仓。结果完整入库并通过载体卡片返回。",
     "category": "analysis"
   },
   {
