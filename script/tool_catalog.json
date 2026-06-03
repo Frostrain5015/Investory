@@ -1,0 +1,182 @@
+[
+  {
+    "name": "get_portfolio",
+    "description": "获取当前持仓组合的完整数据：每只标的的名称、代码、市值、盈亏比例、权重。用户问持仓相关问题时必须先调用此工具。",
+    "category": "query"
+  },
+  {
+    "name": "get_factor_scores",
+    "description": "获取【A股】的多因子综合评分和各维度得分（价值/成长/动量/质量/技术/资金/事件/情绪/风控）。返回综合分(0-100)、四大核心维度得分率、分组得分、最强多空信号、以及评分解读指南。用户问'分析一下XX股票''XX股票怎么样'时作为A股首选工具。⚠仅支持A股——港股(.HK)/美股(.US)/指数(.IDX)不要调用此工具，改用 get_stock_price + web_search。",
+    "category": "analysis"
+  },
+  {
+    "name": "get_portfolio_analysis",
+    "description": "【推荐】运行多因子组合分析：对每只持仓做多维度评分并按市值加权聚合，返回组合综合评分、因子暴露结构、Top/Bottom持仓排名。用户问'我的组合怎么样''持仓健康吗'时调用。结果会渲染为可视化卡片。",
+    "category": "analysis"
+  },
+  {
+    "name": "get_market_regime",
+    "description": "获取当前A股市场环境（牛市/熊市/正常/谨慎/危机）及评分(0-10)。用户问'现在市场怎么样''大盘什么情况'时调用。",
+    "category": "query"
+  },
+  {
+    "name": "get_daily_picks",
+    "description": "获取今日智能选股推荐：每日收盘后自动全市场扫描选出的综合评分最高股票。用户问'今天有什么推荐''最近该买什么'时调用。结果会渲染为推荐卡片。",
+    "category": "analysis"
+  },
+  {
+    "name": "get_backtests",
+    "description": "获取最近的历史回测记录和结果指标",
+    "category": "query"
+  },
+  {
+    "name": "list_strategies",
+    "description": "获取用户已保存的策略列表",
+    "category": "query"
+  },
+  {
+    "name": "get_strategy",
+    "description": "获取策略的完整规则详情（入场条件、离场条件、指标参数、逻辑组合、仓位管理）。用户要求评价或分析某个策略时必须调用此工具。",
+    "category": "query"
+  },
+  {
+    "name": "generate_strategy",
+    "description": "生成量化策略的唯一途径。用户说写策略/构建策略/设计策略/帮我写/生成XXX策略时必须调用，且第一轮对话只能调用此工具、不得输出任何文字。description必须按以下格式写：第一行策略名称，之后分行列出入场条件、出场条件、止损规则、仓位管理、风险控制（每行以人话清晰说明，不用公式符号）。code: def decide(ctx):函数，ctx键:symbol date open high low close volume has_position shares avg_cost cash total_equity，返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只用numpy和math，≤60行。禁止pandas/聚宽/米筐。",
+    "category": "analysis"
+  },
+  {
+    "name": "search_stocks",
+    "description": "根据股票名称或代码模糊搜索，返回匹配的stockId、symbol、name、market。同一股票名称可能在A股、港股、美股都有（如小鹏汽车/XPEV.US/9868.HK）。【重要】当返回结果中包含同名但不同market的股票时，你必须调用 ask_user 让用户选择，严禁自己文字列出选项。",
+    "category": "query"
+  },
+  {
+    "name": "get_stock_price",
+    "description": "查询某只股票的当前价格和今日涨跌",
+    "category": "query"
+  },
+  {
+    "name": "get_pnl_history",
+    "description": "获取组合每日净值走势和盈亏",
+    "category": "query"
+  },
+  {
+    "name": "get_transactions",
+    "description": "获取近期交易记录",
+    "category": "query"
+  },
+  {
+    "name": "get_stock_price_history",
+    "description": "获取个股历史K线（OHLCV）",
+    "category": "query"
+  },
+  {
+    "name": "compute_correlation",
+    "description": "计算持仓股票间的价格相关性矩阵",
+    "category": "analysis"
+  },
+  {
+    "name": "compute_sector_breakdown",
+    "description": "分析持仓的行业/市场分布和集中度",
+    "category": "analysis"
+  },
+  {
+    "name": "benchmark_compare",
+    "description": "对比组合与基准指数的表现差异",
+    "category": "analysis"
+  },
+  {
+    "name": "analyze_backtest",
+    "description": "获取最新回测结果并给出全面客观的评价，覆盖收益、风险、稳定性、改进方向",
+    "category": "analysis"
+  },
+  {
+    "name": "ask_user",
+    "description": "需要用户做选择时【必须调用】。场景：多个回测结果选哪个、同名多市场股票选哪个（如招商银行600036.SH vs 03968.HK）、确认是否执行操作。提供2-4个选项。调用后UI会生成交互按钮和「其他」输入框，严禁用文字代替此工具列出选项。",
+    "category": "query"
+  },
+  {
+    "name": "remember",
+    "description": "用户要求记住某个信息（偏好、事实、背景等），保存到长期记忆。用户说'记住'、'别忘了'、'帮我记一下'时调用",
+    "category": "mutation"
+  },
+  {
+    "name": "forget",
+    "description": "删除包含关键词的长期记忆。用户说'忘掉'、'删除记忆'、'不要记了'时调用",
+    "category": "mutation"
+  },
+  {
+    "name": "consult_kb",
+    "description": "查阅知识库中的专业主题，获取分析框架/指标解读/评分标准后再作答。可查阅: 投资原则, 指标解读, 因子评分解读, 基本面分析, 技术面分析, 市场环境分析。做基本面/技术面/市场分析前，或需要某指标定义/评分好坏标准时必须先查阅，不要凭记忆。",
+    "category": "analysis"
+  },
+  {
+    "name": "web_search",
+    "description": "联网搜索。凡涉及新闻、时事、最新动态、具体事件日期和细节——你无法从数据库回答的一切——必须先调用此工具再回复，禁止凭记忆编造",
+    "category": "analysis"
+  },
+  {
+    "name": "get_fundamentals",
+    "description": "[DEPRECATED] 获取单只【A股】基本面数据，已重定向到 get_factor_scores。港股/美股请勿调用，改用 get_stock_price + web_search。",
+    "category": "query"
+  },
+  {
+    "name": "optimize_portfolio",
+    "description": "均值-方差组合优化。给出当前持仓的建议权重分配（最大化夏普/最小方差/风险平价），以及与当前权重的对比。用户要求调仓建议时调用。",
+    "category": "analysis"
+  },
+  {
+    "name": "get_global_indices",
+    "description": "获取全球 20 个股市指数 + 4 个商品/汇率指标的最新行情(含 stockId，可用于加自选)。问全球/世界/大盘走势/市场概况，或用户想把某指数加入自选时调用。",
+    "category": "query"
+  },
+  {
+    "name": "get_world_news",
+    "description": "获取今日全球财经/地缘要闻。问最新新闻、时事、今日大事时调用。",
+    "category": "query"
+  },
+  {
+    "name": "get_watchlist",
+    "description": "获取用户的股票自选列表，含最新价格和近一周涨跌",
+    "category": "query"
+  },
+  {
+    "name": "confirm_add_watchlist",
+    "description": "【必须调用】添加股票或指数到自选列表并弹出确认按钮。用户说'加自选''关注''添加自选'时调用。个股先用search_stocks获取stockId；指数(上证/恒生/标普/纳指等)用 get_global_indices 获取其 stockId。股票和指数都支持加自选。调用成功后不要输出正文，等待用户在 UI 确认。",
+    "category": "mutation"
+  },
+  {
+    "name": "confirm_remove_watchlist",
+    "description": "【必须调用】从自选列表移除股票并弹出确认按钮。用户说'删自选''取消关注''移除自选'时调用。先调用get_watchlist获取列表。调用成功后不要输出正文，等待用户在 UI 确认。",
+    "category": "mutation"
+  },
+  {
+    "name": "confirm_create_transaction",
+    "description": "【必须调用】创建交易记录并弹出用户确认按钮。当用户要求买入/卖出/添加分红/转入转出资金时必须调用此工具。调用后会弹出 Accept/Refuse 按钮让用户在 UI 上点击确认。不要在文字中询问'确认吗'，调用成功后不要输出正文。type: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT。所有参数必须从对话中完整提取，缺失先反问。",
+    "category": "mutation"
+  },
+  {
+    "name": "confirm_update_transaction",
+    "description": "【必须调用】编辑交易记录并弹出确认按钮。用户要求修改交易时调用。先调用get_transactions查询现有记录获取id。调用成功后不要输出正文，等待用户在 UI 确认。",
+    "category": "mutation"
+  },
+  {
+    "name": "confirm_delete_transaction",
+    "description": "【必须调用】删除交易记录并弹出确认按钮。用户要求删除交易时调用。先调用get_transactions查询现有记录获取id。调用成功后不要输出正文，等待用户在 UI 确认。",
+    "category": "mutation"
+  },
+  {
+    "name": "confirm_bulk_create",
+    "description": "批量创建多笔交易。需用户确认后才执行。每笔交易的参数必须完整。调用成功后不要输出正文，等待用户在 UI 确认。",
+    "category": "mutation"
+  },
+  {
+    "name": "confirm_bulk_update",
+    "description": "批量编辑多笔交易。需用户确认后才执行。调用成功后不要输出正文，等待用户在 UI 确认。",
+    "category": "mutation"
+  },
+  {
+    "name": "confirm_bulk_delete",
+    "description": "批量删除多条交易。需用户确认后才执行。调用成功后不要输出正文，等待用户在 UI 确认。",
+    "category": "mutation"
+  }
+]

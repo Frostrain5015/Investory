@@ -1366,6 +1366,165 @@ def tool_optimize_portfolio(portfolio_id: int, max_weight: float = 0.30, mode: s
 
 # ── Tool definitions (OpenAI format) ────────────────────────────────────
 
+# Tool catalog is the single source of truth for tool metadata (name,
+# description, category). Parameter schemas are kept inline below because
+# they are too expressive for a flat JSON catalog (nested objects, arrays,
+# required fields). The catalog is loaded at startup and enriched with
+# parameter schemas to produce the final TOOLS list for the LLM API.
+TOOL_CATALOG = None
+
+
+def _load_tool_catalog():
+    """Load tool_catalog.json. Called once per process. Returns list of dicts."""
+    import json as _json
+    global TOOL_CATALOG
+    if TOOL_CATALOG is not None:
+        return TOOL_CATALOG
+    path = SCRIPT_DIR / "tool_catalog.json"
+    if path.exists():
+        with open(path, "r", encoding="utf-8") as f:
+            TOOL_CATALOG = _json.load(f)
+    else:
+        # Fallback: if the catalog file is missing, extract from the old TOOLS list.
+        # This should only happen in dev before the catalog is generated.
+        TOOL_CATALOG = _extract_catalog_from_code()
+    return TOOL_CATALOG
+
+
+def _extract_catalog_from_code():
+    """Emergency fallback — extract tool metadata from the code below."""
+    import re
+    return [{"name": "get_portfolio", "description": "(fallback)", "category": "query"}]
+
+
+# Parameter schemas for tools that have non-trivial params.
+# Tools with no params or only trivial params don't need entries here.
+_PARAM_SCHEMAS = {
+    "get_pnl_history": {"type": "object", "properties": {
+        "days": {"type": "integer", "description": "查询天数，默认90，最大365"}
+    }, "required": []},
+    "search_stocks": {"type": "object", "properties": {
+        "query": {"type": "string", "description": "股票名称或代码"}
+    }, "required": ["query"]},
+    "get_stock_price": {"type": "object", "properties": {
+        "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
+    }, "required": ["symbol"]},
+    "get_stock_price_history": {"type": "object", "properties": {
+        "symbol": {"type": "string", "description": "DB格式symbol"},
+        "days": {"type": "integer", "description": "天数，默认60，最大500"}
+    }, "required": ["symbol"]},
+    "get_factor_scores": {"type": "object", "properties": {
+        "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
+    }, "required": ["symbol"]},
+    "get_transactions": {"type": "object", "properties": {
+        "limit": {"type": "integer", "description": "返回条数，默认20，最大50"}
+    }, "required": []},
+    "web_search": {"type": "object", "properties": {
+        "query": {"type": "string", "description": "搜索关键词"},
+        "count": {"type": "integer", "description": "返回条数，默认5，最多8"}
+    }, "required": ["query"]},
+    "consult_kb": {"type": "object", "properties": {
+        "topic": {"type": "string", "description": "知识库主题名，如 基本面分析 / 技术面分析 / 市场环境分析 / 指标解读 / 因子评分解读 / 投资原则"}
+    }, "required": ["topic"]},
+    "get_daily_picks": {"type": "object", "properties": {
+        "strategy": {"type": "string", "description": "策略类型: main/golden_cross/hot/chip"},
+        "limit": {"type": "integer", "description": "返回条数，默认5"}
+    }, "required": []},
+    "get_world_news": {"type": "object", "properties": {
+        "limit": {"type": "integer", "description": "返回条数，默认10"}
+    }, "required": []},
+    "remember": {"type": "object", "properties": {
+        "fact": {"type": "string", "description": "要记住的信息（投资偏好、事实、规则等）"}
+    }, "required": ["fact"]},
+    "forget": {"type": "object", "properties": {
+        "keyword": {"type": "string", "description": "要删除的记忆关键词"}
+    }, "required": ["keyword"]},
+    "confirm_create_transaction": {"type": "object", "properties": {
+        "stockId": {"type": "string", "description": "DB格式symbol或数字ID"},
+        "type": {"type": "string", "description": "BUY/SELL/TRANSFER_IN/TRANSFER_OUT"},
+        "shares": {"type": "number", "description": "股数（转账类为金额）"},
+        "price": {"type": "number", "description": "成交价格"},
+        "fee": {"type": "number", "description": "手续费，默认0"},
+        "tradeDate": {"type": "string", "description": "交易日期 yyyy-MM-dd"},
+        "currency": {"type": "string", "description": "货币，默认CNY"},
+        "note": {"type": "string", "description": "备注"}
+    }, "required": ["type", "shares", "price", "tradeDate"]},
+    "confirm_update_transaction": {"type": "object", "properties": {
+        "id": {"type": "integer", "description": "要修改的交易记录ID"},
+        "stockId": {"type": "string"}, "type": {"type": "string"},
+        "shares": {"type": "number"}, "price": {"type": "number"},
+        "fee": {"type": "number"}, "tradeDate": {"type": "string"},
+        "currency": {"type": "string"}, "note": {"type": "string"}
+    }, "required": ["id"]},
+    "confirm_delete_transaction": {"type": "object", "properties": {
+        "ids": {"type": "array", "items": {"type": "integer"}, "description": "要删除的交易记录ID列表"}
+    }, "required": ["ids"]},
+    "confirm_add_watchlist": {"type": "object", "properties": {
+        "stockId": {"type": "integer", "description": "股票ID"},
+        "name": {"type": "string", "description": "显示名称"}
+    }, "required": ["stockId"]},
+    "confirm_remove_watchlist": {"type": "object", "properties": {
+        "ids": {"type": "array", "items": {"type": "integer"}, "description": "要移除的watchlist项ID列表"}
+    }, "required": ["ids"]},
+    "confirm_bulk_create": {"type": "object", "properties": {
+        "transactions": {"type": "array", "description": "交易对象列表"}
+    }, "required": ["transactions"]},
+    "confirm_bulk_update": {"type": "object", "properties": {
+        "updates": {"type": "array", "description": "更新对象列表"}
+    }, "required": ["updates"]},
+    "confirm_bulk_delete": {"type": "object", "properties": {
+        "ids": {"type": "array", "items": {"type": "integer"}}
+    }, "required": ["ids"]},
+    "analyze_backtest": {"type": "object", "properties": {
+        "id": {"type": "integer", "description": "回测记录ID"}
+    }, "required": []},
+    "get_strategy": {"type": "object", "properties": {
+        "id": {"type": "integer", "description": "策略ID"}
+    }, "required": ["id"]},
+    "ask_user": {"type": "object", "properties": {
+        "question": {"type": "string", "description": "要问用户的问题"},
+        "options": {"type": "array", "items": {"type": "object"}, "description": "选项列表，每项含value和label"},
+        "multiSelect": {"type": "boolean", "description": "是否多选"}
+    }, "required": ["question", "options"]},
+    "generate_strategy": {"type": "object", "properties": {
+        "name": {"type": "string", "description": "策略名称"},
+        "description": {"type": "string", "description": "一句话描述策略思路"},
+        "code": {"type": "string", "description": "完整Python代码，def decide(ctx)函数"}
+    }, "required": ["name", "description", "code"]},
+    "run_backtest": {"type": "object", "properties": {
+        "strategy_id": {"type": "integer", "description": "策略ID"},
+        "start_date": {"type": "string"},
+        "end_date": {"type": "string"},
+        "initial_capital": {"type": "number"},
+        "commission_pct": {"type": "number"}
+    }, "required": ["strategy_id"]},
+    "get_fundamentals": {"type": "object", "properties": {
+        "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
+    }, "required": ["symbol"]},
+    "benchmark_compare": {"type": "object", "properties": {
+        "benchmark": {"type": "string", "description": "基准代码，默认000001.SH"},
+        "days": {"type": "integer", "description": "对比天数，默认252"}
+    }, "required": []},
+}
+
+
+def _build_tools():
+    """Generate the TOOLS list from catalog + inline param schemas.
+    If tool_catalog.json doesn't exist, falls back to loading directly
+    from the static TOOLS list below (dev bootstrap)."""
+    import json as _json
+    catalog = _load_tool_catalog()
+    tools = []
+    for entry in catalog:
+        name = entry.get("name", "")
+        desc = entry.get("description", "")
+        params = _PARAM_SCHEMAS.get(name, {"type": "object", "properties": {}, "required": []})
+        tools.append({"type": "function", "function": {
+            "name": name, "description": desc, "parameters": params
+        }})
+    return tools
+
+
 # ── 全球市场工具 ──────────────────────────────────────────────────────────
 
 _GLOBAL_INDICES = [
@@ -1422,235 +1581,8 @@ def tool_get_world_news(limit: int = 10) -> dict:
         "note": f"今日共{len(news)}条要闻" if news else "今日暂无新闻"}
 
 
-TOOLS = [
-    {"type": "function", "function": {
-        "name": "get_portfolio", "description": "获取当前持仓组合的完整数据：每只标的的名称、代码、市值、盈亏比例、权重。用户问持仓相关问题时必须先调用此工具。",
-        "parameters": {"type": "object", "properties": {}, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "get_factor_scores", "description": "获取【A股】的多因子综合评分和各维度得分（价值/成长/动量/质量/技术/资金/事件/情绪/风控）。返回综合分(0-100)、四大核心维度得分率、分组得分、最强多空信号、以及评分解读指南。用户问'分析一下XX股票''XX股票怎么样'时作为A股首选工具。⚠仅支持A股——港股(.HK)/美股(.US)/指数(.IDX)不要调用此工具，改用 get_stock_price + web_search。",
-        "parameters": {"type": "object", "properties": {
-            "symbol": {"type": "string", "description": "股票代码，如 600519.SH 或 600519"}
-        }, "required": ["symbol"]}
-    }},
-    {"type": "function", "function": {
-        "name": "get_portfolio_analysis", "description": "【推荐】运行多因子组合分析：对每只持仓做多维度评分并按市值加权聚合，返回组合综合评分、因子暴露结构、Top/Bottom持仓排名。用户问'我的组合怎么样''持仓健康吗'时调用。结果会渲染为可视化卡片。",
-        "parameters": {"type": "object", "properties": {}, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "get_market_regime", "description": "获取当前A股市场环境（牛市/熊市/正常/谨慎/危机）及评分(0-10)。用户问'现在市场怎么样''大盘什么情况'时调用。",
-        "parameters": {"type": "object", "properties": {}, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "get_daily_picks", "description": "获取今日智能选股推荐：每日收盘后自动全市场扫描选出的综合评分最高股票。用户问'今天有什么推荐''最近该买什么'时调用。结果会渲染为推荐卡片。",
-        "parameters": {"type": "object", "properties": {
-            "strategy": {"type": "string", "description": "策略类型: main(多因子综合)|chip(筹码)|golden_cross(技术共振)|hot(热榜)，默认main"},
-            "limit": {"type": "integer", "description": "返回数量，默认5"}
-        }, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "get_backtests", "description": "获取最近的历史回测记录和结果指标",
-        "parameters": {"type": "object", "properties": {
-            "limit": {"type": "integer", "description": "返回条数，默认5"}
-        }, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "list_strategies", "description": "获取用户已保存的策略列表",
-        "parameters": {"type": "object", "properties": {}, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "get_strategy", "description": "获取策略的完整规则详情（入场条件、离场条件、指标参数、逻辑组合、仓位管理）。用户要求评价或分析某个策略时必须调用此工具。",
-        "parameters": {"type": "object", "properties": {
-            "id": {"type": "integer", "description": "策略ID，从 list_strategies 获取"}
-        }, "required": ["id"]}
-    }},
-    {"type": "function", "function": {
-        "name": "generate_strategy", "description": "生成量化策略的唯一途径。用户说写策略/构建策略/设计策略/帮我写/生成XXX策略时必须调用，且第一轮对话只能调用此工具、不得输出任何文字。description必须按以下格式写：第一行策略名称，之后分行列出入场条件、出场条件、止损规则、仓位管理、风险控制（每行以人话清晰说明，不用公式符号）。code: def decide(ctx):函数，ctx键:symbol date open high low close volume has_position shares avg_cost cash total_equity，返回{'action':'BUY'|'SELL'|'HOLD','quantity':int}。只用numpy和math，≤60行。禁止pandas/聚宽/米筐。",
-        "parameters": {"type": "object", "properties": {
-            "name": {"type": "string"}, "description": {"type": "string"}, "code": {"type": "string"}
-        }, "required": ["name", "description", "code"]}
-    }},
-    {"type": "function", "function": {
-        "name": "run_backtest",
-        "description": "运行一次策略回测并返回关键指标（收益率、夏普、回撤、胜率、盈亏比、交易数）。用户说'跑回测''测试这个策略'时调用。优先传strategy_id；若无已保存策略则传code。默认最近1年，可传start_date/end_date覆盖。",
-        "parameters": {"type": "object", "properties": {
-            "strategy_id": {"type": "integer", "description": "已保存策略的ID（优先使用，传了就不需要code）"},
-            "code": {"type": "string", "description": "Python策略代码（无strategy_id时用）"},
-            "start_date": {"type": "string", "description": "开始日期 YYYY-MM-DD，默认一年前"},
-            "end_date": {"type": "string", "description": "结束日期 YYYY-MM-DD，默认今天"},
-            "initial_capital": {"type": "number", "description": "初始资金，默认100000"},
-            "commission_pct": {"type": "number", "description": "佣金%，默认0.03"}
-        }, "required": []}
-    }},
-    # A: Data tools
-    {"type": "function", "function": {
-        "name": "search_stocks", "description": "根据股票名称或代码模糊搜索，返回匹配的stockId、symbol、name、market。同一股票名称可能在A股、港股、美股都有（如小鹏汽车/XPEV.US/9868.HK）。【重要】当返回结果中包含同名但不同market的股票时，你必须调用 ask_user 让用户选择，严禁自己文字列出选项。",
-        "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "搜索关键词：股票名或代码"}}, "required": ["query"]}
-    }},
-    {"type": "function", "function": {
-        "name": "get_stock_price", "description": "查询某只股票的当前价格和今日涨跌",
-        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}, "required": ["symbol"]}
-    }},
-    {"type": "function", "function": {
-        "name": "get_pnl_history", "description": "获取组合每日净值走势和盈亏",
-        "parameters": {"type": "object", "properties": {"days": {"type": "integer", "description": "天数，默认90"}}, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "get_transactions", "description": "获取近期交易记录",
-        "parameters": {"type": "object", "properties": {"limit": {"type": "integer"}}, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "get_stock_price_history", "description": "获取个股历史K线（OHLCV）",
-        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}, "days": {"type": "integer", "description": "天数，默认60"}}, "required": ["symbol"]}
-    }},
-    # B: Compute tools
-    {"type": "function", "function": {
-        "name": "compute_correlation", "description": "计算持仓股票间的价格相关性矩阵",
-        "parameters": {"type": "object", "properties": {"symbols": {"type": "array", "items": {"type": "string"}}}, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "compute_sector_breakdown", "description": "分析持仓的行业/市场分布和集中度",
-        "parameters": {"type": "object", "properties": {}, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "benchmark_compare", "description": "对比组合与基准指数的表现差异",
-        "parameters": {"type": "object", "properties": {"benchmark": {"type": "string", "description": "基准代码，默认000001.SH（上证）"}, "days": {"type": "integer"}}, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "analyze_backtest", "description": "获取最新回测结果并给出全面客观的评价，覆盖收益、风险、稳定性、改进方向",
-        "parameters": {"type": "object", "properties": {"id": {"type": "integer", "description": "回测结果ID，不传则取最新一次"}}, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "suggest_strategy_optimizations",
-        "description": "针对一次回测结果，诊断弱点并提议 3-5 个参数变体方向。用户要求'优化策略''改进回测''调参'时调用。返回原始诊断信号，由你组织成具体建议（每个建议说明改动+预期改善+新风险），并提示用户去回测页面手动测试。",
-        "parameters": {"type": "object", "properties": {
-            "backtest_id": {"type": "integer", "description": "回测结果ID，不传则取最新一次"},
-            "strategy_id": {"type": "integer", "description": "策略ID，不传则按名称匹配最新策略"}
-        }, "required": []}
-    }},
-    {"type": "function", "function": {
-        "name": "ask_user", "description": "需要用户做选择时【必须调用】。场景：多个回测结果选哪个、同名多市场股票选哪个（如招商银行600036.SH vs 03968.HK）、确认是否执行操作。提供2-4个选项。调用后UI会生成交互按钮和「其他」输入框，严禁用文字代替此工具列出选项。",
-        "parameters": {"type": "object", "properties": {
-            "question": {"type": "string", "description": "问用户的问题"},
-            "options": {"type": "array", "items": {"type": "string"}, "description": "选项列表，2-4个"},
-            "multiSelect": {"type": "boolean", "description": "是否允许多选，默认false"}
-        }, "required": ["question", "options"]}
-    }},
-    {"type": "function", "function": {
-        "name": "remember", "description": "用户要求记住某个信息（偏好、事实、背景等），保存到长期记忆。用户说'记住'、'别忘了'、'帮我记一下'时调用",
-        "parameters": {"type": "object", "properties": {"fact": {"type": "string", "description": "要记住的内容"}}, "required": ["fact"]}
-    }},
-    {"type": "function", "function": {
-        "name": "forget", "description": "删除包含关键词的长期记忆。用户说'忘掉'、'删除记忆'、'不要记了'时调用",
-        "parameters": {"type": "object", "properties": {"keyword": {"type": "string", "description": "要删除的记忆关键词"}}, "required": ["keyword"]}
-    }},
-    {"type": "function", "function": {
-        "name": "consult_kb", "description": "查阅知识库中的专业主题，获取分析框架/指标解读/评分标准后再作答。可查阅: 投资原则, 指标解读, 因子评分解读, 基本面分析, 技术面分析, 市场环境分析。做基本面/技术面/市场分析前，或需要某指标定义/评分好坏标准时必须先查阅，不要凭记忆。",
-        "parameters": {"type": "object", "properties": {
-            "topic": {"type": "string", "description": "知识库主题名，如 基本面分析 / 技术面分析 / 市场环境分析 / 指标解读 / 因子评分解读 / 投资原则"}
-        }, "required": ["topic"]}
-    }},
-    {"type": "function", "function": {
-        "name": "web_search", "description": "联网搜索。凡涉及新闻、时事、最新动态、具体事件日期和细节——你无法从数据库回答的一切——必须先调用此工具再回复，禁止凭记忆编造",
-        "parameters": {"type": "object", "properties": {
-            "query": {"type": "string", "description": "搜索关键词"},
-            "count": {"type": "integer", "description": "返回条数，默认5，最多8"}
-        }, "required": ["query"]}
-    }},
-    {"type": "function", "function": {
-        "name": "get_fundamentals", "description": "[DEPRECATED] 获取单只【A股】基本面数据，已重定向到 get_factor_scores。港股/美股请勿调用，改用 get_stock_price + web_search。",
-        "parameters": {"type": "object", "properties": {
-            "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
-        }, "required": ["symbol"]}
-    }},
-    {"type": "function", "function": {
-        "name": "optimize_portfolio", "description": "均值-方差组合优化。给出当前持仓的建议权重分配（最大化夏普/最小方差/风险平价），以及与当前权重的对比。用户要求调仓建议时调用。",
-        "parameters": {"type": "object", "properties": {
-            "portfolio_id": {"type": "integer", "description": "组合ID"},
-            "max_weight": {"type": "number", "description": "单票最大权重，默认0.30"},
-            "mode": {"type": "string", "description": "优化模式: sharpe(默认), minvar, riskparity"}
-        }, "required": ["portfolio_id"]}
-    }},
-    {"type": "function", "function": {
-        "name": "get_global_indices", "description": "获取全球 20 个股市指数 + 4 个商品/汇率指标的最新行情(含 stockId，可用于加自选)。问全球/世界/大盘走势/市场概况，或用户想把某指数加入自选时调用。",
-        "parameters": {"type": "object", "properties": {}}
-    }},
-    {"type": "function", "function": {
-        "name": "get_world_news", "description": "获取今日全球财经/地缘要闻。问最新新闻、时事、今日大事时调用。",
-        "parameters": {"type": "object", "properties": {
-            "limit": {"type": "integer", "description": "返回条数，默认10，最多20"}
-        }}
-    }},
-    # D: Watchlist tools
-    {"type": "function", "function": {
-        "name": "get_watchlist", "description": "获取用户的股票自选列表，含最新价格和近一周涨跌",
-        "parameters": {"type": "object", "properties": {}}
-    }},
-    {"type": "function", "function": {
-        "name": "confirm_add_watchlist", "description": "【必须调用】添加股票或指数到自选列表并弹出确认按钮。用户说'加自选''关注''添加自选'时调用。个股先用search_stocks获取stockId；指数(上证/恒生/标普/纳指等)用 get_global_indices 获取其 stockId。股票和指数都支持加自选。调用成功后不要输出正文，等待用户在 UI 确认。",
-        "parameters": {"type": "object", "properties": {
-            "stockId": {"type": "integer", "description": "股票ID（从search_stocks获取）"},
-            "symbol": {"type": "string", "description": "股票代码，用于展示"},
-            "name": {"type": "string", "description": "股票名称，用于展示"}
-        }, "required": ["stockId"]}
-    }},
-    {"type": "function", "function": {
-        "name": "confirm_remove_watchlist", "description": "【必须调用】从自选列表移除股票并弹出确认按钮。用户说'删自选''取消关注''移除自选'时调用。先调用get_watchlist获取列表。调用成功后不要输出正文，等待用户在 UI 确认。",
-        "parameters": {"type": "object", "properties": {
-            "ids": {"type": "array", "items": {"type": "integer"}, "description": "要移除的watchlist项ID列表"}
-        }, "required": ["ids"]}
-    }},
-    # C: Transaction write tools — confirmation required
-    {"type": "function", "function": {
-        "name": "confirm_create_transaction", "description": "【必须调用】创建交易记录并弹出用户确认按钮。当用户要求买入/卖出/添加分红/转入转出资金时必须调用此工具。调用后会弹出 Accept/Refuse 按钮让用户在 UI 上点击确认。不要在文字中询问'确认吗'，调用成功后不要输出正文。type: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT。所有参数必须从对话中完整提取，缺失先反问。",
-        "parameters": {"type": "object", "properties": {
-            "stockId": {"type": "integer", "description": "股票ID（从search_stocks或持仓中查询）"},
-            "type": {"type": "string", "description": "交易类型: BUY|SELL|DIV|TRANSFER_IN|TRANSFER_OUT"},
-            "shares": {"type": "number", "description": "股数/分红金额/转入转出金额"},
-            "price": {"type": "number", "description": "每股价格。BUY/SELL必填，其他类型填0"},
-            "fee": {"type": "number", "description": "手续费，默认0"},
-            "tradeDate": {"type": "string", "description": "交易日期 YYYY-MM-DD，默认今天"},
-            "currency": {"type": "string", "description": "币种: CNY|HKD|USD"},
-            "note": {"type": "string", "description": "备注，可选"},
-            "amountPerShare": {"type": "number", "description": "每股分红，仅DIV类型需要"}
-        }, "required": ["stockId", "type", "shares", "price", "tradeDate", "currency"]}
-    }},
-    {"type": "function", "function": {
-        "name": "confirm_update_transaction", "description": "【必须调用】编辑交易记录并弹出确认按钮。用户要求修改交易时调用。先调用get_transactions查询现有记录获取id。调用成功后不要输出正文，等待用户在 UI 确认。",
-        "parameters": {"type": "object", "properties": {
-            "id": {"type": "integer", "description": "交易记录ID，从get_transactions获取"},
-            "stockId": {"type": "integer"}, "type": {"type": "string"},
-            "shares": {"type": "number"}, "price": {"type": "number"},
-            "fee": {"type": "number"}, "tradeDate": {"type": "string"},
-            "currency": {"type": "string"}, "note": {"type": "string"},
-            "amountPerShare": {"type": "number"}
-        }, "required": ["id"]}
-    }},
-    {"type": "function", "function": {
-        "name": "confirm_delete_transaction", "description": "【必须调用】删除交易记录并弹出确认按钮。用户要求删除交易时调用。先调用get_transactions查询现有记录获取id。调用成功后不要输出正文，等待用户在 UI 确认。",
-        "parameters": {"type": "object", "properties": {
-            "ids": {"type": "array", "items": {"type": "integer"}, "description": "要删除的交易ID列表"}
-        }, "required": ["ids"]}
-    }},
-    {"type": "function", "function": {
-        "name": "confirm_bulk_create", "description": "批量创建多笔交易。需用户确认后才执行。每笔交易的参数必须完整。调用成功后不要输出正文，等待用户在 UI 确认。",
-        "parameters": {"type": "object", "properties": {
-            "transactions": {"type": "array", "items": {"type": "object"}, "description": "交易对象列表，每项包含stockId/type/shares/price/fee/tradeDate/currency/note"}
-        }, "required": ["transactions"]}
-    }},
-    {"type": "function", "function": {
-        "name": "confirm_bulk_update", "description": "批量编辑多笔交易。需用户确认后才执行。调用成功后不要输出正文，等待用户在 UI 确认。",
-        "parameters": {"type": "object", "properties": {
-            "updates": {"type": "array", "items": {"type": "object"}, "description": "更新列表，每项须含id及要修改的字段"}
-        }, "required": ["updates"]}
-    }},
-    {"type": "function", "function": {
-        "name": "confirm_bulk_delete", "description": "批量删除多条交易。需用户确认后才执行。调用成功后不要输出正文，等待用户在 UI 确认。",
-        "parameters": {"type": "object", "properties": {
-            "ids": {"type": "array", "items": {"type": "integer"}, "description": "要删除的交易ID列表"}
-        }, "required": ["ids"]}
-    }},
-]
+TOOLS = _build_tools()
+
 
 TOOL_LABELS = {
     "get_portfolio": "读取持仓",
