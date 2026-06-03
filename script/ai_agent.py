@@ -11,6 +11,17 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
 KB_FILE = SCRIPT_DIR / "ai_knowledge_base.json"
+AGENT_SKILLS_DIR = SCRIPT_DIR / "agent_skills"
+STOCKSAGE_ENGINE_TIMEOUT_S = 80
+
+# Runtime behavior rules belong in the system prompt, not in consultable KB.
+# They are operational constraints for the agent loop rather than investment
+# knowledge, so they must be visible every turn without adding KB timeline noise.
+RUNTIME_EFFICIENCY_RULES = """【运行时效率规则（直接注入，不属于知识库主题）】
+- 符号免搜索：用户用中文名、常见代码或 DB 格式指定股票时，直接原样传给工具；resolve_symbol 内部完成匹配和格式转换。禁止自己拼 1./0. 前缀，也不要为解析符号先调 search_stocks。
+- 并行不排队：多个互相独立的只读操作必须在同一轮一次性并行调用。引擎并发执行，“每次只能调一个工具”是误解。
+- strategy_id 来源验证：run_backtest 的 strategy_id 必须来自刚保存的策略或 get_strategies 查询结果，禁止凭空编 ID。
+- 不预演不空转：发出工具调用后等真实结果再分析；证据齐了就给结论，证据不足就说明缺哪块数据、证据是否冲突、受何约束。"""
 
 # DashScope model routing: fast model for simple queries, configured model for deep analysis
 DASHSCOPE_FAST_MODEL = "qwen-plus-latest"
@@ -112,14 +123,30 @@ def _has_stock_like_text(text: str) -> bool:
     # Common Chinese stock-name shape: 2-8 CJK chars next to stock verbs.
     return bool(re.search(r"[\u4e00-\u9fff]{2,8}.*(股票|这只|这支|跌|涨|估值|财报|基本面|技术面|出什么问题|能买吗)", t))
 
-def _build_workflow_hint(messages: list) -> str:
-    """Inject a short, turn-specific playbook so the model does not rediscover
-    the workflow from scratch. This is intentionally advisory: tools still
-    validate inputs and return errors, but the first tool round becomes stable.
+def _load_agent_skill(name: str) -> str:
+    """Load a local agent skill playbook if present.
+
+    Skills are deliberately plain Markdown so workflows can evolve without
+    editing the provider/runtime loop. Missing skills are harmless because the
+    legacy inline workflow remains the fallback.
     """
+    safe_name = "".join(ch for ch in name if ch.isalnum() or ch in ("-", "_"))
+    if not safe_name:
+        return ""
+    path = AGENT_SKILLS_DIR / safe_name / "SKILL.md"
+    if not path.exists():
+        return ""
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+    return content[:6000]
+
+def _detect_agent_skills(messages: list) -> list:
+    """Return active skill names for the latest user turn."""
     text = _latest_user_text(messages)
     low = text.lower()
-    workflows = []
+    skills = []
 
     stock_like = _has_stock_like_text(text)
     stock_diagnosis_intent = any(k in text for k in (
@@ -128,7 +155,35 @@ def _build_workflow_hint(messages: list) -> str:
         "技术面", "估值", "能买吗", "能不能买", "该不该", "还能持有", "风险", "财报", "业绩"
     ))
     if stock_like and stock_diagnosis_intent:
-        workflows.append("""【当前工作流：个股诊断】
+        skills.append("stock-diagnosis")
+
+    if any(k in text for k in ("组合", "持仓", "仓位", "集中", "分散", "体检", "调仓", "再平衡", "风险暴露")):
+        skills.append("portfolio-review")
+
+    if any(k in text for k in ("买入", "卖出", "分红", "入金", "出金", "删", "删除交易", "修改交易", "编辑交易", "记录交易")) or any(k in low for k in ("buy", "sell", "dividend", "transaction")):
+        skills.append("transaction-recording")
+
+    if any(k in text for k in ("自选", "关注列表", "观察列表", "加入关注", "移出关注", "加关注")) or "watchlist" in low:
+        skills.append("watchlist-management")
+
+    if any(k in text for k in ("策略", "回测", "调参", "均线", "信号", "止损", "止盈")) or any(k in low for k in ("strategy", "backtest")):
+        skills.append("strategy-backtest")
+
+    if any(k in text for k in ("大盘", "市场", "行情", "全球", "美股", "港股", "汇率", "商品", "宏观", "新闻", "最新消息", "今天发生")):
+        skills.append("market-news")
+
+    return skills
+
+def _build_workflow_hint(messages: list) -> str:
+    """Inject a short, turn-specific playbook so the model does not rediscover
+    the workflow from scratch. This is intentionally advisory: tools still
+    validate inputs and return errors, but the first tool round becomes stable.
+    """
+    active_skills = _detect_agent_skills(messages)
+    workflows = []
+
+    if "stock-diagnosis" in active_skills:
+        workflows.append(_load_agent_skill("stock-diagnosis") or """【当前工作流：个股诊断】
 - 目标是诊断单只股票的状态、异动原因、基本面/技术面问题、风险和证伪条件；不要重新讨论工具顺序。
 - 第一轮并行取证：get_stock_price(symbol=用户原词, days=90)、get_market_regime；若用户问深入分析、买不买、还能不能持有、基本面/技术面综合、为什么跌/跌这么狠/大跌/暴跌/异动/出问题，则并行 get_stock_report(symbol=用户原词)。
 - 若问题含“最近/最新/消息/公告/利空/利好/异动/暴雷/出问题”等现实事件，再并行 web_search。
@@ -136,31 +191,31 @@ def _build_workflow_hint(messages: list) -> str:
 - 持仓画像只作为背景：除非用户问“要不要卖/仓位怎么办/组合影响”，不要让组合集中度、其他重仓股或该股持仓权重主导个股原因诊断。
 - 工具返回后按用户意图组织：异动诊断用“近期幅度与位置 → 公司/行业/市场原因 → 已证实/未证实 → 风险情景”；价值诊断用“正向证据 → 反向证据 → 估值/趋势 → 证伪条件”；除非名称歧义或工具报未找到，不要再查 search_stocks。""")
 
-    if any(k in text for k in ("组合", "持仓", "仓位", "集中", "分散", "体检", "调仓", "再平衡", "风险暴露")):
-        workflows.append("""【当前工作流：组合/持仓分析】
+    if "portfolio-review" in active_skills:
+        workflows.append(_load_agent_skill("portfolio-review") or """【当前工作流：组合/持仓分析】
 - 第一轮至少调用 get_portfolio；若用户问风险、集中度、分散、体检或调仓，同时并行 get_market_regime、compute_sector_breakdown。
 - 需要完整组合审计时再调用 get_portfolio_report；需要权重再分配时调用 optimize_portfolio；需要相关性时调用 compute_correlation。
 - 单一持仓 >30% 主动提示集中度风险，>50% 把它作为主风险。""")
 
-    if any(k in text for k in ("买入", "卖出", "分红", "入金", "出金", "删", "删除交易", "修改交易", "编辑交易", "记录交易")) or any(k in low for k in ("buy", "sell", "dividend", "transaction")):
-        workflows.append("""【当前工作流：交易记录变更】
+    if "transaction-recording" in active_skills:
+        workflows.append(_load_agent_skill("transaction-recording") or """【当前工作流：交易记录变更】
 - 用户要新增/修改/删除交易、入金、出金或分红时，只调用对应 confirm_create_transaction / confirm_update_transaction / confirm_delete_transaction。
 - 不用文字代替确认卡片；卡片发出后本轮不要复述卡片内容。""")
 
-    if any(k in text for k in ("自选", "关注列表", "观察列表", "加入关注", "移出关注", "加关注")) or "watchlist" in low:
-        workflows.append("""【当前工作流：自选列表】
+    if "watchlist-management" in active_skills:
+        workflows.append(_load_agent_skill("watchlist-management") or """【当前工作流：自选列表】
 - 查看自选用 get_watchlist。
 - 加入自选：名称明确时可先 search_stocks 取 stockId，再 confirm_watchlist；若 search_stocks 返回多市场同名，必须 ask_user。
 - 移除自选：先 get_watchlist，再 confirm_watchlist(action='remove')。""")
 
-    if any(k in text for k in ("策略", "回测", "调参", "均线", "信号", "止损", "止盈")) or any(k in low for k in ("strategy", "backtest")):
-        workflows.append("""【当前工作流：策略/回测】
+    if "strategy-backtest" in active_skills:
+        workflows.append(_load_agent_skill("strategy-backtest") or """【当前工作流：策略/回测】
 - 写策略/生成策略：先 consult_kb('策略引擎')，再调用 generate_strategy，第一轮不输出正文。
 - 跑回测：必须使用真实 strategy_id；来源是刚保存的策略或 get_strategies 查询结果，禁止凭空编 ID。
 - 分析回测结果：用 analyze_backtest；优化建议用 suggest_strategy_optimizations。""")
 
-    if any(k in text for k in ("大盘", "市场", "行情", "全球", "美股", "港股", "汇率", "商品", "宏观", "新闻", "最新消息", "今天发生")):
-        workflows.append("""【当前工作流：市场/新闻】
+    if "market-news" in active_skills:
+        workflows.append(_load_agent_skill("market-news") or """【当前工作流：市场/新闻】
 - A股市场状态调用 get_market_regime；全球市场和财经要闻调用 get_world_market。
 - 涉及最新新闻、公告、事件日期或数据库不能保证覆盖的信息，调用 web_search 后再回答。
 - CAUTION/BEAR/CRISIS 下禁止主动建议加仓、加杠杆或追高。""")
@@ -207,6 +262,14 @@ def load_knowledge_base() -> dict:
 def build_system_prompt(kb: dict) -> str:
     safety = kb.get("safety_net", {})
     safety_text = "\n".join(f"- **{k}**: {v}" for k, v in safety.items())
+    policy = kb.get("knowledge_policy", {})
+    policy_text = ""
+    if policy:
+        policy_text = (
+            f"\n知识库定位：{policy.get('role', 'judgment_standard_library')}。\n"
+            f"耦合规则：{policy.get('coupling', '')}\n"
+            f"调用规则：{policy.get('consult_kb_policy', '')}\n"
+        )
     # KB index: auto-generated from articles so the catalog never drifts.
     articles = kb.get("articles", {})
     kb_index = "\n".join(f"- {topic}：{a.get('summary', '')}" for topic, a in articles.items())
@@ -221,14 +284,17 @@ def build_system_prompt(kb: dict) -> str:
 【安全网（最高优先级，违反任何一条都是错误回答）】
 {safety_text}
 
-【知识库（你的外脑——遇到不确定就查，不要硬想）】
+【知识库（判断标准库——遇到标准不确定才查，不要把它当流程调度器）】
 专业分析框架、指标合理区间、估值方法、风险与仓位、回测解读、行业特性、宏观、A股/港美股规则、常见场景应对、行为偏误都已收录在知识库。consult_kb(topic) 是低成本、高确定性的动作，但不是每次分析的仪式化前置：
 - 当你对某个指标'算高还是低'拿不准、对某种分析方法或某类场景的标准应对感到模糊、或开始在思考链里反复推演同一件事时——第一反应是 consult_kb 查对应主题，而不是凭记忆硬答或空转。
 - 过度思考几乎总是'缺知识'或'怕出错'的表现：缺知识就查库，怕出错就把不确定性如实说出来（缺哪块数据/证据是否冲突/受何约束）。证据和框架到手后，果断给结论，不要犹豫和自我质疑。
 - 查阅知识库不丢人，凭记忆编造区间和框架才是错误。可查阅的主题：
+{policy_text}
 {kb_index}
 
 【工具调用规则】
+{RUNTIME_EFFICIENCY_RULES}
+
 - ⚠ 分析铁律：用户问题命中【当前工作流】时，按工作流第一轮并行取证；没有命中工作流时，先取最直接的数据证据。只有当你拿不准分析框架、指标合理区间、报告评分标准或策略接口时，才 consult_kb 查对应主题。禁止把查 KB 当作固定第一步，也禁止跳过真实数据直接分析。
 - ⚠ 数据铁律：凡涉及具体数据必须先调工具拿真实数据再回答，禁凭记忆编造数字。不确定用什么工具时先 search_stocks / get_portfolio。
 - ⚠ 执行铁律（防过度思考，最高优先级）：参数已明确就直接开火，不在思考链里反复确认格式、合规或调用顺序——这些工具内层已处理。具体：
@@ -469,7 +535,7 @@ def tool_get_factor_scores(symbol: str) -> dict:
         return {"error": f"多因子引擎仅支持A股，{symbol} 非A股标的。请改用 get_stock_price 取行情、web_search 查基本面与新闻后自行分析。",
                 "symbol": symbol, "unsupported_market": True}
 
-    data = _engine("factor_breakdown", {"symbol": symbol}, 80)
+    data = _engine("factor_breakdown", {"symbol": symbol}, STOCKSAGE_ENGINE_TIMEOUT_S)
     if not isinstance(data, dict) or data.get("error"):
         return {"error": (data or {}).get("error", "因子引擎无响应"), "symbol": symbol}
     factors = data.get("factors", [])
@@ -1278,8 +1344,9 @@ def tool_consult_kb(topic: str) -> dict:
     print(f"[KB]\t{topic}", flush=True)
     return {
         "topic": topic,
+        "applies_to_skills": article.get("applies_to_skills", []),
         "content": article.get("content", ""),
-        "instruction": "已查阅知识库。请严格按上述内容执行分析/解读，先并行调用所需数据工具，再按框架格式作答。"
+        "instruction": "已查阅知识库。请把上述内容作为判断标准或格式约束使用；不要因为查了知识库就重启工作流，也不要把知识库内容当作替代真实数据的证据。"
     }
 
 def tool_web_search(query: str, count: int = 5) -> dict:
@@ -1344,7 +1411,7 @@ def tool_get_portfolio_analysis(portfolio_id: int) -> dict:
                 for r in rows]
 
     # Call engine portfolio_analysis (resident HTTP, subprocess fallback)
-    data = _engine("portfolio_analysis", {"holdings": _json.dumps(holdings)}, 110)
+    data = _engine("portfolio_analysis", {"holdings": _json.dumps(holdings)}, STOCKSAGE_ENGINE_TIMEOUT_S)
     if not isinstance(data, dict) or data.get("error"):
         return {"error": (data or {}).get("error", "因子引擎无响应")}
     data["_card_type"] = "portfolio_analysis"
@@ -1365,7 +1432,7 @@ def tool_get_portfolio_analysis(portfolio_id: int) -> dict:
 def tool_get_market_regime() -> dict:
     """获取当前A股市场环境：牛市/熊市/正常/谨慎/危机，含评分(0-10)。
     数据来自 StockSage 市场环境检测引擎（基于CSI300均线和动量）。"""
-    data = _engine("regime_status", {}, 35)
+    data = _engine("regime_status", {}, STOCKSAGE_ENGINE_TIMEOUT_S)
     if not isinstance(data, dict) or data.get("error"):
         return {"error": (data or {}).get("error", "引擎无响应")}
     regime = data.get("regime", {})
@@ -1438,7 +1505,7 @@ def tool_get_daily_picks(strategy: str = "main", limit: int = 5) -> dict:
     if cached:
         return cached
     # 2) Cache miss: live scan (slow), then persist so the rest of the day is instant.
-    data = _engine("scan_universe", {"type": strategy}, 80)
+    data = _engine("scan_universe", {"type": strategy}, STOCKSAGE_ENGINE_TIMEOUT_S)
     if not isinstance(data, dict) or data.get("error"):
         return {"error": (data or {}).get("error", "扫描引擎无响应，且无缓存可用。请稍后再试。")}
     picks = data.get("picks", [])[:limit]
@@ -1673,7 +1740,7 @@ def tool_get_stock_report(symbol: str) -> dict:
             "symbol": symbol,
             "unsupported_market": True,
         }
-    report = _engine("stocksage_report", {"report_type": "stock_report", "symbol": db_sym}, 110)
+    report = _engine("stocksage_report", {"report_type": "stock_report", "symbol": db_sym}, STOCKSAGE_ENGINE_TIMEOUT_S)
     return _report_llm_result(report)
 
 
@@ -1685,7 +1752,7 @@ def tool_get_portfolio_report(portfolio_id: int) -> dict:
     report = _engine(
         "stocksage_report",
         {"report_type": "portfolio_report", "holdings": json.dumps(holdings, ensure_ascii=False)},
-        140,
+        STOCKSAGE_ENGINE_TIMEOUT_S,
     )
     return _report_llm_result(report)
 
@@ -1695,7 +1762,7 @@ def tool_get_daily_picks_report(strategy: str = "main", limit: int = 5) -> dict:
     report = _engine(
         "stocksage_report",
         {"report_type": "daily_picks_report", "scan_type": strategy},
-        120,
+        STOCKSAGE_ENGINE_TIMEOUT_S,
     )
     if isinstance(report, dict) and isinstance(report.get("llm_context"), dict):
         picks = report["llm_context"].get("top_picks")
@@ -2397,10 +2464,10 @@ def _confirm_watchlist(args: dict) -> dict:
 # unlisted defaults to 25s — fast enough that an unresponsive tool can't stall
 # the entire agent loop, but room for typical DB queries.
 _TOOL_TIMEOUTS = {
-    "get_stock_report": 30,
-    "get_portfolio_report": 30,
-    "get_daily_picks_report": 30,
-    "get_market_regime": 45,         # subprocess 35s
+    "get_stock_report": STOCKSAGE_ENGINE_TIMEOUT_S,
+    "get_portfolio_report": STOCKSAGE_ENGINE_TIMEOUT_S,
+    "get_daily_picks_report": STOCKSAGE_ENGINE_TIMEOUT_S,
+    "get_market_regime": STOCKSAGE_ENGINE_TIMEOUT_S,
     "compute_correlation": 45,
     "benchmark_compare": 45,
     "optimize_portfolio": 120,       # subprocess 110s
@@ -2605,19 +2672,165 @@ _STRATEGY_INTENT = [
     "backtest", "strategy", "optimi",
 ]
 
+_SKILL_TOOLSETS = {
+    "stock-diagnosis": {
+        "get_stock_price", "get_market_regime", "get_stock_report",
+        "web_search", "search_stocks", "ask_user", "consult_kb",
+    },
+    "portfolio-review": {
+        "get_portfolio", "get_market_regime", "compute_sector_breakdown",
+        "compute_correlation", "benchmark_compare", "get_pnl_history",
+        "get_transactions", "get_portfolio_report", "optimize_portfolio",
+        "get_stock_report", "web_search", "consult_kb",
+    },
+    "transaction-recording": {
+        "search_stocks", "ask_user", "get_transactions", "get_portfolio",
+        "confirm_create_transaction", "confirm_update_transaction",
+        "confirm_delete_transaction",
+    },
+    "watchlist-management": {
+        "get_watchlist", "search_stocks", "ask_user", "confirm_watchlist",
+    },
+    "strategy-backtest": {
+        "consult_kb", "generate_strategy", "run_backtest", "get_strategies",
+        "get_backtests", "analyze_backtest", "suggest_strategy_optimizations",
+        "get_portfolio", "search_stocks", "ask_user",
+    },
+    "market-news": {
+        "get_market_regime", "get_world_market", "web_search",
+        "get_stock_price", "search_stocks", "consult_kb",
+    },
+}
+
 def _select_tools(messages: list, expose_web: bool) -> list:
     """Return the OpenAI-format tool subset appropriate to the latest message."""
     all_names = {t["function"]["name"] for t in TOOLS}
-    keep = all_names - _WRITE_CONFIRM_TOOLS - _STRATEGY_WRITE_TOOLS
     last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     text = str(last_user.get("content", "")).lower() if last_user else ""
-    if any(k.lower() in text for k in _WRITE_INTENT):
-        keep |= _WRITE_CONFIRM_TOOLS
-    if any(k.lower() in text for k in _STRATEGY_INTENT):
-        keep |= _STRATEGY_WRITE_TOOLS
+    active_skills = _detect_agent_skills(messages)
+
+    if active_skills:
+        keep = set()
+        for skill in active_skills:
+            keep |= _SKILL_TOOLSETS.get(skill, set())
+        keep &= all_names
+    else:
+        keep = all_names - _WRITE_CONFIRM_TOOLS - _STRATEGY_WRITE_TOOLS
+        if any(k.lower() in text for k in _WRITE_INTENT):
+            keep |= _WRITE_CONFIRM_TOOLS
+        if any(k.lower() in text for k in _STRATEGY_INTENT):
+            keep |= _STRATEGY_WRITE_TOOLS
     if not expose_web:
         keep.discard("web_search")
     return [t for t in TOOLS if t["function"]["name"] in keep]
+
+
+def _extract_stock_symbol_for_dag(text: str) -> str:
+    """Conservative symbol extractor for deterministic read-only workflows."""
+    import re
+    t = (text or "").strip()
+    m = re.search(r"(?<!\d)\d{6}(?:\.(?:SH|SZ|BJ))?(?!\d)", t, re.I)
+    if m:
+        return m.group(0)
+    cleaned = re.sub(r"^[\s，。！？,.!?]*(请|麻烦)?(帮我)?(分析一下|分析|看看|看一下|研究一下|诊断一下)?", "", t)
+    # Capture the first plausible CJK stock name before a stock-diagnosis cue.
+    m = re.match(
+        r"([\u4e00-\u9fff]{2,8}?)(?:这只|这支|股票|为什么|为啥|怎么|基本面|技术面|估值|跌|涨|暴跌|大跌|出什么|能买吗|能不能|风险|财报|业绩|$)",
+        cleaned,
+    )
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _stock_dag_needs_report(text: str) -> bool:
+    return any(k in text for k in (
+        "深入", "深度", "完整", "专业", "证据链", "风险拆解", "买不买", "能买吗", "能不能买",
+        "还能持有", "基本面", "技术面", "为什么跌", "跌这么狠", "大跌", "暴跌", "异动", "出什么问题",
+        "分析", "怎么看", "怎么样", "财报", "业绩",
+    ))
+
+
+def _compact_dag_result(name: str, result_json: str) -> dict:
+    try:
+        data = json.loads(result_json)
+    except Exception:
+        return {"raw": str(result_json)[:800]}
+    if not isinstance(data, dict):
+        return {"value": data}
+    if name == "get_stock_report":
+        md = data.get("report_markdown", "")
+        compact = {k: v for k, v in data.items() if k != "report_markdown"}
+        if md:
+            compact["report_markdown_excerpt"] = md[:3500]
+            compact["report_markdown_truncated"] = len(md) > 3500
+        return compact
+    if name == "get_stock_price":
+        points = data.get("points")
+        if isinstance(points, list) and len(points) > 20:
+            return {
+                **{k: v for k, v in data.items() if k != "points"},
+                "recentPoints": points[-20:],
+                "trimmed": True,
+            }
+    if name == "web_search":
+        results = data.get("results")
+        if isinstance(results, list) and len(results) > 5:
+            return {**data, "results": results[:5], "trimmed": True}
+    return data
+
+
+def _run_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_web: bool) -> dict:
+    """Run deterministic read-only workflow steps before the model when safe.
+
+    First version intentionally covers only stock-diagnosis. If symbol extraction
+    is uncertain, it returns no-op and the normal model/tool loop handles it.
+    """
+    active = _detect_agent_skills(messages)
+    if "stock-diagnosis" not in active:
+        return {}
+    text = _latest_user_text(messages)
+    symbol = _extract_stock_symbol_for_dag(text)
+    if not symbol:
+        return {}
+
+    tasks = [
+        ("get_stock_price", {"symbol": symbol, "days": 90}),
+        ("get_market_regime", {}),
+    ]
+    if _stock_dag_needs_report(text):
+        tasks.append(("get_stock_report", {"symbol": symbol}))
+    if expose_web or _should_use_web_search(messages):
+        tasks.append(("web_search", {"query": f"{symbol} {text}", "count": 5}))
+
+    results = {}
+    successful_tools = set()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+        futs = {}
+        for i, (name, args) in enumerate(tasks, 1):
+            call_id = f"dag_{i}_{name}"
+            futs[executor.submit(execute_tool, name, args, portfolio_id, user_id, call_id)] = (name, args, call_id)
+        for fut, (name, args, call_id) in futs.items():
+            try:
+                result_json = fut.result(timeout=_tool_timeout(name))
+            except concurrent.futures.TimeoutError:
+                print(f"[TOOL_FAIL] {call_id}\t{name}\t工作流DAG预取超时（>{_tool_timeout(name)}s）", flush=True)
+                result_json = json.dumps({"error": "工作流DAG预取超时"}, ensure_ascii=False)
+            compact = _compact_dag_result(name, result_json)
+            results[name] = {"args": args, "result": compact}
+            if not (isinstance(compact, dict) and compact.get("error")):
+                successful_tools.add(name)
+
+    context = {
+        "workflow": "stock-diagnosis",
+        "symbol": symbol,
+        "instruction": "以下是工作流DAG已预取的第一轮证据。回答时优先使用这些结果；除非结果报错或问题需要额外证据，不要重复调用已成功完成的同名工具。",
+        "results": results,
+    }
+    return {
+        "system_message": "【工作流DAG预取结果】\n" + json.dumps(context, ensure_ascii=False),
+        "successful_tools": successful_tools,
+    }
 
 
 # ── Cross-turn tool-result context (#1) ──────────────────────────────────
@@ -2642,7 +2855,7 @@ def _emit_context(gathered: dict) -> None:
         pass
 
 
-def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0, web_search: bool = False):
+def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0, web_search: bool = False, prefetched_tools: set = None):
     from openai import OpenAI
     import httpx
     kwargs = {"api_key": api_key}
@@ -2693,6 +2906,8 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
     effective_tools = _select_tools(messages, expose_web)
+    if prefetched_tools:
+        effective_tools = [t for t in effective_tools if t["function"]["name"] not in prefetched_tools]
 
     def _stream(msgs, model_override=None):
         m = model_override or effective_model
@@ -2912,7 +3127,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     print("\n[DONE]", flush=True)
 
 
-def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id: int = 0, user_id: int = 0, deep_think: bool = False, web_search: bool = False):
+def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id: int = 0, user_id: int = 0, deep_think: bool = False, web_search: bool = False, prefetched_tools: set = None):
     import anthropic, httpx
     client_kwargs = {"api_key": api_key}
     proxy_url = os.getenv("PROXY_URL", get_proxy())
@@ -2934,6 +3149,8 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
     # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
     src_tools = _select_tools(messages, expose_web)
+    if prefetched_tools:
+        src_tools = [t for t in src_tools if t["function"]["name"] not in prefetched_tools]
 
     # Convert OpenAI tool format → Anthropic format
     anthropic_tools = [
@@ -3160,7 +3377,7 @@ def main():
         #    of paying the ~90s cold per-stock fetch.
         for strat in ("main", "golden_cross", "hot", "chip"):
             try:
-                data = _engine("scan_universe", {"type": strat}, 120)
+                data = _engine("scan_universe", {"type": strat}, STOCKSAGE_ENGINE_TIMEOUT_S)
                 if isinstance(data, dict) and data.get("picks"):
                     _persist_picks(strat, data)
                     print(f"[populate-picks] {strat}: {len(data['picks'])} 只已缓存", flush=True)
@@ -3178,7 +3395,7 @@ def main():
             warmed = 0
             for sym in symbols:
                 try:
-                    r = _engine("factor_breakdown", {"symbol": sym}, 130)
+                    r = _engine("factor_breakdown", {"symbol": sym}, STOCKSAGE_ENGINE_TIMEOUT_S)
                     if isinstance(r, dict) and r.get("factors"):
                         warmed += 1
                 except Exception:
@@ -3214,13 +3431,18 @@ def main():
     workflow_hint = _build_workflow_hint(messages)
     if workflow_hint:
         full_messages.append({"role": "system", "content": workflow_hint})
+    dag_prefetch = _run_workflow_dag(messages, args.portfolio_id, args.user_id, args.web_search)
+    prefetched_tools = set()
+    if dag_prefetch.get("system_message"):
+        full_messages.append({"role": "system", "content": dag_prefetch["system_message"]})
+        prefetched_tools = set(dag_prefetch.get("successful_tools") or [])
     full_messages += messages
 
     try:
         if args.provider == "anthropic":
-            call_anthropic_stream(args.api_key, args.model, full_messages, args.portfolio_id, args.user_id, args.deep_think, args.web_search)
+            call_anthropic_stream(args.api_key, args.model, full_messages, args.portfolio_id, args.user_id, args.deep_think, args.web_search, prefetched_tools)
         else:
-            call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think, args.user_id, args.web_search)
+            call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think, args.user_id, args.web_search, prefetched_tools)
     except Exception as e:
         msg = str(e)
         if "401" in msg or "Unauthorized" in msg or "Authentication" in msg:

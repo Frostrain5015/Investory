@@ -5,9 +5,11 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -30,6 +32,7 @@ public class StocksageAlphaExecutor {
 
     private final String pythonExecutable;
     private final ObjectMapper json = new ObjectMapper();
+    private static final int DEFAULT_TIMEOUT_SECONDS = 80;
 
     /** 进度行正则，与 QuantApiController 一致 */
     private static final Pattern PROGRESS_RE = Pattern.compile(
@@ -78,7 +81,7 @@ public class StocksageAlphaExecutor {
      * @throws IOException 脚本未找到或进程启动失败
      */
     public Map<String, Object> execute(String... args) throws IOException, InterruptedException {
-        return executeWithTimeout(5, TimeUnit.MINUTES, args);
+        return executeWithTimeout(DEFAULT_TIMEOUT_SECONDS, TimeUnit.SECONDS, args);
     }
 
     /**
@@ -105,11 +108,23 @@ public class StocksageAlphaExecutor {
         pb.redirectErrorStream(true);
 
         Process p = pb.start();
-        String output = new String(p.getInputStream().readAllBytes(), "UTF-8");
+        CompletableFuture<String> outputFuture = CompletableFuture.supplyAsync(() -> {
+            try {
+                return new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                return "";
+            }
+        });
         boolean finished = p.waitFor(timeout, unit);
         if (!finished) {
             p.destroyForcibly();
             return Map.of("error", "StocksageAlpha 执行超时");
+        }
+        String output;
+        try {
+            output = outputFuture.get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            output = "";
         }
 
         if (p.exitValue() == 0 && !output.isBlank()) {
