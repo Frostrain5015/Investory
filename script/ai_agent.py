@@ -172,6 +172,13 @@ def build_system_prompt(kb: dict) -> str:
 
 使用规则：收到匹配的触发词后，先 use_skill 激活框架，再按框架步骤调用工具获取数据。框架输出格式已预设，按格式回答即可。
 
+【多因子评分解读】
+get_factor_scores 仅支持A股，返回综合分(0-100)与各维度得分。读分标准：
+- 综合分：>65偏多机会，50-65中性，35-50偏弱，<35明显偏空。
+- 维度得分率(pct=得分/满分)：>70强，40-70中等，<40弱。价值高=便宜，成长高=增速好，质量高=ROE/现金流/负债健康，动量高=趋势强。
+- sell_score 是该因子看空强度，与买入分独立；买入分与卖出分都高=信号矛盾，需谨慎。
+- 港股/美股/指数没有因子数据：直接用 get_stock_price 取行情 + web_search 查基本面与新闻，自行分析，不要调 get_factor_scores。
+
 【工具调用规则】
 - ⚠ 数据铁律（最高优先级，覆盖所有数据类问题）：凡涉及任何具体数据——个股行情/评分/基本面、持仓、盈亏、交易、回测、市场环境、自选、新闻——必须先调用对应工具拿真实数据再回答。持仓画像和长期记忆只作背景参考，严禁据此直接给出价格、涨跌、评分、权重等数字结论。宁可多调一次工具，也不要凭记忆或画像编造数字。不确定该用哪个工具时，先 search_stocks / get_portfolio 起步。
 - ⚠ 策略生成铁律：用户要求写策略/生成策略/构建策略/设计策略时，第一轮对话必须且只能调用 generate_strategy 工具，不得输出任何文字。错误示范：先说"好的我来生成"再调用工具。正确示范：直接调用工具，参数包含完整Python代码。工具调用成功后也不得说话——前端会自动展示策略卡片。
@@ -287,16 +294,51 @@ def tool_get_stock_metrics(symbol: str) -> dict:
     return tool_get_factor_scores(symbol)
 
 
+def _is_a_share(symbol: str) -> bool:
+    """A股识别：DB格式 1.xxxxxx/0.xxxxxx、裸6位码、或 .SH/.SZ/.BJ 后缀。
+    港股(.HK)、美股(.US)、指数(.IDX)等非A股返回 False。"""
+    s = (symbol or "").strip().upper()
+    if not s:
+        return False
+    if s.endswith(".HK") or s.endswith(".US") or s.endswith(".IDX") or s.endswith(".CMD") or s.endswith(".CCY"):
+        return False
+    if s.endswith(".SH") or s.endswith(".SZ") or s.endswith(".BJ"):
+        return True
+    import re as _re
+    # DB format: 1.600519 / 0.300750  (1.=沪 0.=深)
+    if _re.match(r"^[01]\.\d{6}$", s):
+        return True
+    # bare 6-digit A-share code
+    if _re.match(r"^\d{6}$", s):
+        return True
+    return False
+
+
+# Interpretation guide returned with every factor result so the model knows
+# what counts as good/bad without guessing.
+_FACTOR_GUIDE = {
+    "total_score": "综合分0-100：>65偏多机会，50-65中性，35-50偏弱，<35明显偏空。",
+    "dimension_pct": "各维度得分率(pct=score/max)：>70强，40-70中等，<40弱。",
+    "core": "价值高=估值便宜；成长高=营收利润增速好；质量高=ROE/现金流/负债健康；动量高=近期价格趋势强。",
+    "sell_score": "sell_score是该因子的看空强度(同样越高越偏空)，与买入分独立。两者都高=信号矛盾需谨慎。",
+}
+
+
 def tool_get_factor_scores(symbol: str) -> dict:
-    """获取股票的多因子评分：综合分 + 各维度（价值/成长/动量/质量/技术等）得分。
-    数据来自 StockSage 51因子引擎，比旧的 Beta/波动率更全面。
-    调用 bridge.py score_stocks 获取实时评分。"""
+    """获取A股的多因子评分：综合分 + 各维度(价值/成长/动量/质量/技术等)详细得分。
+    仅支持A股。港股/美股/指数请勿调用此工具——改用 get_stock_price + web_search 分析。"""
     import subprocess, json as _json, os
+    # Guard: A-share only. The factor engine has no fundamental/price data for
+    # overseas markets, so it would return garbage. Refuse early.
+    if not _is_a_share(symbol):
+        return {"error": f"多因子引擎仅支持A股，{symbol} 非A股标的。请改用 get_stock_price 取行情、web_search 查基本面与新闻后自行分析。",
+                "symbol": symbol, "unsupported_market": True}
+
     bridge = os.path.join(SCRIPT_DIR, "..", "backend", "src", "main", "python", "stocksage_alpha", "bridge.py")
     if not os.path.exists(bridge):
         bridge = "/opt/investory/stocksage_alpha/bridge.py"
     if not os.path.exists(bridge):
-        return {"error": "因子引擎未找到", "scores": {}}
+        return {"error": "因子引擎未找到"}
 
     try:
         result = subprocess.run(
@@ -308,22 +350,60 @@ def tool_get_factor_scores(symbol: str) -> dict:
                 if "error" in data:
                     return {"error": data["error"], "symbol": symbol}
                 factors = data.get("factors", [])
-                # Summarize by group
+                total_score = data.get("total_score", 0)
+                # 0-score-with-empty-factors = research() errored internally.
+                if not factors:
+                    return {"error": f"因子引擎未返回有效评分（{symbol} 数据获取失败）", "symbol": symbol}
+
+                # Core 4 dimensions (each max 25) — the headline fundamentals
+                CORE = ("value", "growth", "momentum", "quality")
+                CORE_ZH = {"value": "价值", "growth": "成长", "momentum": "动量", "quality": "质量"}
+                core = {}
+                by_name = {f["name"]: f for f in factors}
+                for k in CORE:
+                    f = by_name.get(k)
+                    if f:
+                        core[CORE_ZH[k]] = {"score": f["score"], "max": f["max"], "pct": f.get("pct")}
+
+                # Group every factor by display group with summed score/max
                 groups = {}
                 for f in factors:
-                    g = f.get("group", "other")
-                    if g not in groups:
-                        groups[g] = {"buy_score": 0, "count": 0}
-                    groups[g]["buy_score"] += f.get("buy_score", 0)
-                    groups[g]["count"] += 1
+                    g = f.get("group", "其他")
+                    gg = groups.setdefault(g, {"score": 0.0, "max": 0.0, "count": 0})
+                    gg["score"] += f.get("score", 0) or 0
+                    gg["max"] += f.get("max", 0) or 0
+                    gg["count"] += 1
+                group_scores = {g: {"score": round(v["score"], 1), "max": round(v["max"], 1),
+                                    "pct": round(v["score"] / v["max"] * 100, 0) if v["max"] > 0 else None}
+                                for g, v in groups.items()}
+
+                # Strongest bullish (high pct) and bearish (high sell_score) signals
+                scored = [f for f in factors if f.get("pct") is not None]
+                top_bullish = sorted(scored, key=lambda f: f["pct"], reverse=True)[:6]
+                top_bearish = sorted([f for f in factors if (f.get("sell_score") or 0) > 0],
+                                     key=lambda f: f["sell_score"], reverse=True)[:6]
+
+                def _slim(f):
+                    return {"name": f["name"], "group": f.get("group"), "score": f["score"],
+                            "max": f["max"], "pct": f.get("pct"), "sell_score": f.get("sell_score"),
+                            "signal": f.get("signal", "")}
+
+                rating = ("偏多机会" if total_score > 65 else "中性" if total_score >= 50
+                          else "偏弱" if total_score >= 35 else "明显偏空")
                 return {
                     "symbol": symbol,
-                    "total_score": data.get("total_score", 0),
-                    "factor_groups": {g: round(v["buy_score"], 1) for g, v in groups.items()},
+                    "total_score": total_score,
+                    "rating": rating,
+                    "core_dimensions": core,
+                    "group_scores": group_scores,
+                    "top_bullish": [_slim(f) for f in top_bullish],
+                    "top_bearish": [_slim(f) for f in top_bearish],
                     "factor_count": len(factors),
-                    "factors": factors[:10],  # top 10 factors
+                    "guide": _FACTOR_GUIDE,
                 }
         return {"error": f"因子引擎无响应 (exit={result.returncode})", "symbol": symbol}
+    except subprocess.TimeoutExpired:
+        return {"error": f"因子分析超时（{symbol}）", "symbol": symbol}
     except Exception as e:
         return {"error": f"因子分析失败: {str(e)[:200]}", "symbol": symbol}
 
@@ -1148,19 +1228,20 @@ def tool_get_global_indices() -> dict:
     results = []
     for symbol, name, country in _GLOBAL_INDICES:
         cur.execute("""
-            SELECT sp.close, sp.trade_date
+            SELECT s.id, sp.close, sp.trade_date
             FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id
             WHERE s.symbol = %s ORDER BY sp.trade_date DESC LIMIT 2
         """, (symbol,))
         rows = cur.fetchall()
         if len(rows) >= 2:
-            price = float(rows[0][0]); prev = float(rows[1][0])
+            price = float(rows[0][1]); prev = float(rows[1][1])
             chg = price - prev; chg_pct = (chg / prev) * 100 if prev else 0
-            results.append({"name": name, "country": country,
+            # Include stockId + symbol so the model can add the index to watchlist.
+            results.append({"stockId": rows[0][0], "symbol": symbol, "name": name, "country": country,
                 "price": round(price, 2), "change": round(chg, 2),
                 "changePct": round(chg_pct, 2), "date": str(rows[0][1])})
     cur.close(); conn.close()
-    return {"indices": results, "note": f"共{len(results)}个指数"}
+    return {"indices": results, "note": f"共{len(results)}个指数。指数可加自选：用其 stockId 调 confirm_add_watchlist。"}
 
 def tool_get_world_news(limit: int = 10) -> dict:
     conn = get_db_conn()
@@ -1184,7 +1265,7 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}, "required": []}
     }},
     {"type": "function", "function": {
-        "name": "get_factor_scores", "description": "获取股票的多因子综合评分和各维度得分（价值/成长/动量/质量/技术等方向）。用户问'分析一下XX股票''XX股票怎么样'时作为首选工具。",
+        "name": "get_factor_scores", "description": "获取【A股】的多因子综合评分和各维度得分（价值/成长/动量/质量/技术/资金/事件/情绪/风控）。返回综合分(0-100)、四大核心维度得分率、分组得分、最强多空信号、以及评分解读指南。用户问'分析一下XX股票''XX股票怎么样'时作为A股首选工具。⚠仅支持A股——港股(.HK)/美股(.US)/指数(.IDX)不要调用此工具，改用 get_stock_price + web_search。",
         "parameters": {"type": "object", "properties": {
             "symbol": {"type": "string", "description": "股票代码，如 600519.SH 或 600519"}
         }, "required": ["symbol"]}
@@ -1314,7 +1395,7 @@ TOOLS = [
         }, "required": ["query"]}
     }},
     {"type": "function", "function": {
-        "name": "get_fundamentals", "description": "[DEPRECATED] 获取单只股票的基本面数据。建议优先使用 get_factor_scores 获取更全面的多因子分析。",
+        "name": "get_fundamentals", "description": "[DEPRECATED] 获取单只【A股】基本面数据，已重定向到 get_factor_scores。港股/美股请勿调用，改用 get_stock_price + web_search。",
         "parameters": {"type": "object", "properties": {
             "symbol": {"type": "string", "description": "DB格式symbol，例如1.600519"}
         }, "required": ["symbol"]}
@@ -1328,7 +1409,7 @@ TOOLS = [
         }, "required": ["portfolio_id"]}
     }},
     {"type": "function", "function": {
-        "name": "get_global_indices", "description": "获取全球 20 个股市指数 + 4 个商品/汇率指标的最新行情。问全球/世界/大盘走势/市场概况时调用。",
+        "name": "get_global_indices", "description": "获取全球 20 个股市指数 + 4 个商品/汇率指标的最新行情(含 stockId，可用于加自选)。问全球/世界/大盘走势/市场概况，或用户想把某指数加入自选时调用。",
         "parameters": {"type": "object", "properties": {}}
     }},
     {"type": "function", "function": {
@@ -1343,7 +1424,7 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}}
     }},
     {"type": "function", "function": {
-        "name": "confirm_add_watchlist", "description": "【必须调用】添加股票到自选列表并弹出确认按钮。用户说'加自选''关注''添加自选'时调用。先调用search_stocks获取stockId。调用成功后不要输出正文，等待用户在 UI 确认。",
+        "name": "confirm_add_watchlist", "description": "【必须调用】添加股票或指数到自选列表并弹出确认按钮。用户说'加自选''关注''添加自选'时调用。个股先用search_stocks获取stockId；指数(上证/恒生/标普/纳指等)用 get_global_indices 获取其 stockId。股票和指数都支持加自选。调用成功后不要输出正文，等待用户在 UI 确认。",
         "parameters": {"type": "object", "properties": {
             "stockId": {"type": "integer", "description": "股票ID（从search_stocks获取）"},
             "symbol": {"type": "string", "description": "股票代码，用于展示"},
@@ -2035,6 +2116,15 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0, cal
         result = _run_tool(name, args, portfolio_id, user_id)
         result = _trim_result(name, result)
         latency = int((_time.monotonic() - t0) * 1000)
+        # A result carrying an "error" key is a soft failure (data fetch failed,
+        # engine returned no score, etc.). Mark it as [TOOL_FAIL] so the model
+        # treats it as failed and excludes it — not as a successful empty result.
+        if isinstance(result, dict) and result.get("error"):
+            short = str(result["error"])[:200].replace("\n", " ").replace("\t", " ")
+            _log_tool(name, latency, False, short)
+            if not skip_tool_line:
+                print(f"[TOOL_FAIL] {cid}\t{name}\t{short}", flush=True)
+            return json.dumps(result, ensure_ascii=False)
         summary = _tool_summary(name, result).replace("\t", " ").replace("\n", " ")
         _log_tool(name, latency, True, summary)
         if not skip_tool_line:
