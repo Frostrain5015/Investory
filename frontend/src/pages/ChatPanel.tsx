@@ -174,7 +174,7 @@ function ToolStepDisplay({ step, lang }: { step: Extract<TimelineStep, { kind: '
         )}
         {step.done && !step.error && <Check className="w-3 h-3 opacity-70" />}
         {step.done && !step.error && step.summary && !stockSage && (
-          <span className="text-[10px] text-slate-400">· {step.summary}</span>
+          <span className="text-[10px] text-slate-400">{step.summary}</span>
         )}
         {/* StockSage engine: status shown as summary instead of inline */}
         {!step.error && stockSage && (
