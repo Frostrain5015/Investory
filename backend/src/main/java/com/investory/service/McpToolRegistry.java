@@ -284,6 +284,82 @@ public class McpToolRegistry {
                 prop(obj(), "id", "integer", "回测结果ID", true),
                 (a, tok) -> apiGet(tok, "/backtest/" + argInt(a, "id", 0)));
 
+        // 运行回测 — 调用 /api/backtest/start
+        add("run_backtest", "运行一次量化策略回测。优先用 strategy_id（已保存策略），否则用 code 直接回测。",
+                runBacktestSchema(),
+                (a, tok) -> {
+                    String jsonBody = buildRunBacktestBody(a);
+                    return apiSend(tok, "POST", "/backtest/start", null, jsonBody);
+                });
+
+        // 生成策略 — 调用 /api/backtest/strategies
+        add("generate_strategy", "生成并保存一个量化策略。code 必须包含 def decide(ctx) 函数。",
+                generateStrategySchema(),
+                (a, tok) -> {
+                    String jsonBody = buildGenerateStrategyBody(a);
+                    return apiSend(tok, "POST", "/backtest/strategies", null, jsonBody);
+                });
+
+        // 分析回测 — 复用 /api/backtest/{id} 数据 + 本地计算
+        add("analyze_backtest", "分析回测结果并从收益、风险、稳定性和改进方向给出客观评价。",
+                prop(obj(), "id", "integer", "回测结果ID", true),
+                (a, tok) -> apiGet(tok, "/backtest/" + argInt(a, "id", 0)));
+
+        // StockSage 报告
+        add("get_stock_report", "生成单只A股的可审计 Markdown 分析报告。",
+                prop(obj(), "symbol", "string", "股票代码，如 600519.SH", true),
+                (a, tok) -> apiGet(tok, "/stocksage/stock-analysis/" + enc(argStr(a, "symbol", ""))));
+        add("get_portfolio_report", "生成当前持仓组合的可审计 Markdown 报告。", empty(),
+                (a, tok) -> apiSend(tok, "POST", "/stocksage/portfolio-analysis", null, "{}"));
+        add("get_daily_picks_report", "生成今日候选股的可审计 Markdown 选股报告。",
+                prop(prop(obj(), "strategy", "string", "main/chip/hot/golden_cross，默认main", false), "limit", "integer", "数量，默认10", false),
+                (a, tok) -> apiGet(tok, "/stocksage/daily-picks?type=" + enc(argStr(a, "strategy", "main")) + "&limit=" + argInt(a, "limit", 10)));
+
+        // 行业分布
+        add("compute_sector_breakdown", "分析持仓行业、市值和市场分布。", empty(),
+                (a, tok) -> apiGet(tok, "/dashboard"));
+
+        // 基准对比
+        add("benchmark_compare", "对比组合与基准指数表现差异。",
+                prop(prop(obj(), "benchmark", "string", "基准代码，默认000001.SH", false), "days", "integer", "对比天数，默认252", false),
+                (a, tok) -> apiGet(tok, "/chart?type=cumulative_return&days=" + argInt(a, "days", 252)));
+
+        // 知识库
+        add("consult_kb", "查询投资知识库：原则、指标解读、报告解读等。",
+                prop(obj(), "topic", "string", "查询主题", true),
+                (a, tok) -> {
+                    ObjectNode out = mapper.createObjectNode();
+                    out.put("note", "知识库查询已集成到AI对话系统。请直接描述你的分析需求，AI会自动查阅相关知识。");
+                    return out;
+                });
+
+        // 联网搜索
+        add("web_search", "联网搜索新闻、时事、最新动态。",
+                prop(prop(obj(), "query", "string", "搜索关键词", true), "count", "integer", "结果数量，默认5", false),
+                (a, tok) -> {
+                    ObjectNode out = mapper.createObjectNode();
+                    out.put("note", "联网搜索功能需要在AI对话中通过 --web-search 参数启用。请在AI设置中开启联网搜索。");
+                    return out;
+                });
+
+        // 记忆管理
+        add("manage_memory", "管理用户长期记忆。action='remember'记住事实，action='forget'删除记忆。",
+                manageMemorySchema(),
+                (a, tok) -> {
+                    ObjectNode out = mapper.createObjectNode();
+                    out.put("note", "记忆管理功能需要在AI对话中通过 manage_memory 工具调用。当前通过MCP暂不支持直接操作记忆。");
+                    return out;
+                });
+
+        // 用户交互
+        add("ask_user", "需要用户选择时调用，UI会生成交互按钮。",
+                askUserSchema(),
+                (a, tok) -> {
+                    ObjectNode out = mapper.createObjectNode();
+                    out.put("note", "ask_user 是AI对话中的交互工具，需要在AI对话流中使用。当前通过MCP暂不支持直接触发用户选择。");
+                    return out;
+                });
+
         // 交易（读 + 两步写）
         add("get_transactions", "获取近期交易与股息流水。",
                 prop(obj(), "limit", "integer", "数量上限，默认50", false),
@@ -358,5 +434,91 @@ public class McpToolRegistry {
     private long userIdOf(String token) {
         McpTokenDao.TokenInfo info = tokenDao.resolveToken(token);
         return info != null ? info.userId() : 0;
+    }
+
+    // ── run_backtest 辅助 ────────────────────────────────────────────────
+
+    private ObjectNode runBacktestSchema() {
+        ObjectNode s = obj();
+        prop(s, "strategy_id", "integer", "已保存策略的ID。与code二选一，优先用此项", false);
+        prop(s, "code", "string", "未保存策略时直接传入的完整Python代码，须含def decide(ctx)函数", false);
+        prop(s, "stocks", "array", "回测标的代码列表，如['600519.SH','000001.SZ']。省略则默认回测当前组合持仓", false);
+        prop(s, "start_date", "string", "回测起始日期 YYYY-MM-DD，默认一年前", false);
+        prop(s, "end_date", "string", "回测结束日期 YYYY-MM-DD，默认今天", false);
+        prop(s, "initial_capital", "number", "初始资金，默认100000", false);
+        prop(s, "commission_pct", "number", "手续费率(小数)，默认0.008即千分之八", false);
+        return s;
+    }
+
+    private String buildRunBacktestBody(JsonNode a) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        // name
+        sb.append("\"name\":\"").append(escJson(argStr(a, "name", "未命名策略"))).append("\",");
+        // strategyType
+        sb.append("\"strategyType\":\"advanced\",");
+        // strategy
+        sb.append("\"strategy\":{");
+        String code = argStr(a, "code", "");
+        if (!code.isEmpty()) {
+            sb.append("\"code\":\"").append(escJson(code)).append("\"");
+        }
+        sb.append("},\"config\":{");
+        // config fields with camelCase
+        sb.append("\"startDate\":\"").append(argStr(a, "start_date", "")).append("\",");
+        sb.append("\"endDate\":\"").append(argStr(a, "end_date", "")).append("\",");
+        sb.append("\"initialCapital\":").append(argNum(a, "initial_capital", 100000)).append(",");
+        sb.append("\"commissionPct\":").append(argNum(a, "commission_pct", 0.008)).append(",");
+        sb.append("\"slippagePct\":0.001");
+        sb.append("}}");
+        return sb.toString();
+    }
+
+    // ── generate_strategy 辅助 ───────────────────────────────────────────
+
+    private ObjectNode generateStrategySchema() {
+        ObjectNode s = obj();
+        prop(s, "name", "string", "策略名称", true);
+        prop(s, "description", "string", "一句话描述策略思路", true);
+        prop(s, "code", "string", "完整Python代码，必须包含 def decide(ctx) 函数", true);
+        return s;
+    }
+
+    private String buildGenerateStrategyBody(JsonNode a) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("{");
+        sb.append("\"name\":\"").append(escJson(argStr(a, "name", "未命名策略"))).append("\",");
+        sb.append("\"strategyType\":\"advanced\",");
+        sb.append("\"strategy\":{");
+        sb.append("\"code\":\"").append(escJson(argStr(a, "code", ""))).append("\"");
+        sb.append("}}");
+        return sb.toString();
+    }
+
+    // ── manage_memory / ask_user 辅助 ────────────────────────────────────
+
+    private ObjectNode manageMemorySchema() {
+        ObjectNode s = obj();
+        prop(s, "action", "string", "remember 或 forget", true);
+        prop(s, "fact", "string", "要记住的事实（action=remember时）", false);
+        prop(s, "keyword", "string", "要删除的关键词（action=forget时）", false);
+        return s;
+    }
+
+    private ObjectNode askUserSchema() {
+        ObjectNode s = obj();
+        prop(s, "question", "string", "要问用户的问题", true);
+        prop(s, "options", "array", "选项列表", true);
+        prop(s, "multiSelect", "boolean", "是否多选", false);
+        return s;
+    }
+
+    private static String escJson(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 }
