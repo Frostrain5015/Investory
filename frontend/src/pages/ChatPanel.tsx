@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, Database, BookOpen } from 'lucide-react'
+import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, Database, BookOpen, MessageSquare, ArrowRight } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -513,7 +513,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     setMessages(newMessages)
     setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; setAskData(null); setAskChecked(new Set()); setAskOther(''); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
     try {
-      const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, webSearch }) })
+      const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, webSearch, conversationId: convIdRef.current || undefined }) })
       if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
       if (esRef.current) esRef.current.close()
       const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
@@ -521,7 +521,40 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     } catch (e: unknown) { setStreamText(`${t.chat.errorPrefix} ${e instanceof Error ? e.message : String(e)}`); setStreaming(false) }
   }
 
-  function clearChat() { gMessages = []; setMessages([]); setStreamText(''); fetch(`${BASE}/api/ai/clear`, { method: 'POST', credentials: 'include' }).catch(() => {}) }
+  const convIdRef = useRef<number>(0)
+  const [convList, setConvList] = useState<{ id: number; title: string; createdAt: string; messageCount: number }[]>([])
+  const [showConvList, setShowConvList] = useState(false)
+
+  function clearChat() { gMessages = []; setMessages([]); setStreamText(''); convIdRef.current = 0; fetch(`${BASE}/api/ai/clear`, { method: 'POST', credentials: 'include' }).catch(() => {}) }
+
+  function loadConvList() {
+    fetch(`${BASE}/api/ai/conversations`, { credentials: 'include' })
+      .then(r => r.json()).then((list: any[]) => setConvList(list || [])).catch(() => {})
+  }
+
+  function openConv(id: number) {
+    fetch(`${BASE}/api/ai/conversations/${id}`, { credentials: 'include' })
+      .then(r => r.json()).then((d: any) => {
+        const restored = (d.messages || []).map((m: { role: string; content: string; thinking?: string }) => {
+          let timeline: TimelineStep[] | undefined
+          let thinkingLegacy: string | undefined
+          const raw = m.thinking?.trim()
+          if (raw) {
+            if (raw.startsWith('[')) { try { const p = JSON.parse(raw); if (Array.isArray(p)) timeline = p } catch { thinkingLegacy = raw } }
+            else thinkingLegacy = raw
+          }
+          return { role: m.role === 'user' ? 'user' as const : m.role === 'assistant' ? 'assistant' as const : 'system' as const, content: m.content, ...(timeline ? { timeline } : {}), ...(thinkingLegacy ? { thinking: thinkingLegacy } : {}) }
+        })
+        gMessages = restored; setMessages(restored); convIdRef.current = id; setShowConvList(false)
+      }).catch(() => {})
+  }
+
+  function deleteConv(id: number, e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!confirm('删除此对话？')) return
+    fetch(`${BASE}/api/ai/conversations/${id}`, { method: 'DELETE', credentials: 'include' })
+      .then(() => { if (convIdRef.current === id) clearChat(); loadConvList() }).catch(() => {})
+  }
   function stopGeneration() {
     if (esRef.current) { esRef.current.close(); esRef.current = null }
     fetch(`${BASE}/api/ai/cancel`, { method: 'POST', credentials: 'include' }).catch(() => {})
@@ -625,7 +658,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         <span className="text-[9px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">AI</span>
       </div>
       <div className="flex items-center gap-0.5">
-        <button onClick={clearChat} className="p-1.5 rounded-md text-slate-400 hover:text-slate-500 transition-colors" title={t.chat.clearChat}><Trash2 className="w-3.5 h-3.5" /></button>
+        <button onClick={() => { loadConvList(); setShowConvList(true) }} className="p-1.5 rounded-md text-slate-400 hover:text-slate-500 transition-colors" title={t.chat.clearChat}><MessageSquare className="w-3.5 h-3.5" /></button>
         <button onClick={() => setMode(mode === 'expanded' ? 'dock' : 'expanded')}
           className="p-1.5 rounded-md text-slate-400 hover:text-slate-500 transition-colors"
           title={mode === 'expanded' ? t.chat.collapse : t.chat.expand}>
@@ -1031,7 +1064,45 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               {/* Input bar — bottom of every active state */}
               <div ref={inputWrapRef} className={`shrink-0 px-3 py-2 ${isExpanded || hasContent ? 'border-t border-slate-100 bg-white' : ''}`}>
                 {inputBar}
+                <p className="text-[10px] text-slate-300 text-center">内容由AI生成，不构成投资建议</p>
               </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {/* Conversation list modal */}
+        <AnimatePresence>
+          {showConvList && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/30 z-40 flex items-end lg:items-center justify-center lg:p-4"
+              onClick={() => setShowConvList(false)}>
+              <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                transition={{ type: 'spring', stiffness: 400, damping: 40 }}
+                onClick={e => e.stopPropagation()}
+                className="w-full lg:max-w-sm bg-white rounded-t-2xl lg:rounded-2xl shadow-xl max-h-[60vh] flex flex-col">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 shrink-0">
+                  <h3 className="text-sm font-bold text-slate-800">对话列表</h3>
+                  <button onClick={() => { clearChat(); setShowConvList(false) }} className="text-[11px] text-indigo-600 font-medium hover:text-indigo-700">新对话</button>
+                </div>
+                <div className="overflow-auto flex-1">
+                  {convList.length === 0 ? (
+                    <p className="text-xs text-slate-400 text-center py-12">暂无历史对话</p>
+                  ) : (
+                    convList.map(c => (
+                      <div key={c.id} onClick={() => openConv(c.id)}
+                        className="flex items-center justify-between px-5 py-3 hover:bg-slate-50 cursor-pointer border-b border-slate-50 transition-colors">
+                        <div className="flex-1 min-w-0 mr-2">
+                          <p className="text-[13px] text-slate-700 font-medium truncate">{c.title}</p>
+                          <p className="text-[10px] text-slate-400 mt-0.5">{c.messageCount ?? 0} 条消息 · {c.createdAt?.substring(0, 10)}</p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={(e) => { e.stopPropagation(); openConv(c.id) }} className="p-1 rounded hover:bg-slate-100 text-slate-400" title="继续对话"><ArrowRight className="w-3.5 h-3.5" /></button>
+                          <button onClick={(e) => deleteConv(c.id, e)} className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500" title="删除对话"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>

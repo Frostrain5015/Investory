@@ -130,6 +130,18 @@ public class AiApiController {
 
         final boolean webSearch = Boolean.TRUE.equals(body.get("webSearch"));
 
+        // Multi-conversation: accept optional conversationId, auto-create if absent.
+        long conversationId = 0;
+        Object cidRaw = body.get("conversationId");
+        if (cidRaw instanceof Number) conversationId = ((Number) cidRaw).longValue();
+        if (conversationId <= 0 && userId > 0) {
+            try {
+                jdbc.update("INSERT INTO ai_conversations (user_id, title) VALUES (?, '新对话')", userId);
+                conversationId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+            } catch (Exception ignored) {}
+        }
+        final long convId = conversationId;
+
         // #2 Context window guard: the frontend re-sends the whole UI history, which
         // grows unbounded over a long chat and will eventually blow the model context.
         // Keep only the most recent turns (plus the freshly injected system blocks).
@@ -173,8 +185,14 @@ public class AiApiController {
             if ("user".equals(lastMsg.get("role"))) {
                 String content = String.valueOf(lastMsg.getOrDefault("content", ""));
                 try {
-                    jdbc.update("INSERT INTO ai_chat_history (user_id, role, content) VALUES (?, 'user', ?)",
-                        userId, content.length() > 4000 ? content.substring(0, 4000) : content);
+                    jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'user', ?)",
+                        userId, convId, content.length() > 4000 ? content.substring(0, 4000) : content);
+                    // Set conversation title from first user message (only if still the default).
+                    // Also touch updated_at so the conversation list stays sorted correctly.
+                    if (convId > 0) {
+                        String title = content.length() > 30 ? content.substring(0, 30) : content;
+                        jdbc.update("UPDATE ai_conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND title = '新对话'", title, convId);
+                    }
                 } catch (Exception ignored) {}
             }
         }
@@ -347,15 +365,15 @@ public class AiApiController {
                     try {
                         String content = accumContent.toString();
                         if (content.length() > 8000) content = content.substring(0, 8000);
-                        jdbc.update("INSERT INTO ai_chat_history (user_id, role, content) VALUES (?, 'assistant', ?)",
-                            uid, content);
+                        jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'assistant', ?)",
+                            uid, convId, content);
                         // Persist the entire timeline (thinking + tool steps) as JSON in the 'thinking'
                         // role row, so we can faithfully replay the reasoning trace on history reload.
                         if (!timeline.isEmpty()) {
                             String tlJson = json.writeValueAsString(timeline);
                             if (tlJson.length() > 8000) tlJson = tlJson.substring(0, 8000);
-                            jdbc.update("INSERT INTO ai_chat_history (user_id, role, content) VALUES (?, 'thinking', ?)",
-                                uid, tlJson);
+                            jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'thinking', ?)",
+                                uid, convId, tlJson);
                         }
                     } catch (Exception ignored) {}
                 }
@@ -366,8 +384,8 @@ public class AiApiController {
                         jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role = 'tooldata'", uid);
                         String tc = toolContext[0];
                         if (tc.length() > 4000) tc = tc.substring(0, 4000);
-                        jdbc.update("INSERT INTO ai_chat_history (user_id, role, content) VALUES (?, 'tooldata', ?)",
-                            uid, tc);
+                        jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'tooldata', ?)",
+                            uid, convId, tc);
                     } catch (Exception ignored) {}
                 }
             } catch (Exception e) {
@@ -470,14 +488,80 @@ public class AiApiController {
         return session.getStatus(userIdOf(req));
     }
 
+    // ── Multi-conversation management ──────────────────────────────────
+
+    @PostMapping("/conversations")
+    public Map<String, Object> createConversation(HttpServletRequest req) {
+        long uid = userIdOf(req);
+        if (uid <= 0) return Map.of("error", "未登录");
+        // Archive current conversation — don't delete, just clear session
+        session.clearSession(uid);
+        // Clear stale tooldata so it doesn't leak into the new conversation
+        try { jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role = 'tooldata'", uid); } catch (Exception ignored) {}
+        // Insert new conversation row
+        long convId = jdbc.update("INSERT INTO ai_conversations (user_id, title) VALUES (?, '新对话')", uid);
+        // MySQL returns last_insert_id for INSERT
+        try {
+            convId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
+        } catch (Exception ignored) {}
+        return Map.of("id", convId, "title", "新对话");
+    }
+
+    @GetMapping("/conversations")
+    public List<Map<String, Object>> listConversations(HttpServletRequest req) {
+        long uid = userIdOf(req);
+        if (uid <= 0) return List.of();
+        return jdbc.queryForList("""
+            SELECT c.id, c.title, c.created_at AS createdAt,
+                   (SELECT COUNT(*) FROM ai_chat_history h WHERE h.conversation_id = c.id AND h.role IN ('user','assistant')) AS messageCount
+            FROM ai_conversations c WHERE c.user_id = ?
+            ORDER BY c.updated_at DESC LIMIT 30
+            """, uid);
+    }
+
+    @GetMapping("/conversations/{id}")
+    public Map<String, Object> getConversation(@PathVariable long id, HttpServletRequest req) {
+        long uid = userIdOf(req);
+        if (uid <= 0) return Map.of("messages", List.of());
+        // Verify ownership
+        Integer count = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM ai_conversations WHERE id = ? AND user_id = ?", Integer.class, id, uid);
+        if (count == null || count == 0) return Map.of("messages", List.of());
+        // Load messages for this conversation (reuse history stitching logic)
+        List<Map<String, Object>> rows = jdbc.queryForList(
+            "SELECT role, content FROM ai_chat_history WHERE user_id = ? AND conversation_id = ? " +
+            "AND role IN ('user','assistant','thinking') ORDER BY id ASC LIMIT 300", uid, id);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> r : rows) {
+            String role = String.valueOf(r.get("role"));
+            String content = String.valueOf(r.getOrDefault("content", ""));
+            if ("thinking".equals(role) && !out.isEmpty()) {
+                Map<String, Object> last = out.get(out.size() - 1);
+                if ("assistant".equals(last.get("role"))) {
+                    last.put("thinking", content);
+                    continue;
+                }
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("role", role); m.put("content", content);
+            out.add(m);
+        }
+        return Map.of("messages", out);
+    }
+
+    @DeleteMapping("/conversations/{id}")
+    public Map<String, Object> deleteConversation(@PathVariable long id, HttpServletRequest req) {
+        long uid = userIdOf(req);
+        if (uid <= 0) return Map.of("error", "未登录");
+        jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND conversation_id = ?", uid, id);
+        jdbc.update("DELETE FROM ai_conversations WHERE id = ? AND user_id = ?", id, uid);
+        return Map.of("status", "deleted");
+    }
+
     @PostMapping("/clear")
     public Map<String, Object> clear(HttpServletRequest req) {
-        long uid = userIdOf(req);
-        session.clearSession(uid);
-        if (uid > 0) {
-            try { jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role IN ('user','assistant','thinking','tooldata')", uid); } catch (Exception ignored) {}
-        }
-        return Map.of("status", "cleared");
+        // Start a new conversation (archive current, don't delete)
+        return createConversation(req);
     }
 
     @PostMapping("/cancel")
