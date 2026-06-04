@@ -28,8 +28,6 @@ RUNTIME_EFFICIENCY_RULES = """【运行时效率规则（直接注入，不属�
 - strategy_id 来源验证：run_backtest 的 strategy_id 必须来自刚保存的策略或 get_strategies 查询结果，禁止凭空编 ID。
 - 不预演不空转：发出工具调用后等真实结果再分析；证据齐了就给结论，证据不足就说明缺哪块数据、证据是否冲突、受何约束。"""
 
-# DashScope model routing: fast model for simple queries, configured model for deep analysis
-DASHSCOPE_FAST_MODEL = "qwen-plus-latest"
 # DeepSeek fast model for chit-chat / simple queries (the pro model handles real
 # analysis with thinking on). Per DeepSeek docs the fast path runs thinking off.
 DEEPSEEK_FAST_MODEL = "deepseek-v4-flash"
@@ -108,11 +106,9 @@ def _is_trivial_chitchat(text: str) -> bool:
     return False
 
 def _is_complex_query(messages: list) -> bool:
-    """Return True (→ full model) for anything but obvious chit-chat.
-    Inverted on purpose: the fast model (qwen-plus) is noticeably lazier about
-    function calling, the root of '工具调用不积极'. We only trade TTFT for the
-    fast model on pure smalltalk; every real request gets the tool-reliable
-    full model."""
+    """Return True (→ full/pro model with thinking) for anything but obvious
+    chit-chat. We only trade latency for the fast model on pure smalltalk; every
+    real request gets the tool-reliable pro model."""
     last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     if not last_user:
         return True
@@ -2650,44 +2646,6 @@ def _needs_proxy(api_base: str) -> bool:
     return True
 
 
-# ── Model fallback chains ──────────────────────────────────────────────────
-# When the primary model fails (timeout, overload, 5xx), we try the next in
-# the chain rather than dying. Two independent chains so a reasoning-capable
-# model doesn't waste tokens on chitchat, and a fast model isn't asked to
-# think deeply. Each chain is ordered by capability — first is best.
-
-# Fast models: general chat, tool calling, no deep reasoning needed.
-# Ordered by intelligence: qwen3.7-plus > qwen3.6-plus > deepseek-v3.2 > glm-5.1 > qwen-plus > qwen-flash.
-FAST_MODEL_CHAIN = [
-    "deepseek-v4-flash",
-    "qwen-flash",
-]
-
-# Reasoning models: deep thinking, complex multi-step analysis.
-# Ordered: deepseek-v4-pro > qwen3.7-max > deepseek-r1 > qwq-plus > qwen3.6-max-preview.
-REASONING_MODEL_CHAIN = [
-    "deepseek-v4-pro",
-    "qwen3.7-max",
-    "qwen-flash",
-]
-
-# Errors that should NOT trigger fallback (retrying with another model won't help).
-_NON_RETRYABLE = frozenset({
-    "401", "403", "invalid_api_key", "Insufficient", "quota",
-    "content_filter", "content_policy", "moderation",
-})
-
-
-def _is_retryable(error_msg: str) -> bool:
-    """Return True if the error looks transient (another model might work)."""
-    msg = str(error_msg)
-    # Fatal: auth, quota, content policy — no model switch will fix these.
-    for tag in _NON_RETRYABLE:
-        if tag in msg:
-            return False
-    # Transient: overload, timeout, 5xx, rate-limit — worth trying another model.
-    return True
-
 
 # ── Dynamic tool subsetting (#4) ─────────────────────────────────────────
 # Sending all ~35 tools every call costs tokens and muddies the model's choice.
@@ -3091,53 +3049,21 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         kwargs["http_client"] = httpx.Client(proxy=proxy_url)
     client = OpenAI(**kwargs)
 
-    is_dashscope = bool(api_base and ("dashscope" in api_base or "aliyuncs" in api_base))
-
-    # ── Model fallback chain ───────────────────────────────────────────────
-    # If the user's chosen model fails with a transient error (overload, 5xx,
-    # timeout), we try the next model in the appropriate chain rather than
-    # dying. Reasoning-capable models and fast models are separate chains so
-    # the expensive reasoning models aren't wasted on chitchat.
-    # The primary model (user's choice) is always tried first.
-    chain = REASONING_MODEL_CHAIN if deep_think else FAST_MODEL_CHAIN
-    # Build a unique ordered list: primary model first, then chain entries
-    # that aren't the same model.
-    seen = {model}
-    fallback_models = [model]
-    for m in chain:
-        if m not in seen:
-            seen.add(m)
-            fallback_models.append(m)
-
-    # ── Thinking & model routing (no manual deep-think toggle needed) ──────
-    # Qwen3 (qwen-plus) is markedly more reliable at *calling tools* when its
-    # native thinking mode is on. With it off, it tends to answer in prose and
-    # skip function calls entirely — the reported "不开深度思考怎么都触发不了".
-    # So: enable thinking for every real (non-chit-chat) request automatically.
-    # Pure smalltalk stays on the fast, no-thinking path for low latency.
-    is_complex = _is_complex_query(messages)
     is_deepseek = bool(api_base and "deepseek" in api_base)
-    want_thinking = (is_dashscope or is_deepseek) and (deep_think or is_complex)
-    max_tokens = 8192 if (is_deepseek and want_thinking) else 4096
-    # Pin the thinking switch per provider so we never inherit an ambiguous
-    # server-side default that silently suppresses tool calls.
-    #  • DashScope (Qwen3): extra_body.enable_thinking
-    #  • DeepSeek v4: extra_body.thinking.type + top-level reasoning_effort (set in _stream)
-    if is_dashscope:
-        extra_body = {"enable_thinking": bool(want_thinking)}
-    elif is_deepseek:
-        extra_body = {"thinking": {"type": "enabled" if want_thinking else "disabled"}}
-    else:
-        extra_body = {}
 
-    # Only obvious chit-chat is routed to the fast model; real requests stay on
-    # the full configured model (which, with thinking on, calls tools reliably).
+    # ── Thinking & model routing ───────────────────────────────────────────
+    # DeepSeek v4 calls tools reliably with thinking on, so real (non-chit-chat)
+    # requests run the configured model with thinking; pure smalltalk runs the
+    # fast model with thinking off for low latency.
+    is_complex = _is_complex_query(messages)
+    want_thinking = is_deepseek and (deep_think or is_complex)
+    max_tokens = 8192 if (is_deepseek and want_thinking) else 4096
+    # DeepSeek v4: extra_body.thinking.type + top-level reasoning_effort (set in _stream).
+    extra_body = {"thinking": {"type": "enabled" if want_thinking else "disabled"}} if is_deepseek else {}
+
     effective_model = model
-    if not deep_think and not is_complex:
-        if is_dashscope:
-            effective_model = DASHSCOPE_FAST_MODEL
-        elif is_deepseek:
-            effective_model = DEEPSEEK_FAST_MODEL
+    if is_deepseek and not deep_think and not is_complex:
+        effective_model = DEEPSEEK_FAST_MODEL
 
     # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
@@ -3145,9 +3071,8 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     if prefetched_tools:
         effective_tools = [t for t in effective_tools if t["function"]["name"] not in prefetched_tools]
 
-    def _stream(msgs, model_override=None):
-        m = model_override or effective_model
-        kwargs = dict(model=m, messages=msgs, tools=effective_tools,
+    def _stream(msgs):
+        kwargs = dict(model=effective_model, messages=msgs, tools=effective_tools,
                       stream=True, max_tokens=max_tokens)
         if is_deepseek and want_thinking:
             # DeepSeek thinking mode ignores temperature/top_p; control depth via
@@ -3159,34 +3084,12 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             kwargs["extra_body"] = extra_body
         return client.chat.completions.create(**kwargs)
 
-    # Wrap _stream with model fallback: on transient error, try next model in chain.
-    def _stream_with_fallback(msgs):
-        nonlocal effective_model
-        fallback_idx = fallback_models.index(effective_model) if effective_model in fallback_models else 0
-        for i in range(fallback_idx, len(fallback_models)):
-            fm = fallback_models[i]
-            try:
-                return _stream(msgs, model_override=fm)
-            except Exception as e:
-                msg = str(e)
-                if not _is_retryable(msg):
-                    raise
-                if i < len(fallback_models) - 1:
-                    sys.stderr.write(f"[FALLBACK] {fm} → {fallback_models[i+1]} ({msg[:60]})\n")
-                effective_model = fallback_models[min(i + 1, len(fallback_models) - 1)]
-        # All models failed — re-raise last error
-        raise RuntimeError(f"All {len(fallback_models)} models in chain exhausted")
-
     # Converge on the unified AgentMessage model, then emit OpenAI wire format.
-    # DashScope supports cache_control on system blocks (same format as Anthropic);
-    # wrapping the system prompt cuts TTFT by not re-encoding the persona+KB block.
-    formatted = to_openai_messages(
-        [AgentMessage.from_wire(m) for m in messages],
-        cache_system=is_dashscope,
-    )
+    # (DeepSeek auto-caches repeated input prefixes server-side — no cache_control.)
+    formatted = to_openai_messages([AgentMessage.from_wire(m) for m in messages])
 
     def _emit_delta(delta):
-        # Reasoning content (DeepSeek-reasoner, Qwen3 with enable_thinking, GLM-Zero, Moonshot k1.5, etc.)
+        # Reasoning content (DeepSeek thinking mode exposes reasoning_content).
         # Escape backslash + newline so each chunk becomes exactly one line frame —
         # Java unescapes \\n back to a real newline before forwarding to the client.
         rc = getattr(delta, "reasoning_content", None)
@@ -3257,7 +3160,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         return tcs, has, got_text, "".join(reasoning_parts), "".join(content_parts)
 
     # Always stream first. If tool calls appear mid-stream, collect and handle.
-    tool_calls, has_tools, got_text, reasoning_text, content_text = _consume(_stream_with_fallback(formatted))
+    tool_calls, has_tools, got_text, reasoning_text, content_text = _consume(_stream(formatted))
 
     total_tool_calls = 0
     web_search_count = 0
@@ -3297,7 +3200,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             sorted_tools = [t for t in sorted_tools if t["name"] != "ask_user"]
             if not sorted_tools:
                 # No other tools this round — stream next response
-                tool_calls, has_tools, got_text, reasoning_text, content_text = _consume(_stream_with_fallback(formatted))
+                tool_calls, has_tools, got_text, reasoning_text, content_text = _consume(_stream(formatted))
                 continue  # back to while has_tools
 
         # Split tools: those within limit run in parallel, excess get error.
@@ -3353,7 +3256,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                 return
 
         # Call again — may produce more tool calls or final content
-        tool_calls, has_tools, got_text, reasoning_text, content_text = _consume(_stream_with_fallback(formatted))
+        tool_calls, has_tools, got_text, reasoning_text, content_text = _consume(_stream(formatted))
 
     # Empty-completion guard: a tool-using turn ended without any answer text
     # (context bloated by big reports, or the thinking budget was fully consumed).
@@ -3363,7 +3266,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         formatted.append({"role": "user",
                           "content": "请基于以上工具已返回的数据，直接用中文给出简洁的分析结论，不要再调用工具。"})
         try:
-            _, _, got_text, _, _ = _consume(_stream_with_fallback(formatted))
+            _, _, got_text, _, _ = _consume(_stream(formatted))
         except Exception:
             got_text = False
         if not got_text:
@@ -3592,7 +3495,7 @@ def main():
         import requests as _requests
         try:
             kwargs = {"api_key": args.api_key}
-            base = args.api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            base = args.api_base or "https://api.deepseek.com"
             if "deepseek" in base:
                 model = "deepseek-v4-flash"  # cheap/fast for title summarisation
             elif "anthropic" in args.provider:
@@ -3600,7 +3503,7 @@ def main():
             elif args.model and args.model != "gpt-4o-mini":
                 model = args.model
             else:
-                model = "qwen-plus"
+                model = "deepseek-v4-flash"
             title_body = {
                 "model": model,
                 "messages": [{"role": "user", "content": f"用3-8个中文字总结这段对话的主题，只输出标题，不要引号、标点或额外解释：\n{msg[:500]}"}],
