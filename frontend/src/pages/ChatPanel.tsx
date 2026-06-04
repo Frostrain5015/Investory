@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle } from 'lucide-react'
+import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle, Brain } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { usePrompt } from '@/hooks/use-prompt'
@@ -32,6 +32,7 @@ export type ToolCategory = 'query' | 'analysis' | 'mutation'
 export type TimelineStep =
   | { kind: 'thinking'; text: string; _ts?: number; _elapsed?: number }
   | { kind: 'kb'; topic: string }
+  | { kind: 'memory'; count?: string | number }
   | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string; summary?: string; callId?: string }
   // The assistant's user-facing answer, interleaved in true emission order with
   // thinking/tool steps so a chunk of answer written *before* a later tool call
@@ -255,6 +256,20 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
                 <span className="font-medium">{lang === 'en' ? 'Consulting knowledge base' : '查阅知识库'}</span>
                 <Check className="w-3 h-3 opacity-70" />
                 <span className="text-[10px] text-slate-400">· {step.topic}</span>
+              </div>
+            </motion.div>
+          )
+        }
+        if (step.kind === 'memory') {
+          return (
+            <motion.div key={i} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="mb-1.5 flex items-start gap-2 text-[11px]">
+              <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-rose-400" />
+              <div className="flex-1 flex items-center gap-1.5 text-rose-600">
+                <Brain className="w-3 h-3" />
+                <span className="font-medium">{lang === 'en' ? 'Recalling memory' : '读取记忆'}</span>
+                <Check className="w-3 h-3 opacity-70" />
+                {step.count ? <span className="text-[10px] text-slate-400">· {step.count} {lang === 'en' ? 'items' : '条'}</span> : null}
               </div>
             </motion.div>
           )
@@ -492,6 +507,12 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         if (!d.topic) return
         stampClosedElapsed(timelineRef.current)
         timelineRef.current = [...timelineRef.current, { kind: 'kb', topic: d.topic }]
+        pushTimeline()
+      })
+      es.addEventListener('memory', (e) => {
+        const d = JSON.parse(e.data) as { count?: string | number }
+        stampClosedElapsed(timelineRef.current)
+        timelineRef.current = [...timelineRef.current, { kind: 'memory', count: d.count }]
         pushTimeline()
       })
       es.addEventListener('tool', (e) => {

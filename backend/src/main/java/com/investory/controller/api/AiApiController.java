@@ -325,6 +325,15 @@ public class AiApiController {
                             kbStep.put("kind", "kb"); kbStep.put("topic", topic);
                             timeline.add(kbStep);
                             session.emitKb(uid, topic);
+                        } else if (line.startsWith("[MEMORY]")) {
+                            // Payload: "<count>" — relevant user memories were recalled.
+                            String cnt = line.substring(8).trim();
+                            closeThinking.run();
+                            closeText.run();
+                            Map<String, Object> memStep = new LinkedHashMap<>();
+                            memStep.put("kind", "memory"); memStep.put("count", cnt);
+                            timeline.add(memStep);
+                            session.emitMemory(uid, cnt);
                         } else if (line.startsWith("[TOOL]")) {
                             // Payload: "<name>\t<category>\t<callId>" (latter two optional)
                             String[] parts = line.substring(6).trim().split("\t", 3);

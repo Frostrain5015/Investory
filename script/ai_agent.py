@@ -3552,6 +3552,8 @@ def main():
             recalled = _recall_memories(args.user_id, last_user)
             if recalled:
                 system_prompt += "\n\n" + recalled
+                # Surface a "读取记忆" timeline tag when memories are actually hit.
+                print(f"[MEMORY]\t{recalled.count(chr(10) + '- ')}", flush=True)
     if args.deep_think:
         system_prompt += "\n\n深度思考模式：充分推理后给出简洁结论（3-5句）。如果要求写策略代码：Investory格式def decide(ctx)函数，只用numpy，禁止pandas/聚宽/米筐API。"
     full_messages = [{"role": "system", "content": system_prompt}]

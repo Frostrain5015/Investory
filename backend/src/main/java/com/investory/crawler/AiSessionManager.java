@@ -115,6 +115,12 @@ public class AiSessionManager {
         emitToAll(get(userId), "kb", data);
     }
 
+    public void emitMemory(long userId, String count) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("count", count);
+        emitToAll(get(userId), "memory", data);
+    }
+
     public void emitTool(long userId, String name, String category, String callId) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("name", name);
