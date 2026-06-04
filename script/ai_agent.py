@@ -30,6 +30,9 @@ RUNTIME_EFFICIENCY_RULES = """【运行时效率规则（直接注入，不属�
 
 # DashScope model routing: fast model for simple queries, configured model for deep analysis
 DASHSCOPE_FAST_MODEL = "qwen-plus-latest"
+# DeepSeek fast model for chit-chat / simple queries (the pro model handles real
+# analysis with thinking on). Per DeepSeek docs the fast path runs thinking off.
+DEEPSEEK_FAST_MODEL = "deepseek-v4-flash"
 
 # Keywords that signal the user needs deep analysis — always use the full model
 _COMPLEX_SIGNALS = [
@@ -3113,17 +3116,28 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     # So: enable thinking for every real (non-chit-chat) request automatically.
     # Pure smalltalk stays on the fast, no-thinking path for low latency.
     is_complex = _is_complex_query(messages)
-    want_thinking = is_dashscope and (deep_think or is_complex)
-    max_tokens = 4096
-    # Explicitly pin enable_thinking both ways so we never inherit an ambiguous
+    is_deepseek = bool(api_base and "deepseek" in api_base)
+    want_thinking = (is_dashscope or is_deepseek) and (deep_think or is_complex)
+    max_tokens = 8192 if (is_deepseek and want_thinking) else 4096
+    # Pin the thinking switch per provider so we never inherit an ambiguous
     # server-side default that silently suppresses tool calls.
-    extra_body = {"enable_thinking": bool(want_thinking)} if is_dashscope else {}
+    #  • DashScope (Qwen3): extra_body.enable_thinking
+    #  • DeepSeek v4: extra_body.thinking.type + top-level reasoning_effort (set in _stream)
+    if is_dashscope:
+        extra_body = {"enable_thinking": bool(want_thinking)}
+    elif is_deepseek:
+        extra_body = {"thinking": {"type": "enabled" if want_thinking else "disabled"}}
+    else:
+        extra_body = {}
 
     # Only obvious chit-chat is routed to the fast model; real requests stay on
     # the full configured model (which, with thinking on, calls tools reliably).
     effective_model = model
-    if is_dashscope and not deep_think and not is_complex:
-        effective_model = DASHSCOPE_FAST_MODEL
+    if not deep_think and not is_complex:
+        if is_dashscope:
+            effective_model = DASHSCOPE_FAST_MODEL
+        elif is_deepseek:
+            effective_model = DEEPSEEK_FAST_MODEL
 
     # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
@@ -3133,11 +3147,17 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
 
     def _stream(msgs, model_override=None):
         m = model_override or effective_model
-        return client.chat.completions.create(
-            model=m, messages=msgs, tools=effective_tools,
-            stream=True, temperature=0.7, max_tokens=max_tokens,
-            **({"extra_body": extra_body} if extra_body else {}),
-        )
+        kwargs = dict(model=m, messages=msgs, tools=effective_tools,
+                      stream=True, max_tokens=max_tokens)
+        if is_deepseek and want_thinking:
+            # DeepSeek thinking mode ignores temperature/top_p; control depth via
+            # reasoning_effort ("max" for deep-think, "high" otherwise).
+            kwargs["reasoning_effort"] = "max" if deep_think else "high"
+        else:
+            kwargs["temperature"] = 0.7
+        if extra_body:
+            kwargs["extra_body"] = extra_body
+        return client.chat.completions.create(**kwargs)
 
     # Wrap _stream with model fallback: on transient error, try next model in chain.
     def _stream_with_fallback(msgs):
@@ -3244,12 +3264,24 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     gathered = {}  # tool name -> latest result JSON, replayed next turn via [CONTEXT] (#1)
     while has_tools:
         sorted_tools = [tool_calls[i] for i in sorted(tool_calls)]
-        formatted.append({"role": "assistant",
-                          "content": _assistant_tool_content(reasoning_text, content_text),
-                          "tool_calls": [
+        tool_call_blocks = [
             {"id": t["id"], "type": "function", "function": {"name": t["name"], "arguments": t["args"]}}
             for t in sorted_tools
-        ]})
+        ]
+        if is_deepseek and want_thinking:
+            # DeepSeek thinking mode REQUIRES the original reasoning_content on any
+            # assistant turn that made tool calls — omitting it returns HTTP 400.
+            # So send it as a dedicated field (not folded into content), with the
+            # answer text (often empty for tool-only turns) kept as content.
+            assistant_msg = {"role": "assistant", "content": content_text or "",
+                             "tool_calls": tool_call_blocks}
+            if reasoning_text.strip():
+                assistant_msg["reasoning_content"] = reasoning_text
+            formatted.append(assistant_msg)
+        else:
+            formatted.append({"role": "assistant",
+                              "content": _assistant_tool_content(reasoning_text, content_text),
+                              "tool_calls": tool_call_blocks})
 
         # Short-circuit: ask_user must run alone (it blocks on stdin waiting for user answer).
         # After it returns, the answer is a normal tool_result — continue the loop.
@@ -3562,18 +3594,24 @@ def main():
             kwargs = {"api_key": args.api_key}
             base = args.api_base or "https://dashscope.aliyuncs.com/compatible-mode/v1"
             if "deepseek" in base:
-                model = "deepseek-chat"
+                model = "deepseek-v4-flash"  # cheap/fast for title summarisation
             elif "anthropic" in args.provider:
                 model = "claude-sonnet-4-6"
             elif args.model and args.model != "gpt-4o-mini":
                 model = args.model
             else:
                 model = "qwen-plus"
-            r = _requests.post(f"{base}/chat/completions", json={
+            title_body = {
                 "model": model,
                 "messages": [{"role": "user", "content": f"用3-8个中文字总结这段对话的主题，只输出标题，不要引号、标点或额外解释：\n{msg[:500]}"}],
                 "max_tokens": 20, "temperature": 0.3
-            }, headers={"Authorization": f"Bearer {args.api_key}"}, timeout=15)
+            }
+            # A 3-8 char title needs no chain-of-thought — disable DeepSeek thinking
+            # so we don't burn reasoning tokens (and latency) on a one-liner.
+            if "deepseek" in base:
+                title_body["thinking"] = {"type": "disabled"}
+            r = _requests.post(f"{base}/chat/completions", json=title_body,
+                               headers={"Authorization": f"Bearer {args.api_key}"}, timeout=15)
             title = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip("'").strip("。")
             print(title[:30] if title else "无标题", flush=True)
         except Exception:
