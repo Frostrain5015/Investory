@@ -144,10 +144,24 @@ public class StocksageScheduler {
 
     // ── 辅助 ─────────────────────────────────────────────────────────────
 
-    @SuppressWarnings("unchecked")
     private String joinReasons(Object bullish) {
         if (bullish instanceof List) {
-            return String.join("; ", (List<String>) bullish);
+            List<String> reasons = new ArrayList<>();
+            for (Object item : (List<?>) bullish) {
+                if (item == null) continue;
+                if (item instanceof Map) {
+                    Object signal = ((Map<?, ?>) item).get("signal");
+                    Object factor = ((Map<?, ?>) item).get("factor");
+                    if (signal != null && !String.valueOf(signal).isBlank()) {
+                        reasons.add(String.valueOf(signal));
+                    } else if (factor != null && !String.valueOf(factor).isBlank()) {
+                        reasons.add(String.valueOf(factor));
+                    }
+                } else if (!String.valueOf(item).isBlank()) {
+                    reasons.add(String.valueOf(item));
+                }
+            }
+            return String.join("; ", reasons);
         }
         return "";
     }

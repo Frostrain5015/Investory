@@ -22,8 +22,8 @@ public class AiSettingsController {
 
     private static final ObjectMapper json = new ObjectMapper();
     private static final String DEFAULT_PROVIDER = "openai_compat";
-    private static final String DEFAULT_MODEL = "qwen-plus-latest";
-    private static final String DEFAULT_OPENAI_COMPAT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    private static final String DEFAULT_MODEL = "deepseek-v4-pro";
+    private static final String DEFAULT_OPENAI_COMPAT_BASE_URL = "https://api.deepseek.com";
     private static final String DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
     private static final String OPENAI_BASE_URL = "https://api.openai.com/v1";
 

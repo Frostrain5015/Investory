@@ -264,8 +264,8 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
           return (
             <motion.div key={i} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
               className="mb-1.5 flex items-start gap-2 text-[11px]">
-              <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-rose-400" />
-              <div className="flex-1 flex items-center gap-1.5 text-rose-600">
+              <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-blue-400" />
+              <div className="flex-1 flex items-center gap-1.5 text-blue-600">
                 <Brain className="w-3 h-3" />
                 <span className="font-medium">{lang === 'en' ? 'Recalling memory' : '读取记忆'}</span>
                 <Check className="w-3 h-3 opacity-70" />

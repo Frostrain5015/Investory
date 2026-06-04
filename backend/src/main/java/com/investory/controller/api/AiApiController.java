@@ -34,9 +34,17 @@ public class AiApiController {
     @Value("${ai.default.key:}")
     private String defaultKey;
 
+    @Value("${ai.title.enabled:false}")
+    private boolean aiTitleEnabled;
+
     private static final String DEFAULT_PROVIDER = "openai_compat";
     private static final String DEFAULT_MODEL   = "deepseek-v4-pro";
     private static final String DEFAULT_BASE_URL = "https://api.deepseek.com";
+    private static final List<String> STATIC_SUGGESTIONS = List.of(
+        "\u6211\u7684\u7ec4\u5408\u98ce\u9669\u600e\u4e48\u6837\uff1f",
+        "\u5206\u6790\u4e00\u4e0b\u6211\u7684\u6301\u4ed3\u98ce\u683c",
+        "\u5e2e\u6211\u5199\u4e00\u4e2a\u5747\u7ebf\u7b56\u7565"
+    );
 
     private boolean isSupportedProvider(String provider) {
         return DEFAULT_PROVIDER.equals(provider) || "anthropic".equals(provider);
@@ -74,6 +82,7 @@ public class AiApiController {
             Object uid = s.getAttribute("userId");
             if (uid instanceof Number) userId = ((Number) uid).longValue();
         }
+        if (userId <= 0) return Map.of("error", "not authenticated");
 
         // Resolve AI config: user's saved settings > defaults
         String aiKey = defaultKey;
@@ -98,6 +107,9 @@ public class AiApiController {
                     aiBaseUrl = row.getOrDefault("base_url", DEFAULT_BASE_URL).toString();
                 }
             }
+        }
+        if (aiKey == null || aiKey.isBlank()) {
+            return Map.of("error", "AI API key not configured");
         }
 
         final String provider = "anthropic".equals(aiProvider) ? "anthropic" : "openai_compat";
@@ -451,6 +463,7 @@ public class AiApiController {
 
     @GetMapping("/suggestions")
     public Map<String, Object> suggestions(HttpServletRequest req) {
+        if (STATIC_SUGGESTIONS != null) return Map.of("suggestions", STATIC_SUGGESTIONS);
         jakarta.servlet.http.HttpSession s = req.getSession(false);
         long userId = s != null && s.getAttribute("userId") instanceof Number
             ? ((Number) s.getAttribute("userId")).longValue() : 0;
@@ -765,6 +778,7 @@ public class AiApiController {
 
     /** Summarise a conversation title via LLM (async, fire-and-forget). */
     private void summarizeTitleAsync(long convId, String userMessage, long userId) {
+        if (!aiTitleEnabled || convId <= 0 || userId <= 0) return;
         executor.submit(() -> {
             try {
                 File script = new File("script/ai_agent.py");
@@ -787,6 +801,20 @@ public class AiApiController {
                         if (!b.isBlank()) base = b;
                     }
                 } catch (Exception ignored) {}
+                if (key == null || key.isBlank()) {
+                    Files.deleteIfExists(tmpInput);
+                    return;
+                }
+                try {
+                    String currentTitle = jdbc.queryForObject(
+                        "SELECT title FROM ai_conversations WHERE id = ? AND user_id = ?",
+                        String.class, convId, userId);
+                    if (currentTitle != null && !currentTitle.isBlank()
+                            && !"\u65e0\u6807\u9898".equals(currentTitle)) {
+                        Files.deleteIfExists(tmpInput);
+                        return;
+                    }
+                } catch (Exception ignored) {}
                 ProcessBuilder pb = new ProcessBuilder(pythonExecutable, "-u",
                     script.getAbsolutePath(), "--mode", "title", "--api-key", key,
                     "--model", model, "--provider", provider, "--api-base", base,
@@ -797,7 +825,7 @@ public class AiApiController {
                 String title = new String(p.getInputStream().readAllBytes(), "UTF-8").trim();
                 p.waitFor(15, TimeUnit.SECONDS);
                 Files.deleteIfExists(tmpInput);
-                if (!title.isEmpty() && !"无标题".equals(title)) {
+                if (!title.isEmpty() && !"\u65e0\u6807\u9898".equals(title)) {
                     jdbc.update("UPDATE ai_conversations SET title = ? WHERE id = ?", title, convId);
                 }
             } catch (Exception ignored) {}

@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Investory - Java 后端架构</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Noto+Serif+SC:wght@400;500;600;700;900&family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+  :root {
+    --bg: #f6f3ed; --bg2: #ece7de; --card: #ffffff; --card2: #f9f7f3;
+    --green: #5a7d60; --cyan: #5879a0; --blue: #5879a0; --amber: #b8664a;
+    --rose: #a85a5a; --purple: #7d6b8a; --teal: #5a7d7d;
+    --t1: #1a1a1a; --t2: #555550; --t3: #8a8a82;
+    --border: #d8d2c6; --rule: #ccc5b8;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:'Noto Serif SC','IBM Plex Sans',Georgia,serif; background:var(--bg); color:var(--t1); overflow:hidden; width:100vw; height:100vh; }
+  .slides { width:100vw; height:100vh; position:relative; }
+  .slide { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; opacity:0; transform:translateY(8px); transition:opacity .5s ease,transform .5s ease; pointer-events:none; padding:36px 56px; }
+  .slide.active { opacity:1; transform:translateY(0); pointer-events:all; }
+  .fade-up { opacity:0; transform:translateY(22px); }
+  .fade-up.a { animation:fu .55s cubic-bezier(.22,1,.36,1) forwards; }
+  @keyframes fu { to{opacity:1;transform:translateY(0)} }
+  .pop { opacity:0; transform:scale(.94); }
+  .pop.a { animation:pop .4s cubic-bezier(.22,1,.36,1) forwards; }
+  @keyframes pop { to{opacity:1;transform:scale(1)} }
+  .slide-l { opacity:0; transform:translateX(-22px); }
+  .slide-l.a { animation:sl .5s cubic-bezier(.22,1,.36,1) forwards; }
+  @keyframes sl { to{opacity:1;transform:translateX(0)} }
+  .slide-r { opacity:0; transform:translateX(22px); }
+  .slide-r.a { animation:sr .5s cubic-bezier(.22,1,.36,1) forwards; }
+  @keyframes sr { to{opacity:1;transform:translateX(0)} }
+  .big-title { font-family:'Cormorant Garamond','Noto Serif SC',serif; font-size:108px; font-weight:600; letter-spacing:-4px; color:var(--t1); line-height:.92; }
+  .sub-title { font-family:'Noto Serif SC',serif; font-size:24px; font-weight:400; color:var(--t2); margin-top:12px; letter-spacing:3px; }
+  .tags { display:flex; gap:12px; margin-top:40px; }
+  .tag { padding:5px 16px; border-radius:2px; font-family:'IBM Plex Sans',sans-serif; font-size:12px; font-weight:500; border:1px solid; letter-spacing:.6px; }
+  .sec-title { font-family:'Noto Serif SC',serif; font-size:36px; font-weight:700; margin-bottom:36px; text-align:center; letter-spacing:1px; color:var(--t1); }
+  .sec-title span { color:var(--amber); }
+  .grid-cards { display:grid; gap:14px; max-width:1160px; width:100%; }
+  .g2 { grid-template-columns:repeat(2,1fr); }
+  .g3 { grid-template-columns:repeat(3,1fr); }
+  .g4 { grid-template-columns:repeat(4,1fr); }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:3px; padding:22px 24px; position:relative; overflow:hidden; }
+  .card::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; border-radius:3px 3px 0 0; }
+  .card h3 { font-family:'Noto Serif SC',serif; font-size:15px; font-weight:600; margin-bottom:8px; }
+  .card p, .card li { font-family:'IBM Plex Sans','Noto Serif SC',sans-serif; font-size:13px; color:var(--t2); line-height:1.75; }
+  .card .icon { font-size:26px; margin-bottom:10px; }
+  .badge { display:inline-block; padding:2px 9px; border-radius:2px; font-size:10.5px; font-weight:500; font-family:'JetBrains Mono',monospace; margin-top:8px; }
+  .badge-b { background:rgba(88,121,160,.08); color:#3d5a7a; }
+  .badge-g { background:rgba(90,125,96,.08); color:#3d6342; }
+  .badge-a { background:rgba(184,102,74,.08); color:#8a4a30; }
+  .badge-p { background:rgba(125,107,138,.08); color:#5a4668; }
+  .badge-c { background:rgba(88,121,160,.08); color:#3d5a7a; }
+  .badge-r { background:rgba(168,90,90,.08); color:#7a3e3e; }
+  .stat-row { display:flex; gap:44px; justify-content:center; margin-bottom:32px; }
+  .stat-item { text-align:center; }
+  .stat-num { font-family:'Cormorant Garamond',serif; font-size:48px; font-weight:600; color:var(--t1); letter-spacing:-1px; }
+  .stat-lbl { font-family:'IBM Plex Sans',sans-serif; font-size:12px; color:var(--t3); margin-top:2px; letter-spacing:.5px; }
+  .arch-row { display:flex; align-items:center; gap:14px; width:100%; max-width:1100px; }
+  .arch-label { width:100px; text-align:right; font-family:'IBM Plex Sans',sans-serif; font-size:11px; font-weight:600; color:var(--t3); text-transform:uppercase; letter-spacing:3px; flex-shrink:0; }
+  .arch-box { flex:1; display:flex; gap:8px; flex-wrap:wrap; padding:14px 18px; border-radius:3px; border:1px solid var(--border); background:var(--card); }
+  .arch-box.blue-bg { border-color:rgba(88,121,160,.3); }
+  .arch-box.green-bg { border-color:rgba(90,125,96,.3); }
+  .arch-box.amber-bg { border-color:rgba(184,102,74,.3); }
+  .arch-box.purple-bg { border-color:rgba(125,107,138,.3); }
+  .chip { padding:5px 12px; border-radius:2px; font-family:'JetBrains Mono',monospace; font-size:11.5px; font-weight:400; }
+  .chip.b { background:rgba(88,121,160,.07); color:#3d5a7a; border:1px solid rgba(88,121,160,.2); }
+  .chip.g { background:rgba(90,125,96,.07); color:#3d6342; border:1px solid rgba(90,125,96,.2); }
+  .chip.am { background:rgba(184,102,74,.07); color:#8a4a30; border:1px solid rgba(184,102,74,.2); }
+  .chip.p { background:rgba(125,107,138,.07); color:#5a4668; border:1px solid rgba(125,107,138,.2); }
+  .chip.c { background:rgba(88,121,160,.07); color:#3d5a7a; border:1px solid rgba(88,121,160,.2); }
+  .chip.r { background:rgba(168,90,90,.07); color:#7a3e3e; border:1px solid rgba(168,90,90,.2); }
+  .connector { width:1px; height:16px; margin:0 auto; background:var(--rule); position:relative; }
+  .connector::after { content:''; position:absolute; bottom:-3px; left:50%; transform:translateX(-50%); border-left:4px solid transparent; border-right:4px solid transparent; border-top:4px solid var(--rule); }
+  .flow-row { display:flex; align-items:center; justify-content:center; gap:0; }
+  .flow-node { padding:18px 22px; border-radius:3px; text-align:center; min-width:130px; border:1px solid var(--border); background:var(--card); }
+  .flow-node .fi { font-size:26px; margin-bottom:6px; }
+  .flow-node .fl { font-family:'Noto Serif SC',serif; font-size:13px; font-weight:600; }
+  .flow-node .fs { font-family:'IBM Plex Sans',sans-serif; font-size:10.5px; color:var(--t3); margin-top:2px; }
+  .flow-arrow { width:44px; height:1px; position:relative; flex-shrink:0; background:var(--rule); }
+  .flow-arrow::after { content:''; position:absolute; top:50%; right:-1px; transform:translateY(-50%); border-top:4px solid transparent; border-bottom:4px solid transparent; border-left:6px solid var(--rule); }
+  .timeline { display:flex; flex-direction:column; gap:14px; max-width:900px; width:100%; }
+  .tl-item { display:flex; gap:16px; align-items:flex-start; }
+  .tl-dot { width:10px; height:10px; border-radius:50%; margin-top:5px; flex-shrink:0; position:relative; }
+  .tl-dot::after { content:''; position:absolute; top:12px; left:4px; width:1px; height:calc(100% + 14px); background:var(--rule); }
+  .tl-item:last-child .tl-dot::after { display:none; }
+  .tl-content { flex:1; }
+  .tl-title { font-family:'Noto Serif SC',serif; font-size:14px; font-weight:600; margin-bottom:3px; }
+  .tl-desc { font-family:'IBM Plex Sans',sans-serif; font-size:12.5px; color:var(--t2); line-height:1.65; }
+  .tl-code { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--cyan); background:rgba(88,121,160,.06); padding:1px 6px; border-radius:2px; }
+  .code-block { background:var(--bg2); border:1px solid var(--border); border-radius:3px; padding:14px 18px; font-family:'JetBrains Mono',monospace; font-size:12px; line-height:1.85; color:var(--t2); max-width:800px; width:100%; overflow-x:auto; }
+  .code-block .kw { color:var(--purple); font-weight:500; }
+  .code-block .fn { color:var(--cyan); }
+  .code-block .str { color:var(--green); }
+  .code-block .cm { color:var(--t3); font-style:italic; }
+  .code-block .num { color:var(--amber); }
+  .progress { position:fixed; bottom:0; left:0; height:2px; background:var(--amber); transition:width .5s ease; z-index:100; }
+  .counter { position:fixed; bottom:18px; right:28px; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--t3); z-index:100; }
+  .hint { position:fixed; bottom:18px; left:28px; font-family:'IBM Plex Sans',sans-serif; font-size:10px; color:var(--t3); z-index:100; opacity:.5; }
+  @media (prefers-reduced-motion: reduce) {
+    .slide { transition:opacity .2s; }
+    .fade-up,.pop,.slide-l,.slide-r { animation:none !important; opacity:1 !important; transform:none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="slides" id="slides">
+
+<!-- S0: 标题 -->
+<div class="slide active" id="s0">
+  <div class="big-title fade-up" id="s0-1">Investory</div>
+  <div class="sub-title fade-up" id="s0-2">Java 后端技术架构</div>
+  <div class="tags fade-up" id="s0-3">
+    <span class="tag" style="border-color:var(--green);color:var(--green);">Java 17</span>
+    <span class="tag" style="border-color:var(--cyan);color:var(--cyan);">REST API</span>
+    <span class="tag" style="border-color:var(--amber);color:var(--amber);">MySQL 8</span>
+    <span class="tag" style="border-color:var(--purple);color:var(--purple);">SSE 流式推送</span>
+    <span class="tag" style="border-color:var(--blue);color:var(--blue);">MCP 协议桥接</span>
+  </div>
+</div>
+
+<!-- S1: 全栈概览 -->
+<div class="slide" id="s1">
+  <div class="sec-title fade-up" id="s1-0">全栈<span>架构</span>概览</div>
+  <div style="display:flex;flex-direction:column;gap:14px;max-width:1060px;width:100%;">
+    <div class="arch-row fade-up" id="s1-1">
+      <div class="arch-label">前端</div>
+      <div class="arch-box blue-bg">
+        <div class="chip b">React 19</div><div class="chip b">TypeScript</div><div class="chip c">Vite 8</div>
+        <div class="chip b">Tailwind CSS 4</div><div class="chip c">Recharts / ECharts</div><div class="chip b">Framer Motion</div>
+      </div>
+    </div>
+    <div class="connector fade-up" id="s1-2"></div>
+    <div class="arch-row fade-up" id="s1-3">
+      <div class="arch-label">后端</div>
+      <div class="arch-box green-bg">
+        <div class="chip g">Java 17</div><div class="chip g">REST API</div><div class="chip g">SSE 流式推送</div>
+        <div class="chip g">会话认证</div><div class="chip c">Thymeleaf</div><div class="chip p">MCP 桥接</div>
+        <div class="chip g">定时任务调度</div>
+      </div>
+    </div>
+    <div class="connector fade-up" id="s1-4"></div>
+    <div class="arch-row fade-up" id="s1-5">
+      <div class="arch-label">数据</div>
+      <div class="arch-box amber-bg">
+        <div class="chip am">MySQL 8</div><div class="chip am">JdbcTemplate</div><div class="chip am">Flyway 迁移</div>
+        <div class="chip am">Gson 序列化</div><div class="chip p">外部行情 API</div><div class="chip p">大语言模型</div>
+      </div>
+    </div>
+  </div>
+  <div style="display:flex;gap:32px;margin-top:20px;" class="fade-up" id="s1-6">
+    <div class="card" style="padding:14px 20px;border-color:rgba(184,102,74,.25);background:rgba(184,102,74,.03);max-width:260px;">
+      <h3 style="font-size:13px;color:var(--amber);">行情数据爬虫</h3>
+      <p style="font-size:11px;">沪深 / 港股 / 美股<br>东方财富 · 腾讯 · 雅虎<br>定时调度 + 断点续爬</p>
+    </div>
+    <div class="card" style="padding:14px 20px;border-color:rgba(125,107,138,.25);background:rgba(125,107,138,.03);max-width:260px;">
+      <h3 style="font-size:13px;color:var(--purple);">Python 引擎层</h3>
+      <p style="font-size:11px;">量化回测 · 51 因子评分<br>AI 智能体 · 组合优化<br>子进程通信 · SSE 进度</p>
+    </div>
+  </div>
+</div>
+
+<!-- S2: REST API 设计 -->
+<div class="slide" id="s2">
+  <div class="sec-title fade-up" id="s2-0">REST API <span>接口层</span></div>
+  <div class="stat-row fade-up" id="s2-1">
+    <div class="stat-item"><div class="stat-num" data-target="18">0</div><div class="stat-lbl">控制器</div></div>
+    <div class="stat-item"><div class="stat-num" data-target="80">0</div><div class="stat-lbl">+ 接口端点</div></div>
+    <div class="stat-item"><div class="stat-num" data-target="7">0</div><div class="stat-lbl">线程池</div></div>
+    <div class="stat-item"><div class="stat-num" data-target="27">0</div><div class="stat-lbl">数据库表</div></div>
+  </div>
+  <div class="grid-cards g4 fade-up" id="s2-2">
+    <div class="card"><div class="icon">&#128274;</div><h3>认证与会话</h3><p>登录状态校验、BCrypt 密码加密、MCP Bearer Token 注入</p><span class="badge badge-b">SessionController</span></div>
+    <div class="card"><div class="icon">&#128188;</div><h3>组合管理</h3><p>多组合 CRUD、仪表盘聚合、持仓快照、现金余额按币种拆分</p><span class="badge badge-g">PortfolioController</span></div>
+    <div class="card"><div class="icon">&#128200;</div><h3>行情图表</h3><p>K 线数据、持仓分配、盈亏排名、日历热力图、累计收益曲线</p><span class="badge badge-c">ChartDataController</span></div>
+    <div class="card"><div class="icon">&#129302;</div><h3>AI 对话</h3><p>异步子进程启动、SSE 逐 token 推送、多轮对话持久化</p><span class="badge badge-p">AiApiController</span></div>
+    <div class="card"><div class="icon">&#9889;</div><h3>回测引擎</h3><p>策略启动、SSE 进度流、结果持久化、多策略对比</p><span class="badge badge-a">BacktestApiController</span></div>
+    <div class="card"><div class="icon">&#128202;</div><h3>量化分析</h3><p>Beta/波动率、压力测试、风格诊断、组合优化、相关性矩阵</p><span class="badge badge-c">QuantApiController</span></div>
+    <div class="card"><div class="icon">&#127760;</div><h3>市场数据</h3><p>20+ 全球指数、汇率、世界新闻、GeoJSON 地图数据</p><span class="badge badge-g">MarketIndexController</span></div>
+    <div class="card"><div class="icon">&#128736;</div><h3>管理后台</h3><p>数据库状态、爬虫控制（启停/暂停/恢复）、用户管理</p><span class="badge badge-r">AdminController</span></div>
+  </div>
+</div>
+
+<!-- S3: 核心算法 — 成本计算 -->
+<div class="slide" id="s3">
+  <div class="sec-title fade-up" id="s3-0">核心算法：<span>持仓成本</span>计算</div>
+  <div class="grid-cards g2" style="max-width:1000px;">
+    <div class="card fade-up" id="s3-1">
+      <h3 style="color:var(--cyan);">加权平均成本法</h3>
+      <p style="margin-bottom:12px;">按时间顺序遍历全部交易记录，逐步累加或摊薄成本：</p>
+      <div class="code-block">
+<span class="cm">// 买入操作</span>
+totalInvested += shares × price + fee
+totalShares += shares
+<span class="fn">avgCost</span> = totalInvested / totalShares
+
+<span class="cm">// 卖出操作（按比例移除成本）</span>
+soldCost = totalInvested × (sellShares / totalShares)
+totalInvested -= soldCost
+totalShares -= sellShares
+      </div>
+      <span class="badge badge-c">CostCalculationService.rebuild()</span>
+    </div>
+    <div class="card fade-up" id="s3-2">
+      <h3 style="color:var(--amber);">分红摊薄成本</h3>
+      <p style="margin-bottom:12px;">考虑已收分红后的真实持仓成本：</p>
+      <div class="code-block">
+<span class="cm">// 计算摊薄成本</span>
+effectiveInvested = totalInvested - totalDividends
+<span class="fn">dilutedCost</span> = effectiveInvested / totalShares
+
+<span class="cm">// 已实现盈亏</span>
+realized += sellProceeds - soldCostBasis
+realized += Σ dividends
+      </div>
+      <p style="margin-top:10px;">每笔交易写入后自动触发持仓重建，同时更新每日组合净值表。</p>
+      <span class="badge badge-a">PnlLedgerService · 423 行</span>
+    </div>
+  </div>
+  <div class="card fade-up" id="s3-3" style="max-width:1000px;width:100%;margin-top:16px;padding:18px 24px;">
+    <h3 style="font-size:14px;color:var(--green);">交易写入链路（级联更新）</h3>
+    <p style="font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--t2);line-height:2;">
+      Controller → <span style="color:var(--cyan)">applyCash()</span> → TransactionDao.insert()
+      → <span style="color:var(--cyan)">rebuildHolding()</span> → CostCalculationService.rebuild()
+      → HoldingDao.upsert() → <span style="color:var(--cyan)">backfillDailyValues()</span>
+      → PnlLedgerService.calculateDailyValues()
+    </p>
+  </div>
+</div>
+
+<!-- S4: 核心算法 — 每日盈亏账本 -->
+<div class="slide" id="s4">
+  <div class="sec-title fade-up" id="s4-0">核心算法：<span>逐日盈亏</span>账本</div>
+  <div class="grid-cards g2" style="max-width:1020px;">
+    <div class="card fade-up" id="s4-1" style="grid-column:span 2;">
+      <h3 style="color:var(--rose);">PnlLedgerService — 全系统最复杂算法</h3>
+      <p style="margin-bottom:14px;">从第一笔交易日起，逐日模拟持仓变化，计算每日真实市场盈亏（剔除转入转出影响）：</p>
+      <div style="display:flex;gap:20px;">
+        <div style="flex:1;">
+          <div class="code-block">
+<span class="kw">for</span> each trading day:
+  ① 处理当日交易（买入/卖出）
+  ② 处理当日分红
+  ③ 获取收盘价 → 逐日盯市
+  ④ <span class="fn">dailyPnl</span> = todayExTransfer - yesterdayExTransfer
+  ⑤ 更新现金余额（含/不含转入）
+          </div>
+        </div>
+        <div style="flex:1;">
+          <p><b style="color:var(--cyan);">PositionState</b> — 每只股票独立追踪：</p>
+          <p style="font-size:12px;line-height:2;">shares · costBasis · cash · dividends</p>
+          <p style="margin-top:10px;"><b style="color:var(--amber);">关键设计</b> — 排除转入转出：</p>
+          <p style="font-size:12px;line-height:2;">
+            <span class="tl-code">todayExTransfer</span> = 股票市值 + 不含转入的现金<br>
+            确保 P&L 仅反映真实市场波动
+          </p>
+        </div>
+      </div>
+    </div>
+    <div class="card fade-up" id="s4-2">
+      <h3 style="color:var(--green);">累计收益曲线</h3>
+      <p>逐日遍历，预加载全部股价数据（批量查询，避免 N+1），每日计算组合总市值 + 现金 + 累计分红。</p>
+      <span class="badge badge-g">ChartDataController</span>
+    </div>
+    <div class="card fade-up" id="s4-3">
+      <h3 style="color:var(--purple);">多币种汇率统一</h3>
+      <p>所有持仓实时转换为人民币计价。数据库存储 "1 CNY = N 外币"，通过 <span class="tl-code">1/rate</span> 反向计算。</p>
+      <span class="badge badge-p">HoldingService</span>
+    </div>
+  </div>
+</div>
+
+<!-- S5: 实时行情竞速 -->
+<div class="slide" id="s5">
+  <div class="sec-title fade-up" id="s5-0">实时行情：<span>三源竞速</span>模式</div>
+  <div style="max-width:1000px;width:100%;">
+    <div class="flow-row fade-up" id="s5-1">
+      <div class="flow-node" style="border-color:rgba(88,121,160,.35);">
+        <div class="fi">&#128187;</div><div class="fl">行情请求</div><div class="fs">invokeAny()</div>
+      </div>
+      <div class="flow-arrow"></div>
+      <div class="flow-node" style="border-color:rgba(168,90,90,.35);margin-left:8px;">
+        <div class="fi">&#128293;</div><div class="fl">新浪财经</div><div class="fs">A 股实时</div>
+      </div>
+      <div class="flow-node" style="border-color:rgba(90,125,96,.35);margin-left:8px;">
+        <div class="fi">&#128293;</div><div class="fl">腾讯财经</div><div class="fs">A 股备用</div>
+      </div>
+      <div class="flow-node" style="border-color:rgba(125,107,138,.35);margin-left:8px;">
+        <div class="fi">&#128293;</div><div class="fl">雅虎财经</div><div class="fs">全球市场</div>
+      </div>
+    </div>
+    <div class="card fade-up" id="s5-2" style="margin-top:24px;padding:20px 28px;">
+      <h3 style="color:var(--amber);">竞争消费者模式</h3>
+      <p style="line-height:2;">使用 <span class="tl-code">ExecutorService.invokeAny()</span> 同时发起 3 个 HTTP 请求，<b>最先成功返回</b>的结果直接采用，其余自动取消。超时上限 3 秒。</p>
+      <p style="line-height:2;margin-top:8px;">交易时段感知：仅在对应市场交易时间内（工作 + 交易时段）才发起实时请求，盘后降级为 T-1 收盘价。</p>
+    </div>
+    <div class="grid-cards g3" style="margin-top:16px;">
+      <div class="card fade-up" id="s5-3"><h3 style="color:var(--cyan);font-size:14px;">行情优先级</h3><p>实时报价 → T-1 收盘价 → 持仓均价（三级降级）</p></div>
+      <div class="card fade-up" id="s5-4"><h3 style="color:var(--green);font-size:14px;">缓存策略</h3><p>全球指数 90 秒 TTL 内存缓存，双重检查锁防止缓存击穿</p></div>
+      <div class="card fade-up" id="s5-5"><h3 style="color:var(--purple);font-size:14px;">线程配置</h3><p>3 线程竞速池 + 25 线程全球指数扇出池（信号量限流 7 并发）</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- S6: SSE 流式推送 -->
+<div class="slide" id="s6">
+  <div class="sec-title fade-up" id="s6-0"><span>SSE</span> 流式推送架构</div>
+  <div class="grid-cards g3" style="max-width:1100px;">
+    <div class="card fade-up" id="s6-1" style="border-top:2px solid var(--purple);">
+      <div class="icon" style="color:var(--purple);">&#129302;</div>
+      <h3>AI 对话会话</h3>
+      <p>AiSessionManager 管理子进程生命周期。Python 子进程通过 stdout 行协议输出 token、推理过程、工具调用事件。</p>
+      <p style="margin-top:8px;font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--purple);">[TOOL] [REASONING] [ASK]<br>[ARTIFACT] [CONFIRM] [DONE]</p>
+      <span class="badge badge-p">最大 500 事件回放</span>
+    </div>
+    <div class="card fade-up" id="s6-2" style="border-top:2px solid var(--amber);">
+      <div class="icon" style="color:var(--amber);">&#9889;</div>
+      <h3>回测进度流</h3>
+      <p>BacktestSessionManager 解析 Python 回测引擎的正则进度输出 <span class="tl-code">[N/M pct%]</span>，实时推送百分比和阶段信息。</p>
+      <p style="margin-top:8px;">支持断线重连，迟到订阅者自动回放已有事件。</p>
+      <span class="badge badge-a">BacktestSessionManager</span>
+    </div>
+    <div class="card fade-up" id="s6-3" style="border-top:2px solid var(--green);">
+      <div class="icon" style="color:var(--green);">&#128225;</div>
+      <h3>爬虫控制流</h3>
+      <p>CrawlSessionManager 管理爬虫进程的启动/暂停/恢复/停止，实时推送日志行，支持暂停后线程挂起。</p>
+      <p style="margin-top:8px;">使用 <span class="tl-code">CopyOnWriteArrayList&lt;SseEmitter&gt;</span> 实现线程安全的订阅者管理。</p>
+      <span class="badge badge-g">300 行日志回放</span>
+    </div>
+  </div>
+  <div class="card fade-up" id="s6-4" style="max-width:1100px;width:100%;margin-top:16px;padding:18px 24px;">
+    <h3 style="font-size:14px;color:var(--cyan);">观察者模式 — 发布/订阅</h3>
+    <p style="font-size:12px;">控制器创建 <span class="tl-code">SseEmitter</span> 并注册到会话管理器 → 子进程输出事件 → 会话管理器扇出给全部订阅者 → 持久化到聊天记录表。</p>
+  </div>
+</div>
+
+<!-- S7: 定时调度 -->
+<div class="slide" id="s7">
+  <div class="sec-title fade-up" id="s7-0">定时任务<span>调度</span>系统</div>
+  <div class="timeline fade-up" id="s7-1">
+    <div class="tl-item"><div class="tl-dot" style="background:var(--amber);"></div><div class="tl-content"><div class="tl-title">09:30 — 汇率刷新</div><div class="tl-desc">从雅虎财经获取 CNY/HKD/USD 实时汇率，写入 exchange_rates 表</div></div></div>
+    <div class="tl-item"><div class="tl-dot" style="background:var(--rose);"></div><div class="tl-content"><div class="tl-title">15:30 — A 股收盘同步</div><div class="tl-desc">东方财富 API 批量获取当日 OHLCV，ON DUPLICATE KEY UPDATE 写入 stock_prices</div></div></div>
+    <div class="tl-item"><div class="tl-dot" style="background:var(--green);"></div><div class="tl-content"><div class="tl-title">16:30 — 港股收盘同步</div><div class="tl-desc">腾讯 → 东方财富 → 雅虎 三级降级链路，断点续爬 + 指数退避</div></div></div>
+    <div class="tl-item"><div class="tl-dot" style="background:var(--blue);"></div><div class="tl-content"><div class="tl-title">09:00（次日）— 美股收盘同步</div><div class="tl-desc">约 250 只美股标的，含交易所后缀探测</div></div></div>
+    <div class="tl-item"><div class="tl-dot" style="background:var(--cyan);"></div><div class="tl-content"><div class="tl-title">19:30 — 组合每日净值回填</div><div class="tl-desc">全量组合日终市值快照，写入 daily_portfolio_value 表</div></div></div>
+    <div class="tl-item"><div class="tl-dot" style="background:var(--purple);"></div><div class="tl-content"><div class="tl-title">19:45 — 每日选股预扫描</div><div class="tl-desc">StockSage Alpha 引擎全市场扫描，结果缓存至 stocksage_daily_picks</div></div></div>
+    <div class="tl-item"><div class="tl-dot" style="background:var(--teal);"></div><div class="tl-content"><div class="tl-title">02:00 / 07:00 — 量化指标 + 新闻</div><div class="tl-desc">Beta、波动率、估值分位刷新；5 个 RSS 源新闻抓取 + 关键词评分 + 中文翻译</div></div></div>
+  </div>
+</div>
+
+<!-- S8: MCP 协议桥接 -->
+<div class="slide" id="s8">
+  <div class="sec-title fade-up" id="s8-0"><span>MCP</span> 协议桥接</div>
+  <div class="grid-cards g2" style="max-width:1000px;">
+    <div class="card fade-up" id="s8-1">
+      <h3 style="color:var(--purple);">34 个工具注册</h3>
+      <p>McpToolRegistry 将全部 REST API 封装为 MCP 工具，外部 AI 客户端（如 Claude Code）可直接调用组合查询、交易管理等能力。</p>
+      <p style="margin-top:8px;">内部通过 HTTPS 自调用 <span class="tl-code">localhost:port/api/*</span>，复用全部控制器逻辑。</p>
+      <span class="badge badge-p">McpToolRegistry · 524 行</span>
+    </div>
+    <div class="card fade-up" id="s8-2">
+      <h3 style="color:var(--amber);">两阶段提交</h3>
+      <p>所有写操作（交易增删改、自选股变更）先 <span class="tl-code">stage()</span> 生成确认令牌，前端展示确认卡片，用户确认后才调用 <span class="tl-code">confirm_action()</span> 真正执行。</p>
+      <p style="margin-top:8px;">令牌 10 分钟过期，用户隔离。</p>
+      <span class="badge badge-a">McpConfirmStore</span>
+    </div>
+    <div class="card fade-up" id="s8-3">
+      <h3 style="color:var(--green);">Bearer Token 认证</h3>
+      <p>LoginInterceptor 拦截 <span class="tl-code">Authorization: Bearer</span> 头，通过 McpTokenDao 解析令牌，注入临时会话（userId + portfolioId）。</p>
+      <span class="badge badge-g">拦截器链</span>
+    </div>
+    <div class="card fade-up" id="s8-4">
+      <h3 style="color:var(--cyan);">SSL 自签名</h3>
+      <p>云服务器使用 PKCS12 自签名证书（keytool 生成，10 年有效期），TrustAll SSL Context 内部自调用。</p>
+      <span class="badge badge-c">HTTPS 8443</span>
+    </div>
+  </div>
+</div>
+
+<!-- S9: 数据访问层 -->
+<div class="slide" id="s9">
+  <div class="sec-title fade-up" id="s9-0">数据访问<span>层设计</span></div>
+  <div class="grid-cards g2" style="max-width:1020px;">
+    <div class="card fade-up" id="s9-1">
+      <h3 style="color:var(--amber);">BaseDao 基类</h3>
+      <p style="margin-bottom:10px;">所有 14 个 DAO 继承自 BaseDao，提供泛型 CRUD 方法 + 自定义 RowMapper 函数接口。直接使用 JdbcTemplate，无 ORM 层开销。</p>
+      <div class="code-block">
+<span class="kw">public</span> &lt;T&gt; List&lt;T&gt; <span class="fn">query</span>(String sql, RowMapper&lt;T&gt; rm, Object... args)
+<span class="kw">public</span> &lt;T&gt; T <span class="fn">queryOne</span>(String sql, RowMapper&lt;T&gt; rm, Object... args)
+<span class="kw">public</span> <span class="kw">int</span> <span class="fn">update</span>(String sql, Object... args)
+<span class="kw">public</span> <span class="kw">int</span> <span class="fn">insert</span>(String sql, Object... args) <span class="cm">// 返回自增主键</span>
+      </div>
+    </div>
+    <div class="card fade-up" id="s9-2">
+      <h3 style="color:var(--green);">拼音搜索索引</h3>
+      <p style="margin-bottom:10px;">StockSearchIndexService 使用 Pinyin4j 将股票中文名转换为拼音，支持拼音首字母模糊搜索。</p>
+      <div class="code-block">
+<span class="cm">-- 7 级优先级排序</span>
+ORDER BY
+  CASE WHEN symbol = ? THEN <span class="num">1</span>
+       WHEN symbol LIKE ? THEN <span class="num">2</span>
+       WHEN name LIKE ? THEN <span class="num">3</span>
+       WHEN name_pinyin LIKE ? THEN <span class="num">4</span>
+       ... END
+LIMIT <span class="num">8</span>
+      </div>
+    </div>
+  </div>
+  <div class="card fade-up" id="s9-3" style="max-width:1020px;width:100%;margin-top:16px;padding:18px 24px;">
+    <h3 style="font-size:14px;color:var(--rose);">关键 SQL 模式</h3>
+    <p style="font-size:12px;font-family:'JetBrains Mono',monospace;color:var(--t2);line-height:2.2;">
+      UPSERT: <span style="color:var(--amber)">INSERT ... ON DUPLICATE KEY UPDATE</span>（持仓/每日净值/量化缓存）<br>
+      批量跳过: <span style="color:var(--cyan)">SELECT stock_id ... GROUP BY HAVING MAX(trade_date) >= ?</span>（跳过已有数据的股票）<br>
+      磁盘统计: <span style="color:var(--green)">information_schema.TABLES</span>（管理后台表大小监控）
+    </p>
+  </div>
+</div>
+
+<!-- S10: 线程模型 -->
+<div class="slide" id="s10">
+  <div class="sec-title fade-up" id="s10-0">线程池与<span>并发</span>模型</div>
+  <div class="grid-cards g3" style="max-width:1100px;">
+    <div class="card fade-up" id="s10-1"><h3 style="color:var(--purple);font-size:14px;">AI 对话池</h3><p>4 固定线程，管理 Python AI 子进程生命周期，读取 stdout 行协议</p><span class="badge badge-p">aiExecutor</span></div>
+    <div class="card fade-up" id="s10-2"><h3 style="color:var(--amber);font-size:14px;">回测池</h3><p>4 固定线程，管理回测引擎子进程，解析进度正则</p><span class="badge badge-a">backtestExecutor</span></div>
+    <div class="card fade-up" id="s10-3"><h3 style="color:var(--green);font-size:14px;">管理池</h3><p>4 固定线程，爬虫启停控制，支持暂停线程挂起</p><span class="badge badge-g">adminExecutor</span></div>
+    <div class="card fade-up" id="s10-4"><h3 style="color:var(--cyan);font-size:14px;">量化分析池</h3><p>4 固定线程，Python 量化脚本调用</p><span class="badge badge-c">quantExecutor</span></div>
+    <div class="card fade-up" id="s10-5"><h3 style="color:var(--rose);font-size:14px;">行情竞速池</h3><p>3 固定线程，invokeAny 三源竞速</p><span class="badge badge-r">quoteExecutor</span></div>
+    <div class="card fade-up" id="s10-6"><h3 style="color:var(--blue);font-size:14px;">全球指数池</h3><p>25 线程扇出，信号量限流 7 并发（雅虎）</p><span class="badge badge-b">marketIndexExecutor</span></div>
+  </div>
+  <div class="card fade-up" id="s10-7" style="max-width:1100px;width:100%;margin-top:16px;padding:18px 24px;">
+    <h3 style="font-size:14px;color:var(--t1);">SSE 推送池</h3>
+    <p style="font-size:12px;">2-10 弹性线程（队列 50），负责将子进程事件扇出到所有 SseEmitter 订阅者。全部线程为守护线程，不阻止 JVM 关闭。</p>
+    <span class="badge badge-b">sseExecutor · AsyncConfig</span>
+  </div>
+</div>
+
+<!-- S11: 结尾 -->
+<div class="slide" id="s11">
+  <div class="fade-up" id="s11-1" style="text-align:center;">
+    <div style="font-family:'Cormorant Garamond',serif;font-size:80px;font-weight:600;color:var(--t1);letter-spacing:-3px;line-height:.92;">Investory</div>
+    <div style="font-family:'Noto Serif SC',serif;font-size:20px;color:var(--t2);margin:10px 0 36px;letter-spacing:2px;">Java 后端技术架构</div>
+    <div class="stat-row">
+      <div class="stat-item"><div class="stat-num" data-target="18">0</div><div class="stat-lbl">控制器</div></div>
+      <div class="stat-item"><div class="stat-num" data-target="10">0</div><div class="stat-lbl">服务类</div></div>
+      <div class="stat-item"><div class="stat-num" data-target="14">0</div><div class="stat-lbl">DAO 层</div></div>
+      <div class="stat-item"><div class="stat-num" data-target="8">0</div><div class="stat-lbl">爬虫组件</div></div>
+      <div class="stat-item"><div class="stat-num" data-target="34">0</div><div class="stat-lbl">MCP 工具</div></div>
+      <div class="stat-item"><div class="stat-num" data-target="7">0</div><div class="stat-lbl">线程池</div></div>
+    </div>
+    <div style="font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--t3);margin-top:24px;letter-spacing:.5px;">Java 17 · MySQL 8 · JdbcTemplate · SSE · MCP</div>
+  </div>
+  <div class="fade-up" id="s11-2" style="font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:400;font-style:italic;color:var(--t3);margin-top:36px;">Thank You</div>
+</div>
+
+</div>
+<div class="progress" id="progress"></div>
+<div class="counter" id="counter">1 / 12</div>
+<div class="hint">方向键 / 点击翻页 · 空格自动播放</div>
+
+<script>
+(function(){
+  var total=12,cur=0,autoT=null,isAuto=false;
+  function show(n){
+    if(n<0||n>=total)return;
+    document.querySelectorAll('.slide').forEach(function(s){s.classList.remove('active')});
+    cur=n;
+    document.getElementById('s'+n).classList.add('active');
+    document.getElementById('progress').style.width=((n+1)/total*100)+'%';
+    document.getElementById('counter').textContent=(n+1)+' / '+total;
+    setTimeout(function(){anim(n)},80);
+  }
+  function anim(n){
+    var slide=document.getElementById('s'+n);
+    var els=slide.querySelectorAll('.fade-up,.pop,.slide-l,.slide-r');
+    els.forEach(function(el,i){setTimeout(function(){el.classList.add('a')},100+i*90)});
+    setTimeout(function(){
+      slide.querySelectorAll('.stat-num[data-target]').forEach(function(el){
+        var t=parseInt(el.dataset.target),st=performance.now();
+        (function u(now){var p=Math.min((now-st)/1200,1);el.textContent=Math.round(t*(1-Math.pow(1-p,3)));if(p<1)requestAnimationFrame(u)})(st);
+      });
+    },350);
+  }
+  function next(){if(cur<total-1)show(cur+1)}
+  function prev(){if(cur>0)show(cur-1)}
+  function toggleAuto(){if(isAuto){clearInterval(autoT);isAuto=false}else{isAuto=true;autoT=setInterval(function(){if(cur<total-1)next();else{clearInterval(autoT);isAuto=false}},6500)}}
+  document.addEventListener('keydown',function(e){if(e.key==='ArrowRight'||e.key==='ArrowDown'){if(isAuto){clearInterval(autoT);isAuto=false}next()}else if(e.key==='ArrowLeft'||e.key==='ArrowUp'){if(isAuto){clearInterval(autoT);isAuto=false}prev()}else if(e.key===' '){e.preventDefault();toggleAuto()}});
+  document.addEventListener('click',function(e){if(isAuto){clearInterval(autoT);isAuto=false}if(e.clientX>window.innerWidth/2)next();else prev()});
+  show(0);
+  setTimeout(toggleAuto,2500);
+})();
+</script>
+</body>
+</html>

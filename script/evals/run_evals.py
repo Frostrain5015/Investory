@@ -90,8 +90,8 @@ def build_live_trace(case: dict, base: dict) -> dict:
 
     api_key = os.environ.get("EVAL_API_KEY") or os.environ.get("AI_API_KEY", "")
     provider = os.environ.get("EVAL_PROVIDER", "openai_compat")
-    model = os.environ.get("EVAL_MODEL", "qwen-plus")
-    api_base = os.environ.get("EVAL_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    model = os.environ.get("EVAL_MODEL", "deepseek-v4-pro")
+    api_base = os.environ.get("EVAL_API_BASE", "https://api.deepseek.com")
     if not api_key:
         print("  [warn] EVAL_API_KEY/AI_API_KEY not set — live checks will SKIP", file=sys.stderr)
         return base

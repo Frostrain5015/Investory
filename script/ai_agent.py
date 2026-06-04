@@ -17,7 +17,7 @@ from agent_message import AgentMessage, to_openai_messages, to_anthropic_message
 
 KB_FILE = SCRIPT_DIR / "ai_knowledge_base.json"
 AGENT_SKILLS_DIR = SCRIPT_DIR / "agent_skills"
-STOCKSAGE_ENGINE_TIMEOUT_S = 80
+STOCKSAGE_ENGINE_TIMEOUT_S = 130
 
 # Runtime behavior rules belong in the system prompt, not in consultable KB.
 # They are operational constraints for the agent loop rather than investment

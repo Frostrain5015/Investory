@@ -16,11 +16,15 @@ All commands output JSON to stdout. Errors are {"error": "message"}.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
 import sys
+import threading
+import time
 import traceback
 from datetime import datetime
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -32,6 +36,48 @@ def output_json(obj: dict) -> None:
     """Write final result to stdout with RESULT: prefix for Java parsing."""
     sys.stdout.write("RESULT: " + json.dumps(obj, ensure_ascii=False, default=str) + "\n")
     sys.stdout.flush()
+
+
+_RESEARCH_CACHE_TTL = int(os.environ.get("STOCKSAGE_RESEARCH_CACHE_TTL", str(4 * 3600)))
+_research_cache: dict[str, tuple[float, dict]] = {}
+_research_cache_lock = threading.Lock()
+
+
+def _weights_cache_key(weights) -> str:
+    try:
+        if is_dataclass(weights):
+            payload = asdict(weights)
+        else:
+            payload = getattr(weights, "__dict__", str(weights))
+        return json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
+    except Exception:
+        return repr(weights)
+
+
+def _research_cached(code: str, weights) -> dict:
+    """Run research() with an in-process per-stock cache.
+
+    The resident server imports this module once, so this cache is shared by
+    factor_breakdown, stock_report, and portfolio_analysis. CLI subprocess calls
+    still work normally; they just get a process-local cache for that invocation.
+    """
+    import fetcher
+    from research import research
+
+    norm = fetcher.normalize_code(code)
+    key = norm + "|" + _weights_cache_key(weights)
+    now = time.time()
+    with _research_cache_lock:
+        hit = _research_cache.get(key)
+        if hit and now - hit[0] < _RESEARCH_CACHE_TTL:
+            return copy.deepcopy(hit[1])
+
+    result = research(norm, weights)
+    if isinstance(result, dict) and not result.get("error"):
+        _patch_value_factor(norm, result)
+        with _research_cache_lock:
+            _research_cache[key] = (time.time(), copy.deepcopy(result))
+    return result
 
 
 def _patch_value_factor(code: str, r: dict) -> None:
@@ -64,7 +110,6 @@ def cmd_score_stocks(args):
         return output_json({"error": "no symbols provided"})
 
     import fetcher
-    from research import research
     from factors import DEFAULT_WEIGHTS
 
     total = len(symbols)
@@ -76,8 +121,7 @@ def cmd_score_stocks(args):
         sys.stderr.flush()
         try:
             code = fetcher.normalize_code(symbol)
-            r = research(code, DEFAULT_WEIGHTS)
-            _patch_value_factor(code, r)
+            r = _research_cached(code, DEFAULT_WEIGHTS)
             results[code] = {
                 "total_score": round(r.get("total_score", 0), 1),
                 "factor_count": len(r.get("factors", {})),
@@ -107,12 +151,10 @@ def cmd_factor_breakdown(args):
     symbol = args.symbol.strip()
     try:
         import fetcher
-        from research import research
         from factors import DEFAULT_WEIGHTS
 
         code = fetcher.normalize_code(symbol)
-        r = research(code, DEFAULT_WEIGHTS)
-        _patch_value_factor(code, r)
+        r = _research_cached(code, DEFAULT_WEIGHTS)
 
         raw = r.get("factors") or {}
         factors = []          # full per-factor list with max + pct
@@ -129,7 +171,7 @@ def cmd_factor_breakdown(args):
                 "max": round(mx, 1),
                 "pct": pct,                                      # 0-100, None if no max
                 "sell_score": round(float(detail.get("sell_score", 0) or 0), 1),
-                "signal": _factor_signal(detail),
+                "signal": _factor_signal(name, detail),
             })
 
         output_json({
@@ -433,7 +475,6 @@ def cmd_portfolio_analysis(args):
         return output_json({"error": "no holdings provided"})
 
     import fetcher
-    from research import research
     from factors import DEFAULT_WEIGHTS
 
     total_weight = sum(float(h.get("weight", 0)) for h in holdings)
@@ -458,8 +499,7 @@ def cmd_portfolio_analysis(args):
         try:
             # Strip "1." / "0." exchange prefix before normalize_code
             code = fetcher.normalize_code(sym.split(".")[-1] if "." in sym else sym)
-            r = research(code, DEFAULT_WEIGHTS)
-            _patch_value_factor(code, r)
+            r = _research_cached(code, DEFAULT_WEIGHTS)
             ts = round(r.get("total_score", 0), 1)
 
             # research() returns factors as {group_name: {score, sell_score, max, details}}
@@ -550,7 +590,7 @@ def cmd_prefetch_data(_args=None):
         sys.stderr.write(f"[{i + 1}/{total} {pct}%] 预热 {code}\n")
         sys.stderr.flush()
         try:
-            research(code, DEFAULT_WEIGHTS)  # populates .cache/
+            _research_cached(code, DEFAULT_WEIGHTS)  # populates .cache/
             results["ok"] += 1
         except Exception:
             results["fail"] += 1
@@ -634,15 +674,13 @@ def _regime_label_from_score(score: float | None) -> str:
 
 def _build_stock_report(symbol: str) -> dict:
     import fetcher
-    from research import research
     from factors import DEFAULT_WEIGHTS
 
     code = fetcher.normalize_code(symbol)
-    result = research(code, DEFAULT_WEIGHTS)
+    result = _research_cached(code, DEFAULT_WEIGHTS)
     if not isinstance(result, dict) or result.get("error"):
         return {"error": result.get("error", "report generation failed") if isinstance(result, dict) else "report generation failed"}
 
-    _patch_value_factor(code, result)
     factors = result.get("factors") or {}
     raw_factor_rows = []
     missing = []
@@ -993,15 +1031,13 @@ def _evidence_sentence(row: dict, side: str) -> str:
 
 def _build_stock_report(symbol: str) -> dict:
     import fetcher
-    from research import research
     from factors import DEFAULT_WEIGHTS
 
     code = fetcher.normalize_code(symbol)
-    result = research(code, DEFAULT_WEIGHTS)
+    result = _research_cached(code, DEFAULT_WEIGHTS)
     if not isinstance(result, dict) or result.get("error"):
         return {"error": result.get("error", "report generation failed") if isinstance(result, dict) else "report generation failed"}
 
-    _patch_value_factor(code, result)
     factors = result.get("factors") or {}
     raw_factor_rows = []
     missing = []

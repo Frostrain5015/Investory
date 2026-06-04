@@ -34,8 +34,9 @@ spring.flyway.baseline-version=1
 spring.thymeleaf.cache=false
 spring.thymeleaf.encoding=UTF-8
 
-# Default AI provider key (DeepSeek); users can override in Settings
-ai.default.key=${AI_DEFAULT_KEY:sk-3ed09981cc2c46e9a66d7fd4a12dc92a}
+# Default AI provider key (DeepSeek). Override via env var if needed.
+ai.default.key=${AI_DEFAULT_KEY:}
+ai.title.enabled=${AI_TITLE_ENABLED:false}
 
 # Frost ID OAuth 2.1 configuration (secrets via env vars)
 frostid.oauth.client-id=${FROSTID_CLIENT_ID:xpozx7wXWUBpdfAbOFnzputE_r7C3hecBWy0}

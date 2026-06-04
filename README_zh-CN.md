@@ -64,7 +64,7 @@
 - 深度思考模式用于复杂分析
 - 工具调用：对话中可触发组合分析和回测
 - 直接将 AI 生成的策略保存到回测库
-- 可配置供应商：阿里云百炼（默认，`qwen-plus`）、OpenAI、DeepSeek、Moonshot、智谱 GLM、Anthropic Claude 或任何 OpenAI 兼容端点
+- 可配置供应商：阿里云百炼、OpenAI、DeepSeek、Moonshot、智谱 GLM、Anthropic Claude 或任何 OpenAI 兼容端点
 
 ### 设置
 - 浅色 / 深色 / 跟随系统主题

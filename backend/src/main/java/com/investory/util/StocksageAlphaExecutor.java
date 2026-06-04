@@ -5,8 +5,18 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.URI;
+import java.net.URLEncoder;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -32,7 +42,13 @@ public class StocksageAlphaExecutor {
 
     private final String pythonExecutable;
     private final ObjectMapper json = new ObjectMapper();
-    private static final int DEFAULT_TIMEOUT_SECONDS = 80;
+    private static final int DEFAULT_TIMEOUT_SECONDS = 130;
+    private static final String ENGINE_BASE_URL = "http://127.0.0.1:8200";
+    private static final List<String> POST_COMMANDS = List.of(
+        "portfolio_analysis", "prefetch_data", "stocksage_report");
+    private final HttpClient http = HttpClient.newBuilder()
+        .connectTimeout(Duration.ofSeconds(2))
+        .build();
 
     /** 进度行正则，与 QuantApiController 一致 */
     private static final Pattern PROGRESS_RE = Pattern.compile(
@@ -95,6 +111,11 @@ public class StocksageAlphaExecutor {
     public Map<String, Object> executeWithTimeout(int timeout, TimeUnit unit, String... args)
         throws IOException, InterruptedException {
 
+        Map<String, Object> residentResult = executeResident(timeout, unit, args);
+        if (residentResult != null) {
+            return residentResult;
+        }
+
         File script = findBridgeScript();
         File workDir = script.getParentFile();
 
@@ -150,6 +171,82 @@ public class StocksageAlphaExecutor {
             }
         }
         return Map.of("error", "脚本退出码: " + p.exitValue(), "raw", output);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> executeResident(int timeout, TimeUnit unit, String... args)
+        throws InterruptedException {
+        if (args == null || args.length == 0) return null;
+        String command = args[0];
+        Map<String, Object> params;
+        try {
+            params = parseParams(command, args);
+        } catch (IOException e) {
+            return Map.of("error", "参数读取失败: " + e.getMessage());
+        }
+
+        long timeoutMillis = Math.max(1, unit.toMillis(timeout));
+        try {
+            HttpRequest request;
+            if (POST_COMMANDS.contains(command)) {
+                String body = json.writeValueAsString(params);
+                request = HttpRequest.newBuilder()
+                    .uri(URI.create(ENGINE_BASE_URL + "/" + command))
+                    .timeout(Duration.ofMillis(timeoutMillis))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
+                    .build();
+            } else {
+                request = HttpRequest.newBuilder()
+                    .uri(URI.create(ENGINE_BASE_URL + "/" + command + queryString(params)))
+                    .timeout(Duration.ofMillis(timeoutMillis))
+                    .GET()
+                    .build();
+            }
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                return (Map<String, Object>) json.readValue(response.body(), Map.class);
+            }
+            return Map.of("error", "常驻引擎 HTTP " + response.statusCode());
+        } catch (HttpTimeoutException e) {
+            return Map.of("error", "StocksageAlpha 常驻引擎执行超时");
+        } catch (ConnectException e) {
+            return null;
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    private Map<String, Object> parseParams(String command, String... args) throws IOException {
+        Map<String, Object> params = new LinkedHashMap<>();
+        for (int i = 1; i < args.length; i++) {
+            String arg = args[i];
+            if (!arg.startsWith("--")) continue;
+            String key = arg.substring(2).replace('-', '_');
+            String value = (i + 1 < args.length) ? args[++i] : "";
+            if ("holdings".equals(key) && value.startsWith("@")) {
+                value = Files.readString(new File(value.substring(1)).toPath(), StandardCharsets.UTF_8);
+            }
+            params.put(key, value);
+        }
+        if ("prefetch_data".equals(command) && params.isEmpty()) {
+            return params;
+        }
+        return params;
+    }
+
+    private String queryString(Map<String, Object> params) {
+        if (params.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder("?");
+        boolean first = true;
+        for (Map.Entry<String, Object> e : params.entrySet()) {
+            if (!first) sb.append("&");
+            first = false;
+            sb.append(URLEncoder.encode(e.getKey(), StandardCharsets.UTF_8));
+            sb.append("=");
+            sb.append(URLEncoder.encode(String.valueOf(e.getValue()), StandardCharsets.UTF_8));
+        }
+        return sb.toString();
     }
 
     // ── SSE 流式执行 ─────────────────────────────────────────────────────
