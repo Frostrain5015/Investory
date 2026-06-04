@@ -1215,83 +1215,66 @@ def tool_suggest_strategy_optimizations(backtest_id: int = None, strategy_id: in
 
 # ── Memory / Knowledge Base ──────────────────────────────────────────────
 
-# ── Vector memory (Phase 3) ──────────────────────────────────────────────────
-# Replaces the old flat ai_chat_history role='memory' with content + embedding
-# stored in ai_memory. Embeddings come from DashScope text-embedding-v3 (same
-# OpenAI-compatible /embeddings endpoint as the chat API). Per-user ≤50 vectors
-# × ~6KB each → brute-force cosine in Python is effectively instant.
+# ── Lexical memory recall ────────────────────────────────────────────────────
+# Memories are short user facts stored in ai_memory (≤50/user). Recall is keyless
+# and self-contained: character n-gram cosine in pure Python — no embedding API,
+# no key, no model, instant for ≤50 rows. (DeepSeek has no /embeddings endpoint,
+# and we deliberately keep zero external embedding dependency.) The legacy
+# `embedding` column is left untouched; we read/score `content` only.
 
-_EMBED_CACHE = {}  # content_hash -> embedding list, lives for the process lifetime
-
-
-def _get_embedding(text: str) -> list:
-    """Return a float list embedding for text, or [] on failure. Cached in-process."""
-    import hashlib, json as _json
-    h = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    if h in _EMBED_CACHE:
-        return _EMBED_CACHE[h]
-    try:
-        import urllib.request
-        api_key = os.environ.get("AI_API_KEY", "")
-        api_base = os.environ.get("AI_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1")
-        req = urllib.request.Request(
-            f"{api_base}/embeddings",
-            data=_json.dumps({"model": "text-embedding-v3", "input": text}).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = _json.loads(resp.read().decode("utf-8"))
-            emb = data["data"][0]["embedding"]
-            _EMBED_CACHE[h] = emb
-            return emb
-    except Exception:
-        return []
+def _ngram_counts(text: str) -> dict:
+    """Character uni+bi-gram term-frequency map. Char grams handle Chinese (no
+    word segmentation needed) and degrade gracefully for latin text."""
+    import re
+    t = re.sub(r"\s+", "", (text or "").lower())
+    grams: dict = {}
+    for n in (1, 2):
+        for i in range(len(t) - n + 1):
+            g = t[i:i + n]
+            grams[g] = grams.get(g, 0) + 1
+    return grams
 
 
-def _cosine_sim(a: list, b: list) -> float:
-    """Cosine similarity between two equal-length float lists."""
-    if not a or not b or len(a) != len(b):
+def _text_sim(a: str, b: str) -> float:
+    """Cosine similarity over character n-gram term frequencies, in [0, 1].
+    1.0 = identical text; keyword/substring overlap drives the score."""
+    ga, gb = _ngram_counts(a), _ngram_counts(b)
+    if not ga or not gb:
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(y * y for y in b) ** 0.5
-    return dot / (na * nb) if na > 0 and nb > 0 else 0.0
+    common = ga.keys() & gb.keys()
+    dot = sum(ga[g] * gb[g] for g in common)
+    na = sum(v * v for v in ga.values()) ** 0.5
+    nb = sum(v * v for v in gb.values()) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
 
 
 def tool_remember(user_id: int, fact: str) -> str:
-    """用户主动要求记住的信息。生成embedding并持久化，与已有记忆去重（余弦>0.92视为重复则更新）。"""
-    import json as _json
+    """用户主动要求记住的信息。持久化并与已有记忆去重（词法相似>0.85视为重复则更新）。"""
     content = fact[:2000]
-    emb = _get_embedding(content)
     conn = get_db_conn(); cur = conn.cursor()
     try:
-        # Check for near-duplicates (cosine > 0.92) — update instead of insert.
-        cur.execute("SELECT id, embedding FROM ai_memory WHERE user_id=%s AND embedding IS NOT NULL", (user_id,))
+        # Near-duplicate check (lexical sim > 0.85) — update instead of insert.
+        cur.execute("SELECT id, content FROM ai_memory WHERE user_id=%s", (user_id,))
         dup_id = None
-        for rid, raw in cur.fetchall():
-            if not raw: continue
-            try:
-                old_emb = _json.loads(raw)
-            except Exception:
-                old_emb = []
-            if _cosine_sim(emb, old_emb) > 0.92:
+        for rid, old_content in cur.fetchall():
+            if _text_sim(content, old_content or "") > 0.85:
                 dup_id = rid
                 break
         if dup_id:
-            cur.execute("UPDATE ai_memory SET content=%s, embedding=%s WHERE id=%s",
-                        (content, _json.dumps(emb) if emb else None, dup_id))
+            cur.execute("UPDATE ai_memory SET content=%s WHERE id=%s", (content, dup_id))
             conn.commit()
             cur.close(); conn.close()
             return "已更新（与已有记忆去重）"
-        # Insert new
-        cur.execute("INSERT INTO ai_memory (user_id, content, embedding) VALUES (%s, %s, %s)",
-                     (user_id, content, _json.dumps(emb) if emb else None))
+        # Insert new (embedding column left NULL — recall is lexical now)
+        cur.execute("INSERT INTO ai_memory (user_id, content) VALUES (%s, %s)",
+                     (user_id, content))
         conn.commit()
         # Cap: keep at most 50 per user (drop the oldest entries)
         cur.execute("DELETE FROM ai_memory WHERE user_id=%s AND id NOT IN (SELECT id FROM (SELECT id FROM ai_memory WHERE user_id=%s ORDER BY id DESC LIMIT 50) AS t)",
                      (user_id, user_id))
         conn.commit()
         cur.close(); conn.close()
-        return "已记住" if emb else "已记住（未生成向量）"
+        return "已记住"
     except Exception as e:
         conn.rollback()
         cur.close(); conn.close()
@@ -1299,33 +1282,25 @@ def tool_remember(user_id: int, fact: str) -> str:
 
 
 def _recall_memories(user_id: int, query: str) -> str:
-    """Embed the latest user message, cosine-recall top-k ≤6 relevant
-    memories, and return them as a formatted string for system-prompt injection.
-    If no embedding available (API key missing, etc.), returns empty string."""
-    emb = _get_embedding(query)
-    if not emb:
+    """Lexically recall the top ≤6 memories relevant to the latest user message
+    and return them formatted for system-prompt injection. Keyless and instant;
+    returns empty string when nothing is relevant enough."""
+    if not (query or "").strip():
         return ""
-    import json as _json
     conn = get_db_conn(); cur = conn.cursor()
     try:
-        cur.execute("SELECT id, content, embedding FROM ai_memory WHERE user_id=%s AND embedding IS NOT NULL", (user_id,))
+        cur.execute("SELECT content FROM ai_memory WHERE user_id=%s", (user_id,))
         scored = []
-        for _, content, raw in cur.fetchall():
-            try:
-                mem_emb = _json.loads(raw) if raw else []
-            except Exception:
-                mem_emb = []
-            sim = _cosine_sim(emb, mem_emb)
-            if sim > 0.5:  # relevance threshold
+        for (content,) in cur.fetchall():
+            sim = _text_sim(query, content or "")
+            if sim > 0.08:  # relevance floor for char-ngram cosine
                 scored.append((sim, content))
         cur.close(); conn.close()
         scored.sort(reverse=True)
         top = scored[:6]
         if not top:
             return ""
-        lines = []
-        for sim, content in top:
-            lines.append(f"- {content}")
+        lines = [f"- {content}" for _, content in top]
         return "用户相关记忆（当前话题的上下文参考）：\n" + "\n".join(lines)
     except Exception:
         cur.close(); conn.close()
