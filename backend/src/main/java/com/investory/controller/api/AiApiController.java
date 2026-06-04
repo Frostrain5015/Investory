@@ -35,8 +35,8 @@ public class AiApiController {
     private String defaultKey;
 
     private static final String DEFAULT_PROVIDER = "openai_compat";
-    private static final String DEFAULT_MODEL   = "qwen-plus-latest";
-    private static final String DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+    private static final String DEFAULT_MODEL   = "deepseek-v4-pro";
+    private static final String DEFAULT_BASE_URL = "https://api.deepseek.com";
 
     private boolean isSupportedProvider(String provider) {
         return DEFAULT_PROVIDER.equals(provider) || "anthropic".equals(provider);

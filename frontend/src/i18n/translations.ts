@@ -271,7 +271,7 @@ const zh = {
     aiBaseUrl: "API 端点地址",
     aiSaveBtn: "保存设置",
     aiResetBtn: "恢复默认",
-    aiDefaultNote: "默认服务商：阿里云百炼",
+    aiDefaultNote: "默认服务商：DeepSeek",
     aiSaveSuccess: "AI 设置已保存",
     aiResetSuccess: "已恢复系统默认 API",
     changePassword: "修改密码",

@@ -2641,7 +2641,7 @@ def get_proxy():
 
 def _needs_proxy(api_base: str) -> bool:
     """Domestic Chinese APIs don't need proxy. Only use proxy for overseas endpoints."""
-    domestic_domains = ["aliyuncs.com", "aliyun.com", "bailian", "dashscope"]
+    domestic_domains = ["aliyuncs.com", "aliyun.com", "bailian", "dashscope", "deepseek.com"]
     if api_base and any(d in api_base for d in domestic_domains):
         return False
     return True
@@ -2656,18 +2656,16 @@ def _needs_proxy(api_base: str) -> bool:
 # Fast models: general chat, tool calling, no deep reasoning needed.
 # Ordered by intelligence: qwen3.7-plus > qwen3.6-plus > deepseek-v3.2 > glm-5.1 > qwen-plus > qwen-flash.
 FAST_MODEL_CHAIN = [
-    "qwen3.7-plus",
-    "qwen3.6-plus",
+    "deepseek-v4-flash",
     "qwen-flash",
 ]
 
 # Reasoning models: deep thinking, complex multi-step analysis.
 # Ordered: deepseek-v4-pro > qwen3.7-max > deepseek-r1 > qwq-plus > qwen3.6-max-preview.
 REASONING_MODEL_CHAIN = [
-    "glm-5.1",
-    "qwen3.7-max",
     "deepseek-v4-pro",
-    "qwen3.6-max-preview",
+    "qwen3.7-max",
+    "qwen-flash",
 ]
 
 # Errors that should NOT trigger fallback (retrying with another model won't help).

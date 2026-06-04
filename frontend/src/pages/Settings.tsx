@@ -44,8 +44,8 @@ function Segments<T extends string>({ value, options, onChange }: {
 }
 
 const inputCls = 'w-full h-9 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-slate-300 dark:focus:ring-slate-600 transition placeholder:text-slate-400'
-const DEFAULT_OPENAI_COMPAT_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
-const DEFAULT_OPENAI_COMPAT_MODEL = 'qwen-plus-latest'
+const DEFAULT_OPENAI_COMPAT_BASE_URL = 'https://api.deepseek.com'
+const DEFAULT_OPENAI_COMPAT_MODEL = 'deepseek-v4-pro'
 
 type ApiFormat = 'openai_compat' | 'anthropic'
 
