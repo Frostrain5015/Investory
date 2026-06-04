@@ -13,8 +13,8 @@
 
     <groupId>com.investory</groupId>
     <artifactId>investory</artifactId>
-    <version>5.6.5</version>
-    <name>盈亏鉴 / Investory</name>
+    <version>6.0.0</version>
+    <name>Investory</name>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>

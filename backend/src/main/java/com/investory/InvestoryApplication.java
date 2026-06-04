@@ -5,7 +5,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * 盈亏鉴（Investory）应用程序入口类。
+ * Investory 应用程序入口类。
  *
  * <p>标注了以下核心注解：
  * <ul>

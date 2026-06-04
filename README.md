@@ -1,3 +1,5 @@
+**[English](./README.md) | [中文](./README_zh-CN.md)**
+
 # Investory
 
 A full-featured personal investment portfolio tracker with quantitative analysis, strategy backtesting, and an AI-powered investment assistant.
@@ -52,7 +54,7 @@ Supports A-shares (Shanghai/Shenzhen), Hong Kong stocks, and US equities with mu
 - Deep thinking mode for complex analysis
 - Tool use: can trigger portfolio analysis and backtests mid-conversation
 - Saves AI-generated strategies directly to the backtest library
-- Configurable provider: Alibaba Cloud Bailian (default, `qwen-plus`), OpenAI, DeepSeek, Moonshot, Zhipu GLM, Anthropic Claude, or any OpenAI-compatible endpoint
+- Configurable provider: Alibaba Cloud Bailian, OpenAI, DeepSeek, Moonshot, Zhipu GLM, Anthropic Claude, or any OpenAI-compatible endpoint
 
 ### Settings
 - Light / dark / system theme
@@ -97,7 +99,22 @@ Supports A-shares (Shanghai/Shenzhen), Hong Kong stocks, and US equities with mu
 | Animation | Framer Motion 12 |
 | Icons | Lucide React |
 
-The Maven build automatically compiles the frontend (`tsc -b && vite build`) and copies the output into `backend/src/main/resources/static/` before packaging the JAR.
+### Desktop
+
+| | |
+|---|---|
+| Framework | Electron 33 |
+| Auto-update | electron-updater |
+| Build tool | electron-builder |
+
+### Python Scripts
+
+| | |
+|---|---|
+| Runtime | Python 3.8+ |
+| Data fetching | Yahoo Finance, Sina Finance, East Money |
+| AI Agent | Custom agent framework with tool use |
+| Backtesting | Custom backtest engine |
 
 ---
 
@@ -105,28 +122,55 @@ The Maven build automatically compiles the frontend (`tsc -b && vite build`) and
 
 ```
 investory/
-├── backend/
-│   ├── pom.xml
-│   └── src/main/java/com/investory/
-│       ├── InvestoryApplication.java
-│       ├── controller/
-│       │   ├── api/          # REST endpoints
-│       │   └── page/         # Thymeleaf page controllers
-│       ├── dao/              # JdbcTemplate repositories
-│       ├── service/
-│       ├── model/
-│       ├── crawler/          # Scheduled market data crawlers
-│       └── config/
-└── frontend/
-    ├── package.json
-    ├── vite.config.ts
-    └── src/
-        ├── pages/            # Dashboard, Holdings, Transactions, Market, Quant, ...
-        ├── components/       # Layout, ChatPanel, CloudChart, ui/*
-        ├── hooks/            # useAuth, useSettings, useTheme
-        ├── services/api.ts
-        └── types/index.ts
+├── backend/                          # Spring Boot (Maven)
+│   ├── pom.xml                       # parent: spring-boot-starter-parent 3.3.5, Java 17
+│   ├── src/main/java/com/investory/
+│   │   ├── InvestoryApplication.java # main class, @SpringBootApplication
+│   │   ├── controller/               # page controllers + api/ REST controllers
+│   │   ├── dao/                      # @Repository + JdbcTemplate (via BaseDao)
+│   │   ├── service/                  # @Service
+│   │   ├── model/                    # POJOs
+│   │   ├── crawler/                  # @Component, @Scheduled
+│   │   └── config/                   # WebConfig (interceptors, static resources)
+│   └── src/main/resources/
+│       ├── application.properties    # datasource, server.servlet.context-path=/investory
+│       ├── templates/                # Thymeleaf HTML
+│       └── static/                   # built frontend output (Vite writes here)
+├── frontend/
+│   ├── package.json                  # scripts: dev, build (tsc -b && vite build)
+│   ├── vite.config.ts                # proxy /investory → localhost:8443, base: /investory/
+│   └── src/
+│       ├── pages/                    # Dashboard, Holdings, Transactions, PnlCalendar, StockDetail, Portfolio, Settings
+│       ├── components/               # Layout, CloudChart, ui/*
+│       ├── hooks/                    # useAuth, useSettings
+│       ├── services/api.ts           # API client (prefix /investory)
+│       └── types/index.ts            # TypeScript interfaces
+├── desktop/
+│   ├── main.js                       # Electron main process
+│   ├── preload.js                    # Preload script (context isolation)
+│   ├── package.json                  # electron-builder configuration
+│   └── assets/                       # App icons and installer images
+└── script/
+    ├── ai_agent.py                   # AI investment assistant (Guanlan)
+    ├── backtest_engine.py            # Strategy backtesting engine
+    ├── fetch_stocks.py               # Market data crawler (A-shares, HK, US)
+    ├── fetch_news.py                 # Financial news aggregator
+    ├── analyze_quant.py              # Quantitative analysis
+    ├── portfolio_style_analyzer.py   # Portfolio style diagnosis
+    ├── optimizer.py                  # Portfolio optimization
+    ├── config.ini                    # Configuration (copy from config.ini.example)
+    └── agent_skills/                 # AI agent tool definitions
 ```
+
+---
+
+## Live Demo
+
+The project is deployed on a cloud server. You can access it directly at:
+
+**https://116.62.179.231:8443/investory/**
+
+> **Note**: The server uses a self-signed SSL certificate. Your browser may show a security warning — click "Advanced" → "Proceed" to continue.
 
 ---
 
@@ -137,6 +181,7 @@ investory/
 - Java 17
 - Maven 3.9+
 - Node.js 20+ / npm
+- Python 3.8+
 - MySQL 8
 
 ### Database
@@ -147,24 +192,18 @@ Create a schema and update credentials in `backend/src/main/resources/applicatio
 CREATE DATABASE investory_db CHARACTER SET utf8mb4;
 ```
 
-### Run in development
+### Backend (Spring Boot)
 
-**Full stack via Spring Boot:**
+The Maven build automatically compiles the frontend (`tsc -b && vite build`) and copies the output into `backend/src/main/resources/static/` before packaging the JAR.
+
+**Full stack build + run:**
 
 ```bash
 export JAVA_HOME=/path/to/jdk-17
 mvn -f backend/pom.xml spring-boot:run -DskipTests
 ```
 
-**Frontend hot-reload (Vite dev server):**
-
-```bash
-cd frontend && npm install && npm run dev
-# → http://localhost:5173/investory/
-# API calls are proxied to localhost:8080
-```
-
-### Build production JAR
+**Build production JAR:**
 
 ```bash
 mvn -f backend/pom.xml package -DskipTests
@@ -172,6 +211,75 @@ java -jar backend/target/investory.jar
 ```
 
 App is served at `https://localhost:8443/investory/`.
+
+### Frontend (Vite)
+
+**Development (hot-reload):**
+
+```bash
+cd frontend
+npm install
+npm run dev
+# → http://localhost:5173/investory/
+# API calls are proxied to localhost:8443
+```
+
+**Build only:**
+
+```bash
+cd frontend
+npm run build
+# Output goes to ../backend/src/main/resources/static/
+```
+
+### Python Scripts
+
+Install dependencies:
+
+```bash
+cd script
+pip install -r requirements.txt
+```
+
+Configure database and proxy settings:
+
+```bash
+cp config.ini.example config.ini
+# Edit config.ini with your MySQL credentials and proxy settings
+```
+
+Run market data crawler:
+
+```bash
+python fetch_stocks.py --market a      # A-shares
+python fetch_stocks.py --market hk     # Hong Kong
+python fetch_stocks.py --market us     # US stocks
+```
+
+Run AI assistant:
+
+```bash
+python ai_agent.py
+```
+
+### Desktop (Electron)
+
+**Development:**
+
+```bash
+cd desktop
+npm install
+npm run build:frontend    # Build frontend for Electron
+npm start                 # Launch Electron app
+```
+
+**Build installer:**
+
+```bash
+cd desktop
+npm run build:exe         # Build NSIS installer (.exe)
+npm run build:msi         # Build MSI installer
+```
 
 ---
 
