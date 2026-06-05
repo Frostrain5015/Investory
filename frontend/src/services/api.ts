@@ -12,7 +12,7 @@ import type {
   MarketIndexItem, MarketNewsItem, ExchangeRatesResponse,
 } from '@/types'
 
-export const BASE = import.meta.env.VITE_API_BASE || '/investory'
+export const BASE = import.meta.env.VITE_API_BASE || ''
 
 function joinUrl(base: string, path: string) {
   return `${base.replace(/\/$/, '')}/${path.replace(/^\//, '')}`

@@ -15,14 +15,19 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 5173,
       proxy: {
-        '/investory': {
+        '/api': {
+          target: 'https://localhost:8443',
+          changeOrigin: true,
+          secure: false,
+        },
+        '/oauth': {
           target: 'https://localhost:8443',
           changeOrigin: true,
           secure: false,
         },
       },
     },
-    base: env.VITE_BASE || '/investory/',
+    base: env.VITE_BASE || '/',
     build: {
       outDir: mode === 'electron' ? '../desktop/dist' : '../backend/src/main/resources/static',
       emptyOutDir: true,

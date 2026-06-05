@@ -9,18 +9,13 @@ import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.security.cert.X509Certificate;
 import java.util.*;
-import java.util.function.Function;
 
 /**
  * MCP 工具注册表 + 执行器。
@@ -43,7 +38,7 @@ public class McpToolRegistry {
     @Value("${server.port:8443}")
     private int serverPort;
 
-    @Value("${server.servlet.context-path:/investory}")
+    @Value("${server.servlet.context-path:}")
     private String contextPath;
 
     private HttpClient http;
@@ -75,18 +70,9 @@ public class McpToolRegistry {
 
     @PostConstruct
     void init() throws Exception {
-        // 内部调用走 localhost 自签 HTTPS：信任所有证书仅限本机回环调用（不出网）。
-        SSLContext ssl = SSLContext.getInstance("TLS");
-        ssl.init(null, new TrustManager[]{new X509TrustManager() {
-            public void checkClientTrusted(X509Certificate[] c, String a) {}
-            public void checkServerTrusted(X509Certificate[] c, String a) {}
-            public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
-        }}, new java.security.SecureRandom());
-        // 关闭主机名校验（localhost vs 证书 CN）
-        var props = System.getProperties();
-        props.setProperty("jdk.internal.httpclient.disableHostnameVerification", "true");
-        this.http = HttpClient.newBuilder().sslContext(ssl).connectTimeout(java.time.Duration.ofSeconds(15)).build();
-        this.apiBase = "https://localhost:" + serverPort + contextPath + "/api";
+        // 内部调用走 localhost HTTP（SSL 由 Nginx 终结）
+        this.http = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(15)).build();
+        this.apiBase = "http://localhost:" + serverPort + contextPath + "/api";
         registerTools();
     }
 

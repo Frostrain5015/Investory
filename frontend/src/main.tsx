@@ -22,7 +22,7 @@ window.addEventListener('vite:preloadError', (e) => {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <BrowserRouter basename={import.meta.env.VITE_BASE || '/investory'}>
+    <BrowserRouter basename={import.meta.env.VITE_BASE || '/'}>
       <App />
     </BrowserRouter>
   </StrictMode>,

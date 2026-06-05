@@ -38,9 +38,9 @@ spring.thymeleaf.encoding=UTF-8
 ai.default.key=${AI_DEFAULT_KEY:}
 ai.title.enabled=${AI_TITLE_ENABLED:false}
 
-# Frost ID OAuth 2.1 configuration (secrets via env vars)
-frostid.oauth.client-id=${FROSTID_CLIENT_ID:xpozx7wXWUBpdfAbOFnzputE_r7C3hecBWy0}
-frostid.oauth.client-secret=${FROSTID_CLIENT_SECRET:1a7d09743a325325fdd3a3b1f13c9205dc3bdf175fe9fb2e9f7478beb2389ca3}
+# Frost ID OAuth 2.1 configuration (secrets via env vars, no hardcoded defaults)
+frostid.oauth.client-id=${FROSTID_CLIENT_ID:}
+frostid.oauth.client-secret=${FROSTID_CLIENT_SECRET:}
 frostid.oauth.authorize-url=${FROSTID_AUTHORIZE_URL:https://116.62.179.231:4443/oauth/authorize}
 frostid.oauth.token-url=${FROSTID_TOKEN_URL:http://127.0.0.1:4000/oauth/token}
 frostid.oauth.userinfo-url=${FROSTID_USERINFO_URL:http://127.0.0.1:4000/oauth/userinfo}

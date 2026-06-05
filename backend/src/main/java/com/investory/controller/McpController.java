@@ -38,7 +38,7 @@ public class McpController {
     @Autowired private McpTokenDao tokenDao;
     @Autowired private McpToolRegistry registry;
 
-    @Value("${server.servlet.context-path:/investory}")
+    @Value("${server.servlet.context-path:}")
     private String contextPath;
 
     @PostMapping(value = "/mcp", consumes = MediaType.ALL_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)

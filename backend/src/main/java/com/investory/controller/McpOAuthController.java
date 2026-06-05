@@ -32,7 +32,7 @@ public class McpOAuthController {
 
     @Autowired private McpTokenDao tokenDao;
 
-    @Value("${server.servlet.context-path:/investory}")
+    @Value("${server.servlet.context-path:}")
     private String contextPath;
 
     // ── 发现元数据 ────────────────────────────────────────────────────────

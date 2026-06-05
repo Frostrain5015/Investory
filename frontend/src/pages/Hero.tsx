@@ -31,8 +31,12 @@ export default function Hero() {
       <div className="absolute top-4 right-4 z-20">
         <LangSwitcher dark />
       </div>
-      <div className="absolute bottom-5 left-5 z-20">
+      <div className="absolute bottom-5 left-5 z-20 flex items-center gap-3">
         <span className="text-[10px] text-slate-600 font-light tracking-widest">❄ Frost Tech</span>
+        <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer"
+          className="text-[10px] text-slate-600 font-light tracking-widest hover:text-slate-400 transition-colors">
+          浙ICP备2026040257号-1
+        </a>
       </div>
 
       <div className="relative z-10 flex flex-col items-center justify-center h-full px-4">
