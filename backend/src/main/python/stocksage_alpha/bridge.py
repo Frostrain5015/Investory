@@ -1220,7 +1220,10 @@ def _resolve_universe_codes(universe: str, intent: str = "") -> list:
             try:
                 from fetcher import get_sw_industry_map
                 imap = get_sw_industry_map()
-                return [code for code, ind in imap.items() if universe in ind][:20]
+                # Strip common Chinese suffixes so "医药板块" matches "医药生物"
+                univ_clean = universe.replace("板块","").replace("行业","").replace("概念","").replace("股","").strip()
+                return [code for code, ind in imap.items()
+                        if (universe in ind or ind in universe or (univ_clean and univ_clean in ind))][:20]
             except Exception:
                 return []
 
@@ -1230,8 +1233,9 @@ def _resolve_universe_codes(universe: str, intent: str = "") -> list:
             from fetcher import get_sw_industry_map
             imap = get_sw_industry_map()
             all_industries = sorted(set(imap.values()))
+            intent_clean = intent.replace("板块","").replace("行业","").replace("概念","").replace("股","").strip()
             for ind in all_industries:
-                if ind and ind in intent:
+                if ind and (ind in intent or intent in ind or (intent_clean and intent_clean in ind)):
                     codes = [code for code, i in imap.items() if i == ind][:20]
                     if codes:
                         print(f"  [信息] 从 intent 中检测到行业「{ind}」，范围缩小至 {len(codes)} 只", flush=True)
