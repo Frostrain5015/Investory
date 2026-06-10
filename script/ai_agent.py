@@ -2012,13 +2012,17 @@ def tool_get_global_indices() -> dict:
             WHERE s.symbol = %s ORDER BY sp.trade_date DESC LIMIT 2
         """, (symbol,))
         rows = cur.fetchall()
-        if len(rows) >= 2:
-            price = float(rows[0][1]); prev = float(rows[1][1])
-            chg = price - prev; chg_pct = (chg / prev) * 100 if prev else 0
-            # Include stockId + symbol so the model can add the index to watchlist.
+        if len(rows) >= 1:
+            price = float(rows[0][1] or 0)
+            if len(rows) >= 2:
+                prev = float(rows[1][1] or 0)
+                chg = price - prev
+                chg_pct = (chg / prev) * 100 if prev else 0
+            else:
+                chg = 0; chg_pct = 0
             results.append({"stockId": rows[0][0], "symbol": symbol, "name": name, "country": country,
                 "price": round(price, 2), "change": round(chg, 2),
-                "changePct": round(chg_pct, 2), "date": str(rows[0][1])})
+                "changePct": round(chg_pct, 2), "date": str(rows[0][2])})
     cur.close(); conn.close()
     return {"indices": results, "note": f"共{len(results)}个指数。指数可加自选：用其 stockId 调 confirm_watchlist(action='add')。"}
 

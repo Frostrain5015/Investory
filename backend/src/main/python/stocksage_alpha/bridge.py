@@ -1198,42 +1198,63 @@ def _build_stock_report(symbol: str) -> dict:
 _CMDS = None  # lazy: populated on first dispatch (cmd_* are defined above)
 
 
-def _resolve_universe_codes(universe: str) -> list:
-    """Resolve a universe description to a list of 6-digit stock codes."""
+def _resolve_universe_codes(universe: str, intent: str = "") -> list:
+    """Resolve a universe description to a list of 6-digit stock codes.
+    When universe is "all", also checks the intent string for known industry
+    names so the LLM doesn't need to explicitly set universe for sector picks."""
     try:
         from research import normalize_code
     except ImportError:
         def normalize_code(c): return c
 
-    if universe in ("all", ""):
-        uf = ROOT / "data" / "universe_main.json"
-        if uf.exists():
-            codes = json.loads(uf.read_text(encoding="utf-8"))
-            return [c[:6] if len(c) > 6 else c for c in codes[:200]]
-        try:
-            from fetcher import fetch_csi300
-            return fetch_csi300()[:200]
-        except Exception:
-            return []
-    elif universe == "csi300":
-        try:
-            from fetcher import fetch_csi300
-            return fetch_csi300()
-        except Exception:
-            return []
-    elif universe == "csi500":
-        try:
-            from fetcher import fetch_csi500
-            return fetch_csi500()
-        except Exception:
-            return []
-    else:
+    if universe and universe not in ("all", ""):
+        # Explicit universe takes priority
+        if universe == "csi300":
+            try:
+                from fetcher import fetch_csi300
+                return fetch_csi300()
+            except Exception:
+                return []
+        elif universe == "csi500":
+            try:
+                from fetcher import fetch_csi500
+                return fetch_csi500()
+            except Exception:
+                return []
+        else:
+            try:
+                from fetcher import build_industry_map
+                imap = build_industry_map()
+                return [code for code, ind in imap.items() if universe in ind][:100]
+            except Exception:
+                return []
+
+    # universe is "all" or empty — try to auto-detect industry from intent
+    if intent.strip():
         try:
             from fetcher import build_industry_map
             imap = build_industry_map()
-            return [code for code, ind in imap.items() if universe in ind][:100]
+            all_industries = sorted(set(imap.values()))
+            # Match any known industry/substring in the intent
+            for ind in all_industries:
+                if ind and ind in intent:
+                    codes = [code for code, i in imap.items() if i == ind][:100]
+                    if codes:
+                        print(f"  [信息] 从 intent 中检测到行业「{ind}」，范围缩小至 {len(codes)} 只", flush=True)
+                        return codes
         except Exception:
-            return []
+            pass
+
+    # Fallback to full universe
+    uf = ROOT / "data" / "universe_main.json"
+    if uf.exists():
+        codes = json.loads(uf.read_text(encoding="utf-8"))
+        return [c[:6] if len(c) > 6 else c for c in codes[:200]]
+    try:
+        from fetcher import fetch_csi300
+        return fetch_csi300()[:200]
+    except Exception:
+        return []
 
 
 def _build_pick_stocks_report(intent: str, universe: str = "all", top_n: int = 10) -> dict:
@@ -1277,7 +1298,7 @@ def _build_pick_stocks_report(intent: str, universe: str = "all", top_n: int = 1
 
     # 4. Resolve universe
     universe_label = universe if universe else "全市场"
-    codes = _resolve_universe_codes(universe)
+    codes = _resolve_universe_codes(universe, intent)
     if not codes:
         return {"error": f"无法解析选股范围: {universe}"}
 
