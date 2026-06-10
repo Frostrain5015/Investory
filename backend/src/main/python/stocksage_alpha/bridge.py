@@ -301,7 +301,7 @@ def _scan_main():
         import akshare as ak
         try:
             df = ak.index_stock_cons_csindex(symbol="000300")
-            universe = [fetcher.normalize_code(c) for c in df["成分券代码"].tolist()[:50]]
+            universe = [fetcher.normalize_code(c) for c in df["成分券代码"].tolist()[:20]]
         except Exception:
             return output_json({"error": "无法加载股票池，请先配置 data/universe_main.json"})
 
@@ -339,7 +339,7 @@ def _scan_main():
         })
 
     candidates = []
-    for s in scored[:30]:
+    for s in scored[:20]:
         if not s.get("error") and s.get("buy_score", 0) > 0:
             candidates.append({
                 "code": s["code"], "name": s.get("name", s["code"]),
@@ -391,7 +391,7 @@ def _scan_technical_resonance():
                              "gap_frequency", "atr_normalized", "volume_ratio")}
     universe = [fetcher.normalize_code(c) for c in _load_universe_fallback(50)]
     scored = score_universe(universe, tech_weights, max_workers=8)
-    alerts = [s for s in scored[:30] if not s.get("error") and s.get("total_score", 0) >= 50][:10]
+    alerts = [s for s in scored[:20] if not s.get("error") and s.get("total_score", 0) >= 50][:10]
     _format_scan_output(alerts, scored, "golden_cross")
 
 
@@ -402,7 +402,7 @@ def _scan_hot_list():
     try:
         import akshare as ak
         df = ak.stock_hot_rank_em()
-        hot_codes = [fetcher.normalize_code(str(c)) for c in df["代码"].tolist()[:30]]
+        hot_codes = [fetcher.normalize_code(str(c)) for c in df["代码"].tolist()[:20]]
     except Exception:
         return output_json({"error": "无法获取热榜数据"})
     hot_weights = dict(FACTOR_WEIGHTS_BULL)
@@ -422,7 +422,7 @@ def _scan_chip_concentration():
         chip_weights[k] = max(chip_weights.get(k, 0), 2.0)
     universe = [fetcher.normalize_code(c) for c in _load_universe_fallback(50)]
     scored = score_universe(universe, chip_weights, max_workers=8)
-    alerts = [s for s in scored[:30] if not s.get("error") and s.get("total_score", 0) >= 45][:10]
+    alerts = [s for s in scored[:20] if not s.get("error") and s.get("total_score", 0) >= 45][:10]
     _format_scan_output(alerts, scored, "chip")
 
 
@@ -1207,20 +1207,20 @@ def _resolve_universe_codes(universe: str, intent: str = "") -> list:
         if universe == "csi300":
             try:
                 from fetcher import get_index_constituents
-                return get_index_constituents("000300")
+                return get_index_constituents("000300")[:20]
             except Exception:
                 return []
         elif universe == "csi500":
             try:
                 from fetcher import get_index_constituents
-                return get_index_constituents("000905")
+                return get_index_constituents("000905")[:20]
             except Exception:
                 return []
         else:
             try:
                 from fetcher import get_sw_industry_map
                 imap = get_sw_industry_map()
-                return [code for code, ind in imap.items() if universe in ind][:100]
+                return [code for code, ind in imap.items() if universe in ind][:20]
             except Exception:
                 return []
 
@@ -1232,7 +1232,7 @@ def _resolve_universe_codes(universe: str, intent: str = "") -> list:
             all_industries = sorted(set(imap.values()))
             for ind in all_industries:
                 if ind and ind in intent:
-                    codes = [code for code, i in imap.items() if i == ind][:100]
+                    codes = [code for code, i in imap.items() if i == ind][:20]
                     if codes:
                         print(f"  [信息] 从 intent 中检测到行业「{ind}」，范围缩小至 {len(codes)} 只", flush=True)
                         return codes
@@ -1243,11 +1243,11 @@ def _resolve_universe_codes(universe: str, intent: str = "") -> list:
     uf = ROOT / "data" / "universe_main.json"
     if uf.exists():
         codes = json.loads(uf.read_text(encoding="utf-8"))
-        return [c[:6] if len(c) > 6 else c for c in codes[:200]]
-    # Last resort: get ~200 liquid stocks from index
+        return [c[:6] if len(c) > 6 else c for c in codes[:20]]
+    # Last resort: get liquid stocks from index
     try:
         from fetcher import get_index_constituents
-        return get_index_constituents("000300")[:200]
+        return get_index_constituents("000300")[:20]
     except Exception:
         return []
 
@@ -1299,12 +1299,28 @@ def _build_pick_stocks_report(intent: str, universe: str = "all", top_n: int = 1
 
     scanned = len(codes)
 
-    # 5. Score the universe
-    try:
-        from strategies._scoring import score_universe, filter_buys
-        scored = score_universe(codes, combined, max_workers=8)
-    except Exception as e:
-        return {"error": f"评分引擎失败: {e}"}
+    # 5. Score the universe with per-stock timeout (some fetchers hang)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from functools import partial
+    from strategies._scoring import filter_buys
+    from factors import weights_from_config_dict
+    from report.utils import score_one_buy as _score_one_buy
+    fw = weights_from_config_dict(combined)
+    score_fn = partial(_score_one_buy, weights=fw)
+    scored = []
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        futs = {ex.submit(score_fn, c): c for c in codes}
+        try:
+            for fut in as_completed(futs, timeout=90):
+                try:
+                    scored.append(fut.result())
+                except Exception:
+                    pass
+        except concurrent.futures.TimeoutError:
+            pass  # Return partial results collected so far
+    # Any stragglers past 90s are skipped silently
+    if not scored:
+        return {"error": "评分超时：所有股票均未能在 90 秒内完成分析"}
 
     # 6. Filter
     buy_trig = 55 if regime in ("BEAR", "CRISIS") else 50
