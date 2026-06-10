@@ -1202,6 +1202,49 @@ def _resolve_universe_codes(universe: str, intent: str = "") -> list:
     """Resolve a universe description to a list of 6-digit stock codes.
     When universe is "all", also checks the intent string for known industry
     names so the LLM doesn't need to explicitly set universe for sector picks."""
+
+    # Common user-facing industry names → Shenwan industry names in DB
+    _INDUSTRY_ALIASES = {
+        "航天": "国防军工", "航空": "国防军工", "军工": "国防军工", "国防": "国防军工",
+        "银行": "银行", "保险": "银行", "券商": "非银金融", "证券": "非银金融",
+        "白酒": "食品饮料", "食品": "食品饮料", "饮料": "食品饮料",
+        "房地产": "房地产", "地产": "房地产",
+        "新能源": "电力设备", "光伏": "电力设备", "风电": "电力设备",
+        "半导体": "电子", "芯片": "电子", "消费电子": "电子",
+        "医药": "医药生物", "医疗": "医药生物", "医": "医药生物",
+        "煤炭": "煤炭", "钢铁": "钢铁",
+        "有色": "有色金属", "黄金": "有色金属",
+        "石油": "石油石化", "石化": "石油石化",
+        "汽车": "汽车", "新能源车": "汽车",
+        "家电": "家用电器",
+        "纺织": "纺织服饰", "服装": "纺织服饰",
+        "传媒": "传媒", "游戏": "传媒",
+        "计算机": "计算机", "软件": "计算机", "AI": "计算机",
+        "通信": "通信", "5G": "通信",
+        "建筑": "建筑装饰", "基建": "建筑装饰",
+        "机械": "机械设备",
+        "电力": "公用事业", "公用事业": "公用事业",
+        "交运": "交通运输", "运输": "交通运输",
+        "社服": "社会服务", "旅游": "社会服务",
+        "轻工": "轻工制造", "造纸": "轻工制造",
+        "化工": "基础化工",
+        "农业": "农林牧渔", "养殖": "农林牧渔",
+        "商贸": "商贸零售", "零售": "商贸零售",
+        "建材": "建筑材料", "水泥": "建筑材料",
+        "环保": "环保",
+        "军工": "国防军工",
+    }
+
+    # Try alias first
+    if universe and universe not in ("all", ""):
+        alias_target = None
+        for alias, target in _INDUSTRY_ALIASES.items():
+            if alias in universe or universe in alias:
+                alias_target = target
+                break
+        if alias_target:
+            universe = alias_target
+
     if universe and universe not in ("all", ""):
         # Explicit universe takes priority
         if universe == "csi300":
@@ -1217,29 +1260,80 @@ def _resolve_universe_codes(universe: str, intent: str = "") -> list:
             except Exception:
                 return []
         else:
+            codes = []
             try:
                 from fetcher import get_sw_industry_map
                 imap = get_sw_industry_map()
-                # Strip common Chinese suffixes so "医药板块" matches "医药生物"
                 univ_clean = universe.replace("板块","").replace("行业","").replace("概念","").replace("股","").strip()
-                return [code for code, ind in imap.items()
+                codes = [code for code, ind in imap.items()
                         if (universe in ind or ind in universe or (univ_clean and univ_clean in ind))][:20]
             except Exception:
-                return []
+                pass
+            if codes:
+                return codes
+            # Industry match failed — search stock names in DB so ANY keyword works
+            try:
+                import pymysql
+                conn = pymysql.connect(
+                    host="localhost", port=3306, database="investory",
+                    user="root", password="Phy80923883",
+                    charset="utf8mb4", autocommit=True)
+                cur = conn.cursor()
+                keyword = univ_clean or universe
+                cur.execute(
+                    "SELECT symbol FROM stocks WHERE name LIKE %s OR symbol LIKE %s LIMIT 20",
+                    (f"%{keyword}%", f"%{keyword}%"))
+                result = [r[0][:6] if len(r[0]) > 6 else r[0] for r in cur.fetchall()]
+                cur.close(); conn.close()
+                if result:
+                    print(f"  [信息] 按名称搜索到 {len(result)} 只相关股票", flush=True)
+                    return result
+            except Exception:
+                pass
+            return []
 
     # universe is "all" or empty — try to auto-detect industry from intent
     if intent.strip():
+        # Also apply alias mapping for intent-based detection
+        alias_intent = intent
+        for alias, target in _INDUSTRY_ALIASES.items():
+            if alias in intent:
+                alias_intent = intent.replace(alias, target)
+                break
         try:
             from fetcher import get_sw_industry_map
             imap = get_sw_industry_map()
             all_industries = sorted(set(imap.values()))
-            intent_clean = intent.replace("板块","").replace("行业","").replace("概念","").replace("股","").strip()
+            intent_clean = alias_intent.replace("板块","").replace("行业","").replace("概念","").replace("股","").strip()
             for ind in all_industries:
-                if ind and (ind in intent or intent in ind or (intent_clean and intent_clean in ind)):
+                if ind and (ind in alias_intent or alias_intent in ind or (intent_clean and intent_clean in ind)):
                     codes = [code for code, i in imap.items() if i == ind][:20]
                     if codes:
                         print(f"  [信息] 从 intent 中检测到行业「{ind}」，范围缩小至 {len(codes)} 只", flush=True)
                         return codes
+        except Exception:
+            pass
+
+    # Intent industry detection failed — try stock name search
+    if intent.strip():
+        try:
+            import pymysql
+            conn = pymysql.connect(
+                host="localhost", port=3306, database="investory",
+                user="root", password="Phy80923883",
+                charset="utf8mb4", autocommit=True)
+            cur = conn.cursor()
+            kw = intent.replace("板块","").replace("行业","").replace("概念","").replace("股","").replace("好股票","").replace("推荐","").strip()
+            if len(kw) >= 2:
+                cur.execute(
+                    "SELECT symbol FROM stocks WHERE name LIKE %s LIMIT 20",
+                    (f"%{kw}%",))
+                result = [r[0][:6] if len(r[0]) > 6 else r[0] for r in cur.fetchall()]
+                if result:
+                    print(f"  [信息] 按 intent 名称搜索到 {len(result)} 只股票", flush=True)
+                    cur.close(); conn.close()
+                    return result
+            cur.close(); conn.close()
         except Exception:
             pass
 

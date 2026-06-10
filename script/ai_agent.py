@@ -2058,6 +2058,7 @@ TOOLS = _build_tools()
 
 
 TOOL_LABELS = {
+    "pick_stocks": "智能选股",
     "get_portfolio": "读取持仓",
     "get_stock_metrics": "查询量化指标",
     "get_stock_report": "生成StockSage个股报告",
