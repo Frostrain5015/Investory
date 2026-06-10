@@ -1265,8 +1265,13 @@ def _build_pick_stocks_report(intent: str, universe: str = "all", top_n: int = 1
     # 2. Determine market regime for base weights
     regime_result = dispatch("regime_status", {})
     if isinstance(regime_result, dict) and not regime_result.get("error"):
-        regime = regime_result.get("regime", "NORMAL")
-        regime_score_val = regime_result.get("score", 5.0)
+        regime_data = regime_result.get("regime", {})
+        if isinstance(regime_data, dict):
+            regime = regime_data.get("signal", "NORMAL")
+            regime_score_val = float(regime_data.get("score", 5.0))
+        else:
+            regime = str(regime_data) if regime_data else "NORMAL"
+            regime_score_val = 5.0
     else:
         regime = "NORMAL"
         regime_score_val = 5.0
@@ -1300,6 +1305,7 @@ def _build_pick_stocks_report(intent: str, universe: str = "all", top_n: int = 1
     scanned = len(codes)
 
     # 5. Score the universe with per-stock timeout (some fetchers hang)
+    import concurrent.futures
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from functools import partial
     from strategies._scoring import filter_buys
@@ -1308,16 +1314,22 @@ def _build_pick_stocks_report(intent: str, universe: str = "all", top_n: int = 1
     fw = weights_from_config_dict(combined)
     score_fn = partial(_score_one_buy, weights=fw)
     scored = []
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    ex = ThreadPoolExecutor(max_workers=8)
+    try:
         futs = {ex.submit(score_fn, c): c for c in codes}
         try:
-            for fut in as_completed(futs, timeout=90):
+            for fut in as_completed(futs, timeout=95):
                 try:
                     scored.append(fut.result())
                 except Exception:
                     pass
         except concurrent.futures.TimeoutError:
             pass  # Return partial results collected so far
+        # Cancel all remaining futures so ex.__exit__ won't hang on them
+        for fut in futs:
+            fut.cancel()
+    finally:
+        ex.shutdown(wait=False)  # Don't wait for stragglers
     # Any stragglers past 90s are skipped silently
     if not scored:
         return {"error": "评分超时：所有股票均未能在 90 秒内完成分析"}
