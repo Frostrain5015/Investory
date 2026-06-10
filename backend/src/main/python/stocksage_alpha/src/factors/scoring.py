@@ -182,6 +182,30 @@ _WEIGHT_PRESETS: list[tuple[list[str], dict]] = [
     # Earnings revision
     (["分析师上调", "earnings revision", "预期上调"],
      {"earnings_revision": 2.0, "growth": 1.5}),
+    # Value investing (GARP)
+    (["价值投资", "价值股", "value investing", "便宜的好公司"],
+     {"value": 2.5, "quality": 1.5, "growth": 0.5, "momentum": 0.3}),
+    # Tech / growth stocks
+    (["科技", "科技股", "technology", "tech stocks", "成长", "成长股", "growth stocks"],
+     {"growth": 2.0, "momentum": 1.5, "quality": 0.5, "value": 0.3}),
+    # Financials / banks / insurance
+    (["银行", "金融", "保险", "券商", "banks", "financials", "insurance"],
+     {"div_yield": 2.0, "value": 2.0, "quality": 1.0, "low_volatility": 1.5}),
+    # Consumer / healthcare / defense
+    (["消费", "医药", "医疗", "防御", "consumer", "healthcare", "defensive stocks"],
+     {"quality": 2.0, "div_yield": 1.5, "low_volatility": 1.5, "momentum": 0.3}),
+    # Small / mid cap
+    (["小盘", "中小盘", "小市值", "small cap", "mid cap"],
+     {"reversal": 1.5, "momentum": 1.0, "amihud_illiquidity": 1.0}),
+    # Blue chip / large cap
+    (["蓝筹", "大盘", "龙头", "blue chip", "large cap"],
+     {"quality": 2.0, "div_yield": 1.5, "value": 1.0, "low_volatility": 1.5}),
+    # Tech innovation / high growth
+    (["新能源", "半导体", "创新", "innovation", "high growth"],
+     {"growth": 3.0, "momentum": 1.5, "value": 0.3}),
+    # Cyclical stocks
+    (["周期", "cyclical", "周期股", "资源"],
+     {"momentum": 2.0, "value": 1.5, "growth": 0.5}),
 ]
 
 

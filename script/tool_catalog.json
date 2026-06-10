@@ -25,6 +25,11 @@
     "category": "analysis"
   },
   {
+    "name": "pick_stocks",
+    "description": "【选股工具】根据用户投资偏好智能选股。接受自然语言描述（如\"高股息低波动银行股\"、\"成长性好的科技股\"、\"价值投资\"），将意图转化为因子权重和筛选条件，在指定范围内评分筛选，返回带理由的候选列表。仅在用户要求选股、推荐股票、筛选条件选股时调用；简单查个股用 get_stock_price 或 get_stock_report。",
+    "category": "analysis"
+  },
+  {
     "name": "get_backtests",
     "description": "【数据铁律】获取最近的历史回测记录和结果指标。",
     "category": "query"

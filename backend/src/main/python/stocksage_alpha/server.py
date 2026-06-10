@@ -16,6 +16,7 @@ Endpoints (all return the same JSON the CLI prints after `RESULT:`):
   GET  /score_stocks?symbols=1.600519,0.000858
   POST /portfolio_analysis           body: {"holdings": "<json string>"}
   POST /prefetch_data                body: {}
+  GET  /pick_stocks?strategy=value
 
 Bound to 127.0.0.1:8200 (loopback only). Engine calls are serialized by a lock
 because bridge.dispatch() temporarily rebinds a module global (not thread-safe);
@@ -47,7 +48,7 @@ _lock = threading.Lock()
 _CACHE_TTL = 4 * 3600          # 4h: refreshes a few times per trading day
 _CACHEABLE = {"factor_breakdown", "regime_status", "portfolio_analysis",
               "scan_universe", "chip_distribution", "stocksage_report",
-              "stock_report"}
+              "stock_report", "pick_stocks"}
 _cache = {}                    # key -> (epoch, result)
 _cache_lock = threading.Lock()
 

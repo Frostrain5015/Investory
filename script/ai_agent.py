@@ -173,6 +173,15 @@ def _detect_agent_skills(messages: list) -> list:
     if any(k in text for k in ("策略", "回测", "调参", "均线", "信号", "止损", "止盈")) or any(k in low for k in ("strategy", "backtest")):
         skills.append("strategy-backtest")
 
+    if any(k in text for k in ("选股", "推荐股票", "推荐几只", "帮我选", "哪些股票", "哪些好股","筛选股票",
+                                "挑股票", "找股票", "好的股票", "股票池", "适合投资", "值得投资",
+                                "高股息", "低波动", "成长股", "价值股", "价值投资",
+                                "蓝筹", "小盘", "科技股", "银行股", "新能源", "半导体",
+                                "涨的好的", "涨得好的", "涨得好", "好股",
+                                "pick", "recommend stocks", "screen stocks", "stock screener",
+                                "find stocks", "选几只")):
+        skills.append("stock-picking")
+
     if any(k in text for k in ("大盘", "市场", "行情", "全球", "美股", "港股", "汇率", "商品", "宏观", "新闻", "最新消息", "今天发生")):
         skills.append("market-news")
 
@@ -217,6 +226,16 @@ def _build_workflow_hint(messages: list) -> str:
 - 写策略/生成策略：先 consult_kb('策略引擎')，再调用 generate_strategy，第一轮不输出正文。
 - 跑回测：必须使用真实 strategy_id；来源是刚保存的策略或 get_strategies 查询结果，禁止凭空编 ID。
 - 分析回测结果：用 analyze_backtest；优化建议用 suggest_strategy_optimizations。""")
+
+    if "stock-picking" in active_skills:
+        workflows.append(_load_agent_skill("stock-picking") or """【当前工作流：智能选股】
+- 目标是按用户投资偏好筛选候选标的，不要重新讨论工具顺序。
+- 第一轮调用 pick_stocks(intent=用户原话或提炼后的投资偏好, universe=行业或指数范围, top_n=10)。
+- 如果用户指定了行业或板块（如"银行股"、"科技股"），同时设置 universe 参数。
+- intent 参数直接传用户的自然语言描述，不要翻译成因子名。引擎会解析中文/英文关键词到因子权重。
+- 可以把多个偏好合并到一句 intent 里，如"高股息+低波动+银行"。
+- 工具返回后按"候选列表 -> 每只入选理由 -> 风险提示 -> 后续验证建议"结构作答。
+- 不要把候选列表当作交易指令；明确说明这是筛选结果，需要进一步研究。""")
 
     if "market-news" in active_skills:
         workflows.append(_load_agent_skill("market-news") or """【当前工作流：市场/新闻】
@@ -1784,6 +1803,15 @@ def tool_get_daily_picks_report(strategy: str = "main", limit: int = 5) -> dict:
     return _report_llm_result(report)
 
 
+def tool_pick_stocks(intent: str = "", universe: str = "all", top_n: int = 10) -> dict:
+    """Screen stocks by user intent. Returns a structured report."""
+    report = _engine(
+        "pick_stocks",
+        {"intent": intent, "universe": universe, "top_n": min(int(top_n), 20)},
+        STOCKSAGE_ENGINE_TIMEOUT_S,
+    )
+    return _report_llm_result(report)
+
 
 # ── Portfolio optimization tool ─────────────────────────────────────────
 
@@ -1851,6 +1879,11 @@ _PARAM_SCHEMAS = {
         "strategy": {"type": "string", "description": "策略类型: main/golden_cross/hot/chip"},
         "limit": {"type": "integer", "description": "返回给模型的候选数量，默认5"}
     }, "required": []},
+    "pick_stocks": {"type": "object", "properties": {
+        "intent": {"type": "string", "description": "用户投资偏好的自然语言描述，如'高股息低波动银行股'、'成长性好的科技股'、'价值投资'、'反转超跌'、'新能源'。引擎会解析中文关键词到因子权重"},
+        "universe": {"type": "string", "description": "选股范围：'all'=全市场(慢), 'csi300'=沪深300, 'csi500'=中证500, 或行业名称如'银行'、'电子'、'医药生物'。默认'all'"},
+        "top_n": {"type": "integer", "description": "返回候选数量，默认10，最大20"}
+    }, "required": ["intent"]},
     "get_transactions": {"type": "object", "properties": {
         "limit": {"type": "integer", "description": "返回条数，默认20，最大50"}
     }, "required": []},
@@ -2141,6 +2174,12 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
         return tool_get_portfolio_report(portfolio_id)
     elif name == "get_daily_picks_report":
         return tool_get_daily_picks_report(args.get("strategy", "main"), args.get("limit", 5))
+    elif name == "pick_stocks":
+        return tool_pick_stocks(
+            args.get("intent", ""),
+            args.get("universe", "all"),
+            int(args.get("top_n", 10)),
+        )
     elif name == "get_backtests":
         return tool_get_backtests(user_id, args.get("limit", 5))
     elif name == "get_market_regime":

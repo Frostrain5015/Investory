@@ -1198,6 +1198,219 @@ def _build_stock_report(symbol: str) -> dict:
 _CMDS = None  # lazy: populated on first dispatch (cmd_* are defined above)
 
 
+def _resolve_universe_codes(universe: str) -> list:
+    """Resolve a universe description to a list of 6-digit stock codes."""
+    try:
+        from research import normalize_code
+    except ImportError:
+        def normalize_code(c): return c
+
+    if universe in ("all", ""):
+        uf = ROOT / "data" / "universe_main.json"
+        if uf.exists():
+            codes = json.loads(uf.read_text(encoding="utf-8"))
+            return [c[:6] if len(c) > 6 else c for c in codes[:200]]
+        try:
+            from fetcher import fetch_csi300
+            return fetch_csi300()[:200]
+        except Exception:
+            return []
+    elif universe == "csi300":
+        try:
+            from fetcher import fetch_csi300
+            return fetch_csi300()
+        except Exception:
+            return []
+    elif universe == "csi500":
+        try:
+            from fetcher import fetch_csi500
+            return fetch_csi500()
+        except Exception:
+            return []
+    else:
+        try:
+            from fetcher import build_industry_map
+            imap = build_industry_map()
+            return [code for code, ind in imap.items() if universe in ind][:100]
+        except Exception:
+            return []
+
+
+def _build_pick_stocks_report(intent: str, universe: str = "all", top_n: int = 10) -> dict:
+    """Core pick_stocks pipeline: intent -> weights -> score -> filter -> rank."""
+    from factors import DEFAULT_WEIGHTS, parse_weights, weights_from_config_dict
+    from factors.config import REGIME_WEIGHTS
+
+    start_t = time.time()
+
+    # 1. Parse intent into factor weight overrides
+    override_weights = parse_weights(intent) if intent.strip() else DEFAULT_WEIGHTS
+
+    # 2. Determine market regime for base weights
+    regime_result = dispatch("regime_status", {})
+    if isinstance(regime_result, dict) and not regime_result.get("error"):
+        regime = regime_result.get("regime", "NORMAL")
+        regime_score_val = regime_result.get("score", 5.0)
+    else:
+        regime = "NORMAL"
+        regime_score_val = 5.0
+
+    rk = "NORMAL"
+    if regime in ("BEAR", "CRISIS"):
+        rk = regime
+    elif regime == "CAUTION":
+        rk = "CAUTION"
+    elif regime in ("BULL", "EXTREME_BULL"):
+        rk = "BULL"
+
+    # 3. Combine regime base weights with intent overrides
+    base_weights = REGIME_WEIGHTS.get(rk, REGIME_WEIGHTS["NORMAL"])
+    combined = weights_from_config_dict(base_weights)
+    if intent.strip():
+        from dataclasses import fields as _dc_fields
+        default_w = DEFAULT_WEIGHTS
+        for field in _dc_fields(type(combined)):
+            ov = getattr(override_weights, field.name)
+            dv = getattr(default_w, field.name)
+            if ov != dv:
+                setattr(combined, field.name, ov)
+
+    # 4. Resolve universe
+    universe_label = universe if universe else "全市场"
+    codes = _resolve_universe_codes(universe)
+    if not codes:
+        return {"error": f"无法解析选股范围: {universe}"}
+
+    scanned = len(codes)
+
+    # 5. Score the universe
+    try:
+        from strategies._scoring import score_universe, filter_buys
+        scored = score_universe(codes, combined, max_workers=8)
+    except Exception as e:
+        return {"error": f"评分引擎失败: {e}"}
+
+    # 6. Filter
+    buy_trig = 55 if regime in ("BEAR", "CRISIS") else 50
+    sell_guard = 50
+    picks = filter_buys(scored, buy_trig=buy_trig, sell_guard=sell_guard, top_n=top_n)
+
+    elapsed = time.time() - start_t
+
+    # 7. Build markdown report
+    regime_desc = {"BULL": "强势", "NORMAL": "正常", "CAUTION": "谨慎", "BEAR": "弱势", "CRISIS": "危机"}.get(regime, "正常")
+
+    mk_lines = [
+        f"# StockSage 智能选股报告 - {intent or '综合筛选'}",
+        "",
+        f"## 1. 选股概要",
+        f"- 投资偏好：{intent or '综合'}",
+        f"- 选股范围：{universe_label}（{scanned}只股票）",
+        f"- 市场环境：{regime}（{regime_desc}）",
+        f"- 入选候选：{len(picks)}只",
+        f"- 分析耗时：{elapsed:.0f}秒",
+        "",
+        f"## 2. 入选候选",
+    ]
+
+    if picks:
+        mk_lines.append("| 排名 | 代码 | 名称 | 买入分 | 风险分 | 核心亮点 |")
+        mk_lines.append("|------|------|------|--------|--------|----------|")
+        for i, p in enumerate(picks[:top_n], 1):
+            code = p.get("code", "")
+            name = p.get("name", code)
+            bs = p.get("buy_score", 0) or 0
+            ss = p.get("sell_score", 0) or 0
+            bullish = p.get("bullish", []) or []
+            highlights = ";".join(bullish[:3]) if isinstance(bullish, list) else str(bullish)[:60]
+            mk_lines.append(f"| {i} | {code} | {name} | {bs:.1f} | {ss:.1f} | {highlights} |")
+
+        mk_lines.extend(["", "## 3. 候选详情"])
+        for i, p in enumerate(picks[:top_n], 1):
+            code = p.get("code", "")
+            name = p.get("name", code)
+            bs = p.get("buy_score", 0) or 0
+            ss = p.get("sell_score", 0) or 0
+            bullish = p.get("bullish", []) or []
+            bearish = p.get("bearish", []) or []
+            for_text = "、".join(bullish[:3]) if isinstance(bullish, list) else ""
+            against_text = "、".join(bearish[:2]) if isinstance(bearish, list) else ""
+            mk_lines.append(f"")
+            mk_lines.append(f"### {i}. {name}（{code}）")
+            mk_lines.append(f"- 买入分 {bs:.1f} / 风险分 {ss:.1f}")
+            mk_lines.append(f"- 支持证据：{for_text or '无'}")
+            if against_text:
+                mk_lines.append(f"- 风险提示：{against_text}")
+    else:
+        mk_lines.append("在当前筛选条件下未找到符合条件的标的。")
+
+    mk_lines.extend([
+        "",
+        "## 4. 筛选说明",
+        f"- 因子权重来源：{regime}环境权重 + 意图覆盖",
+        f"- 买入阈值：{buy_trig} / 卖出保护：{sell_guard}",
+        "",
+        "## 5. 使用说明",
+        "- 这是基于多因子模型的候选清单，不是交易指令",
+        "- 建议对感兴趣的标的调用 get_stock_report 获取深度审计",
+        f"- 当前市场环境：{regime}（{regime_desc}），请据此调整仓位",
+    ])
+
+    markdown = "\n".join(mk_lines)
+
+    result = {
+        "report_type": "pick_stocks_report",
+        "title": f"StockSage 智能选股 - {intent or '综合筛选'}",
+        "summary": f"在{universe_label}中（{scanned}只），按\"{intent or '综合'}\"偏好筛选出{len(picks)}只候选",
+        "intent": intent,
+        "universe": universe,
+        "regime": regime,
+        "scanned": scanned,
+        "picks": picks[:top_n],
+        "evidence_for": picks[:top_n],
+        "evidence_against": [],
+        "conflicts": [],
+        "regime_adjustment": {"regime": regime, "score": regime_score_val, "adaptation": f"{regime_desc}环境权重"},
+        "data_sources": ["stock_prices", "factor_scores", "market_regime", "industry_map"],
+        "audit_trail": {
+            "engine": "stocksage_alpha",
+            "command": "pick_stocks",
+            "intent": intent,
+            "universe": universe,
+            "top_n": top_n,
+            "regime": regime,
+            "buy_trig": buy_trig,
+            "sell_guard": sell_guard,
+            "scanned": scanned,
+            "elapsed_seconds": round(elapsed, 1),
+        },
+        "llm_context": {
+            "report_type": "pick_stocks_report",
+            "intent": intent,
+            "universe": universe,
+            "regime": regime,
+            "scanned": scanned,
+            "picks": [{
+                "code": p.get("code", ""),
+                "name": p.get("name", ""),
+                "buy_score": p.get("buy_score", 0),
+                "sell_score": p.get("sell_score", 0),
+                "top_factors": (p.get("bullish", []) or [])[:3],
+            } for p in picks[:top_n]],
+        },
+        "markdown": markdown,
+    }
+    return result
+
+
+def cmd_pick_stocks(args):
+    intent = getattr(args, "intent", "") or ""
+    universe = getattr(args, "universe", "all") or "all"
+    top_n = min(int(getattr(args, "top_n", 10) or 10), 20)
+    result = _build_pick_stocks_report(intent, universe, top_n)
+    output_json(result)
+
+
 def _cmd_table():
     global _CMDS
     if _CMDS is None:
@@ -1211,6 +1424,7 @@ def _cmd_table():
             "prefetch_data": cmd_prefetch_data,
             "stocksage_report": cmd_stocksage_report,
             "stock_report": cmd_stock_report,
+            "pick_stocks": cmd_pick_stocks,
         }
     return _CMDS
 
