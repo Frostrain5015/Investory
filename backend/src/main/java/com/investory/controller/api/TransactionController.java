@@ -187,6 +187,9 @@ public class TransactionController {
         BigDecimal feeVal = (fee != null && !fee.isBlank()) ? new BigDecimal(fee) : BigDecimal.ZERO;
         // 资金划转类型不关联股票，直接更新 cash_balances 并插入交易记录
         if ("TRANSFER_IN".equals(type) || "TRANSFER_OUT".equals(type)) {
+            // 余额守卫：转出前检查余额是否足够
+            if ("TRANSFER_OUT".equals(type) && !checkCash(pid, currency, shares))
+                return ResponseEntity.badRequest().body(cashError(pid, currency, shares));
             // TRANSFER_IN 增加现金（正数），TRANSFER_OUT 减少现金（负数）
             BigDecimal amount = "TRANSFER_IN".equals(type) ? shares : shares.negate();
             // ON DUPLICATE KEY UPDATE 确保同币种只有一行余额记录，不重复插入
