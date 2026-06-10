@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle, Brain } from 'lucide-react'
+import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle, Brain, BarChart2 } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { usePrompt } from '@/hooks/use-prompt'
@@ -1325,6 +1325,19 @@ function looksLikeJson(text: string): boolean {
 }
 
 function ReportArtifactChip({ artifact, onOpen }: { artifact: ReportArtifact; onOpen: (artifact: ReportArtifact) => void }) {
+  // Backtest results link to the Research page instead of opening the artifact modal
+  if (artifact.type === 'backtest_result') {
+    const content = (artifact.contentJson ?? artifact.content_json) as Record<string, unknown> | undefined
+    const backtestId = content?.backtest_id as number | undefined
+    const href = backtestId ? `${import.meta.env.BASE_URL}research?backtest=${backtestId}` : `${import.meta.env.BASE_URL}research`
+    return (
+      <a href={href}
+        className="inline-flex items-center gap-2 rounded-full border border-violet-100 bg-violet-50/70 px-3 py-1.5 text-[11px] font-medium text-violet-700 hover:bg-violet-100 hover:border-violet-200 transition-colors">
+        <BarChart2 className="w-3.5 h-3.5" />
+        <span>{artifactLabel(artifact.type)}</span>
+      </a>
+    )
+  }
   return (
     <button onClick={() => onOpen(artifact)}
       className="inline-flex items-center gap-2 rounded-full border border-indigo-100 bg-indigo-50/70 px-3 py-1.5 text-[11px] font-medium text-indigo-700 hover:bg-indigo-100 hover:border-indigo-200 transition-colors">

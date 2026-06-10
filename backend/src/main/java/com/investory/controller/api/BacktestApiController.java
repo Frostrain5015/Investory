@@ -189,14 +189,22 @@ public class BacktestApiController {
                         } catch (Exception ignored) {}
                         Files.deleteIfExists(tmpError);
                     }
+                    String errMsg;
                     if (exitCode != 0) {
-                        session.emitError("回测引擎异常退出 (code=" + exitCode + ")" + errDetail);
+                        errMsg = "回测引擎异常退出 (code=" + exitCode + ")" + errDetail;
                     } else {
-                        session.emitError("回测引擎未产生输出文件" + errDetail);
+                        errMsg = "回测引擎未产生输出文件" + errDetail;
                     }
+                    session.emitError(errMsg);
+                    // Mark the result as failed so the frontend doesn't show a ghost
+                    // "0 trades / 0 return" row from the placeholder insert values
+                    backtestDao.updateResult(resultId, "[]",
+                        "{\"error\":\"" + errMsg.replace("\"", "'") + "\"}", "[]");
                 }
             } catch (Exception e) {
                 session.emitError(e.getMessage());
+                backtestDao.updateResult(resultId, "[]",
+                    "{\"error\":\"" + e.getMessage().replace("\"", "'") + "\"}", "[]");
             } finally {
                 session.clearSession();
             }

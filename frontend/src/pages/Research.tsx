@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Search, BarChart2, FlaskConical } from 'lucide-react'
 import Screener from './Screener'
 import { RiskSection, BacktestSection } from './Quant'
@@ -16,7 +17,9 @@ const TABS: { key: Tab; icon: typeof Search; label: string }[] = [
 ]
 
 export default function Research() {
-  const [tab, setTab] = useState<Tab>('screener')
+  const [searchParams] = useSearchParams()
+  const initialTab = searchParams.get('backtest') ? 'backtest' : 'screener'
+  const [tab, setTab] = useState<Tab>(initialTab)
   const [regime, setRegime] = useState<RegimeStatus | null>(null)
 
   useEffect(() => {

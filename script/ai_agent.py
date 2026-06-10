@@ -1098,6 +1098,7 @@ def tool_run_backtest(strategy_id: int = None, stocks: list = None,
                        f"最大回撤 {metrics.get('maxDrawdownPct', 0):.2f}%　|　"
                        f"{metrics.get('totalTrades', 0)} 笔交易",
             "markdown": md,
+            "backtest_id": db_id,
             "llm_context": {
                 "backtest_id": db_id,
                 "strategy_id": strategy_id,

@@ -307,6 +307,7 @@ export interface BacktestResult {
   metrics_json: string
   trade_log_json: string
   created_at: string
+  metrics_preview?: string
 }
 
 export interface IndicatorDef {

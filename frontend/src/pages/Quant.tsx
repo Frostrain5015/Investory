@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { BASE, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings, getBacktestCompare, analyzePortfolio } from '@/services/api'
 import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
@@ -290,6 +291,7 @@ export function BacktestSection() {
   const toast = useToast()
   const { openChatWith } = useChatContext()
   const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
+  const [searchParams] = useSearchParams()
 
   const ENTRY_INDICATORS = useMemo(() => buildEntryIndicators(t), [t])
   const EXIT_INDICATORS = useMemo(() => [...buildEntryIndicators(t), ...buildExitOnlyIndicators(t)], [t])
@@ -348,6 +350,17 @@ export function BacktestSection() {
 
   useEffect(() => { loadHistory() }, [loadHistory])
   useEffect(() => () => { if (esRef.current) esRef.current.close() }, [])
+
+  // Auto-select backtest from URL query param (?backtest=ID)
+  // This lets the chat artifact link jump to a specific result
+  useEffect(() => {
+    const btId = searchParams.get('backtest')
+    if (btId && !selectedId) {
+      const id = Number(btId)
+      if (id > 0) selectResult(id)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   // Reconnect on mount
   useEffect(() => {
@@ -418,7 +431,17 @@ export function BacktestSection() {
     setSelectedId(id)
     getBacktest(id).then(r => {
       try { setEquityCurve(JSON.parse(r.equity_curve_json)) } catch { setEquityCurve(null) }
-      try { setMetrics(JSON.parse(r.metrics_json)) } catch { setMetrics(null) }
+      try {
+        const parsed = JSON.parse(r.metrics_json)
+        if (parsed && parsed.error) {
+          // Engine failed — show error instead of ghost metrics
+          setMetrics(null)
+          setErrorMsg(parsed.error)
+        } else {
+          setMetrics(parsed)
+          setErrorMsg(null)
+        }
+      } catch { setMetrics(null) }
       try { setTradeLog(JSON.parse(r.trade_log_json)) } catch { setTradeLog(null) }
       setView('list')
     }).catch(() => {})
@@ -703,6 +726,17 @@ export function BacktestSection() {
       )}
     </AnimatePresence>
 
+    {/* Failed backtest result */}
+    {selectedId && !metrics && errorMsg && (
+      <Card>
+        <CardContent className="py-8 text-center">
+          <BarChart2 className="w-8 h-8 text-red-300 mx-auto mb-2" />
+          <p className="text-sm text-red-500 font-medium mb-1">回测引擎执行失败</p>
+          <p className="text-xs text-slate-500 max-w-lg mx-auto">{errorMsg}</p>
+        </CardContent>
+      </Card>
+    )}
+
     {/* Results */}
     {metrics && (
       <div className="space-y-4">
@@ -851,20 +885,23 @@ export function BacktestSection() {
               <th className="text-right font-medium text-slate-500 px-4 py-2" />
             </tr></thead>
             <tbody>
-              {results.map(r => (
+              {results.map(r => {
+                const failed = r.metrics_preview?.startsWith('{"error"')
+                return (
                 <tr key={r.id} className={`border-b border-slate-50 hover:bg-slate-50/50 cursor-pointer ${r.id === selectedId ? 'bg-blue-50/50' : ''}`} onClick={() => selectResult(r.id)}>
                   <td className="px-3 py-2" onClick={e => e.stopPropagation()}>
                     <input type="checkbox" checked={compareIds.has(r.id)}
                       onChange={e => setCompareIds(prev => { const next = new Set(prev); e.target.checked ? next.add(r.id) : next.delete(r.id); return next })}
                       className="w-3.5 h-3.5 rounded cursor-pointer" />
                   </td>
-                  <td className="px-3 py-2 font-medium text-slate-700">{r.name}</td>
-                  <td className="px-3 py-2 hidden sm:table-cell"><span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600">{r.strategy_type === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple}</span></td>
+                  <td className="px-3 py-2 font-medium text-slate-700">{r.name}{failed && <span className="ml-1.5 text-[10px] text-red-400 font-normal">失败</span>}</td>
+                  <td className="px-3 py-2 hidden sm:table-cell"><span className={`inline-flex px-1.5 py-0.5 rounded text-[10px] font-medium ${failed ? 'bg-red-50 text-red-500' : 'bg-slate-100 text-slate-600'}`}>{r.strategy_type === 'advanced' ? q.strategyTypeAdvanced : r.strategy_type === 'walk_forward' ? 'WF' : r.strategy_type === 'optimize' ? '优化' : q.strategyTypeSimple}</span></td>
                   <td className="px-3 py-2 text-slate-400 hidden lg:table-cell">{r.start_date} ~ {r.end_date}</td>
                   <td className="px-3 py-2 text-slate-400 hidden lg:table-cell">{r.created_at?.slice(0, 10)}</td>
                   <td className="px-4 py-2 text-right"><button onClick={e => { e.stopPropagation(); handleDelete(r.id) }} className="text-slate-400 hover:text-red-500"><Trash2 className="w-3 h-3" /></button></td>
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </CardContent>
