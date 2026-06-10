@@ -661,7 +661,27 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [convList, setConvList] = useState<{ id: number; title: string; createdAt: string; messageCount: number }[]>([])
   const [showConvList, setShowConvList] = useState(false)
 
-  function clearChat() { gMessages = []; setMessages([]); setStreamText(''); convIdRef.current = 0; fetch(`${BASE}/api/ai/clear`, { method: 'POST', credentials: 'include' }).catch(() => {}) }
+  /** Reset local chat state without touching the database.
+   *  Does NOT call /api/ai/clear — that endpoint destroys ALL user history. */
+  function resetChat() {
+    gMessages = []
+    setMessages([])
+    setStreamText('')
+    convIdRef.current = 0
+    pendingArtifacts.current = []
+    pendingStrategy.current = null
+    pendingCard.current = null
+  }
+
+  /** Start a brand-new conversation — creates a DB row so the list shows it. */
+  function newConversation() {
+    resetChat()
+    fetch(`${BASE}/api/ai/conversations`, { method: 'POST', credentials: 'include' })
+      .then(r => r.json())
+      .then(d => { if (d?.id) convIdRef.current = d.id })
+      .catch(() => {})
+    setShowConvList(false)
+  }
 
   function loadConvList() {
     fetch(`${BASE}/api/ai/conversations`, { credentials: 'include' })
@@ -689,7 +709,10 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     e.stopPropagation()
     if (!(await confirm(t.chat.confirmDeleteConv))) return
     fetch(`${BASE}/api/ai/conversations/${id}`, { method: 'DELETE', credentials: 'include' })
-      .then(() => { if (convIdRef.current === id) clearChat(); loadConvList() }).catch(() => {})
+      .then(() => {
+        if (convIdRef.current === id) resetChat()
+        loadConvList()
+      }).catch(() => {})
   }
   function stopGeneration() {
     if (esRef.current) { esRef.current.close(); esRef.current = null }
@@ -1224,7 +1247,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                 className="w-full lg:max-w-sm bg-white rounded-t-2xl lg:rounded-2xl shadow-xl max-h-[60vh] flex flex-col">
                 <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100 shrink-0">
                   <h3 className="text-sm font-bold text-slate-800">{t.chat.conversations}</h3>
-                  <button onClick={() => { clearChat(); setShowConvList(false) }} className="text-[11px] text-indigo-600 font-medium hover:text-indigo-700">{t.chat.newConversation}</button>
+                  <button onClick={newConversation} className="text-[11px] text-indigo-600 font-medium hover:text-indigo-700">{t.chat.newConversation}</button>
                 </div>
                 <div className="overflow-auto flex-1">
                   {convList.length === 0 ? (

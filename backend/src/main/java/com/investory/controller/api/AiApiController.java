@@ -625,12 +625,23 @@ public class AiApiController {
     @PostMapping("/clear")
     public Map<String, Object> clear(HttpServletRequest req) {
         long uid = userIdOf(req);
+        if (uid <= 0) return Map.of("status", "not_logged_in");
+        // Find the most recent conversation so we only delete that one,
+        // not all conversations (the old behaviour nuked everything).
+        Long convId = null;
+        try {
+            convId = jdbc.queryForObject(
+                "SELECT conversation_id FROM ai_chat_history WHERE user_id = ? " +
+                "AND role IN ('user','assistant','thinking') " +
+                "ORDER BY id DESC LIMIT 1", Long.class, uid);
+        } catch (Exception ignored) {}
+
         session.clearSession(uid);
-        if (uid > 0) {
-            try { jdbc.update("DELETE FROM ai_artifacts WHERE user_id = ?", uid); } catch (Exception ignored) {}
-            try { jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role IN ('user','assistant','thinking','tooldata')", uid); } catch (Exception ignored) {}
+        if (convId != null && convId > 0) {
+            try { jdbc.update("DELETE FROM ai_artifacts WHERE user_id = ? AND conversation_id = ?", uid, convId); } catch (Exception ignored) {}
+            try { jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND conversation_id = ?", uid, convId); } catch (Exception ignored) {}
         }
-        return Map.of("status", "cleared");
+        return Map.of("status", "cleared", "conversationId", convId);
     }
 
     @PostMapping("/cancel")
