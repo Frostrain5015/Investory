@@ -438,6 +438,8 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             }
           })
           setMessages(restored)
+          // Restore the conversation ID so subsequent operations (e.g. delete) work correctly
+          if (d.conversationId && d.conversationId > 0) convIdRef.current = d.conversationId
         }
       })
       .catch(() => {})

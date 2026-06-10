@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
-import { BASE, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings, getBacktestCompare } from '@/services/api'
+import { BASE, getBacktestHistory, getBacktest, deleteBacktest, startBacktest, getBacktestStream, searchStocks, getHoldings, getBacktestCompare, analyzePortfolio } from '@/services/api'
 import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useSettings } from '@/hooks/use-settings'
@@ -113,7 +113,6 @@ export function RiskSection() {
 
       setProgress('分析中...')
 
-      const { analyzePortfolio } = await import('@/services/api')
       const result = await analyzePortfolio(holdings)
       if (result.error) {
         setData({ _error: result.error })

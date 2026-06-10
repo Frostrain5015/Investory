@@ -132,6 +132,10 @@ export default function Layout() {
           className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:text-red-400 hover:bg-slate-800/50 transition-colors mt-0.5" >
           <LogOut className="w-4 h-4" />{lang === 'zh' ? '退出' : 'Logout'}
         </NavLink>
+        <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer"
+          className="block text-center text-[10px] text-slate-600 hover:text-slate-500 transition-colors mt-2 pt-2 border-t border-slate-800/50">
+          浙ICP备2026040257号-1
+        </a>
       </div>
     </aside>
   )
@@ -182,12 +186,6 @@ export default function Layout() {
         <main className="flex-1 overflow-auto" style={{ scrollbarGutter: 'stable' }}>
           <Outlet />
         </main>
-        <footer className="shrink-0 border-t border-slate-200 bg-white px-6 py-2.5 text-center">
-          <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer"
-            className="text-[11px] text-slate-400 hover:text-slate-500 transition-colors">
-            浙ICP备2026040257号-1
-          </a>
-        </footer>
       </div>
 
       {/* 观澜 — single morph shell, always rendered. Idle state is the

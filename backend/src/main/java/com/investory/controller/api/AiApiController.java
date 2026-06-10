@@ -645,9 +645,27 @@ public class AiApiController {
         long uid = userIdOf(req);
         if (uid <= 0) return Map.of("messages", List.of());
         try {
-            List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT role, content FROM ai_chat_history WHERE user_id = ? " +
-                "AND role IN ('user','assistant','thinking') ORDER BY id ASC LIMIT 200", uid);
+            // Find the most recent conversation for this user
+            Long convId = null;
+            try {
+                convId = jdbc.queryForObject(
+                    "SELECT conversation_id FROM ai_chat_history WHERE user_id = ? " +
+                    "AND role IN ('user','assistant','thinking') " +
+                    "ORDER BY id DESC LIMIT 1", Long.class, uid);
+            } catch (Exception ignored) {}
+
+            List<Map<String, Object>> rows;
+            if (convId != null && convId > 0) {
+                // Load only the latest conversation's messages
+                rows = jdbc.queryForList(
+                    "SELECT role, content FROM ai_chat_history WHERE user_id = ? " +
+                    "AND conversation_id = ? " +
+                    "AND role IN ('user','assistant','thinking') ORDER BY id ASC LIMIT 200", uid, convId);
+            } else {
+                rows = jdbc.queryForList(
+                    "SELECT role, content FROM ai_chat_history WHERE user_id = ? " +
+                    "AND role IN ('user','assistant','thinking') ORDER BY id ASC LIMIT 200", uid);
+            }
             // Stitch thinking onto the preceding assistant turn for the client
             List<Map<String, Object>> out = new ArrayList<>();
             for (Map<String, Object> r : rows) {
@@ -664,7 +682,14 @@ public class AiApiController {
                 m.put("role", role); m.put("content", content);
                 out.add(m);
             }
-            return Map.of("messages", out);
+            // Attach artifacts so they survive browser restart
+            if (convId != null && convId > 0) {
+                attachArtifactsToMessages(uid, convId, out);
+            }
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("messages", out);
+            if (convId != null && convId > 0) result.put("conversationId", convId);
+            return result;
         } catch (Exception e) {
             return Map.of("messages", List.of());
         }
