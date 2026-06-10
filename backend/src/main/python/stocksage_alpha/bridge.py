@@ -1280,16 +1280,16 @@ def _build_pick_stocks_report(intent: str, universe: str = "all", top_n: int = 1
         rk = "BULL"
 
     # 3. Combine regime base weights with intent overrides
-    base_weights = REGIME_WEIGHTS.get(rk, REGIME_WEIGHTS["NORMAL"])
-    combined = weights_from_config_dict(base_weights)
+    # score_universe() expects a plain dict, not FactorWeights — work with dicts.
+    combined = dict(REGIME_WEIGHTS.get(rk, REGIME_WEIGHTS["NORMAL"]))
     if intent.strip():
         from dataclasses import fields as _dc_fields
         default_w = DEFAULT_WEIGHTS
-        for field in _dc_fields(type(combined)):
+        for field in _dc_fields(type(override_weights)):
             ov = getattr(override_weights, field.name)
             dv = getattr(default_w, field.name)
             if ov != dv:
-                setattr(combined, field.name, ov)
+                combined[field.name] = ov
 
     # 4. Resolve universe
     universe_label = universe if universe else "全市场"
