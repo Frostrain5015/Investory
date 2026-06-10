@@ -1202,29 +1202,24 @@ def _resolve_universe_codes(universe: str, intent: str = "") -> list:
     """Resolve a universe description to a list of 6-digit stock codes.
     When universe is "all", also checks the intent string for known industry
     names so the LLM doesn't need to explicitly set universe for sector picks."""
-    try:
-        from research import normalize_code
-    except ImportError:
-        def normalize_code(c): return c
-
     if universe and universe not in ("all", ""):
         # Explicit universe takes priority
         if universe == "csi300":
             try:
-                from fetcher import fetch_csi300
-                return fetch_csi300()
+                from fetcher import get_index_constituents
+                return get_index_constituents("000300")
             except Exception:
                 return []
         elif universe == "csi500":
             try:
-                from fetcher import fetch_csi500
-                return fetch_csi500()
+                from fetcher import get_index_constituents
+                return get_index_constituents("000905")
             except Exception:
                 return []
         else:
             try:
-                from fetcher import build_industry_map
-                imap = build_industry_map()
+                from fetcher import get_sw_industry_map
+                imap = get_sw_industry_map()
                 return [code for code, ind in imap.items() if universe in ind][:100]
             except Exception:
                 return []
@@ -1232,10 +1227,9 @@ def _resolve_universe_codes(universe: str, intent: str = "") -> list:
     # universe is "all" or empty — try to auto-detect industry from intent
     if intent.strip():
         try:
-            from fetcher import build_industry_map
-            imap = build_industry_map()
+            from fetcher import get_sw_industry_map
+            imap = get_sw_industry_map()
             all_industries = sorted(set(imap.values()))
-            # Match any known industry/substring in the intent
             for ind in all_industries:
                 if ind and ind in intent:
                     codes = [code for code, i in imap.items() if i == ind][:100]
@@ -1250,9 +1244,10 @@ def _resolve_universe_codes(universe: str, intent: str = "") -> list:
     if uf.exists():
         codes = json.loads(uf.read_text(encoding="utf-8"))
         return [c[:6] if len(c) > 6 else c for c in codes[:200]]
+    # Last resort: get ~200 liquid stocks from index
     try:
-        from fetcher import fetch_csi300
-        return fetch_csi300()[:200]
+        from fetcher import get_index_constituents
+        return get_index_constituents("000300")[:200]
     except Exception:
         return []
 

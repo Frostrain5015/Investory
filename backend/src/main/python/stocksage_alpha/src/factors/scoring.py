@@ -132,7 +132,8 @@ _WEIGHT_PRESETS: list[tuple[list[str], dict]] = [
     (["只看质量", "focus on quality", "quality only", "重视质量"],
      {"quality": 3.0, "value": 0.5, "growth": 0.5, "momentum": 0.3}),
     # Emphasise momentum / trend
-    (["只看趋势", "focus on momentum", "momentum only", "重视动量", "趋势优先"],
+    (["只看趋势", "focus on momentum", "momentum only", "重视动量", "趋势优先",
+      "涨得好的", "涨得好", "涨的好的", "近期涨", "最近涨"],
      {"momentum": 3.0, "value": 0.3, "growth": 0.5, "quality": 0.5}),
     # Ignore valuation
     (["不看估值", "ignore value", "ignore valuation", "忽略估值"],
