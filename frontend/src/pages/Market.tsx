@@ -187,7 +187,7 @@ export default function Market() {
               const f = group[0].flag.toLowerCase()
               const countryName = t.market.countryNames[f as keyof typeof t.market.countryNames] || group[0].flag
               return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:700;font-size:14px">
-                <img src="https://cdn.jsdelivr.net/npm/flag-icons@7.3.2/flags/4x3/${f}.svg" style="width:22px;height:15px;border-radius:2px"/>
+                <img src="${import.meta.env.BASE_URL}flags/${f}.svg" style="width:22px;height:15px;border-radius:2px"/>
                 ${countryName}
               </div>${group.map(d => {
                   const valid = Number(d.price) !== 0
@@ -252,7 +252,7 @@ export default function Market() {
                   const countryName = t.market.countryNames[flag as keyof typeof t.market.countryNames] || d.country_code || ''
                   return `<div style="max-width:300px">
                     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                      ${flag ? `<img src=\"https://cdn.jsdelivr.net/npm/flag-icons@7.3.2/flags/4x3/${flag}.svg\" style=\"width:18px;height:12px;border-radius:2px\"/>` : ''}
+                      ${flag ? `<img src=\"${import.meta.env.BASE_URL}flags/${flag}.svg\" style=\"width:18px;height:12px;border-radius:2px\"/>` : ''}
                       <span style="background:${cc};color:#fff;font-size:10px;padding:2px 7px;border-radius:4px">${cl}</span>
                       <span style="font-size:10px;color:#64748b">${countryName}</span>
                     </div>
