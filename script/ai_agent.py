@@ -3103,6 +3103,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     # (DeepSeek auto-caches repeated input prefixes server-side — no cache_control.)
     formatted = to_openai_messages([AgentMessage.from_wire(m) for m in messages])
 
+    content_buf = []
     def _emit_delta(delta):
         # Reasoning content (DeepSeek thinking mode exposes reasoning_content).
         # Escape backslash + newline so each chunk becomes exactly one line frame —
@@ -3113,7 +3114,15 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             sys.stdout.write(f"[REASONING]{escaped}\n")
             sys.stdout.flush()
         if delta.content:
-            sys.stdout.write(delta.content + "\n"); sys.stdout.flush()
+            content_buf.append(delta.content)
+            buf = "".join(content_buf)
+            # Flush on natural boundaries: punctuation, space + min length, or forced
+            if any(c in buf for c in ("。", "！", "？", "\n", "\r")):
+                sys.stdout.write(buf + "\n"); sys.stdout.flush()
+                content_buf.clear()
+            elif len(buf) >= 20 and (" " in buf or "，" in buf or "、" in buf):
+                sys.stdout.write(buf + "\n"); sys.stdout.flush()
+                content_buf.clear()
 
     def _replay_text(label: str, text: str, limit: int = 3500) -> str:
         text = (text or "").strip()
@@ -3172,6 +3181,10 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             else:
                 if content: got_text = True
                 _emit_delta(delta)
+        # Flush remaining buffered content
+        if content_buf:
+            sys.stdout.write("".join(content_buf) + "\n"); sys.stdout.flush()
+            content_buf.clear()
         return tcs, has, got_text, "".join(reasoning_parts), "".join(content_parts)
 
     # Always stream first. If tool calls appear mid-stream, collect and handle.
