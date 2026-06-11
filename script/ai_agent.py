@@ -3094,7 +3094,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
             # reasoning_effort ("max" for deep-think, "high" otherwise).
             kwargs["reasoning_effort"] = "max" if deep_think else "high"
         else:
-            kwargs["temperature"] = 0.7
+            kwargs["temperature"] = 0.5
         if extra_body:
             kwargs["extra_body"] = extra_body
         return client.chat.completions.create(**kwargs)
