@@ -74,12 +74,18 @@ def _cache_put(command, params, result):
 
 
 def _run(command, params):
-    """Cache-aware dispatch: serve from cache, else compute under the engine lock."""
+    """Cache-aware dispatch: serve from cache, else compute under the engine lock.
+    The lock has a short timeout so a long-running command (e.g. pick_stocks)
+    doesn't block all other engine requests — they fall back to subprocess."""
     cached = _cache_get(command, params)
     if cached is not None:
         return cached
-    with _lock:
+    if not _lock.acquire(timeout=15):
+        return {"error": "engine busy, retry later", "_fallback": True}
+    try:
         result = bridge.dispatch(command, params)
+    finally:
+        _lock.release()
     _cache_put(command, params, result)
     return result
 
