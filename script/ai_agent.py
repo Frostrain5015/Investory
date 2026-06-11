@@ -3071,19 +3071,14 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
 
     is_deepseek = bool(api_base and "deepseek" in api_base)
 
-    # ── Thinking & model routing ───────────────────────────────────────────
-    # DeepSeek v4 calls tools reliably with thinking on, so real (non-chit-chat)
-    # requests run the configured model with thinking; pure smalltalk runs the
-    # fast model with thinking off for low latency.
+    # ── Model routing ──────────────────────────────────────────────────────
+    # v4-flash does NOT support thinking/reasoning — always disable it.
     is_complex = _is_complex_query(messages)
-    want_thinking = is_deepseek and (deep_think or is_complex)
-    max_tokens = 8192 if (is_deepseek and want_thinking) else 4096
-    # DeepSeek v4: extra_body.thinking.type + top-level reasoning_effort (set in _stream).
-    extra_body = {"thinking": {"type": "enabled" if want_thinking else "disabled"}} if is_deepseek else {}
+    want_thinking = False  # v4-flash has no thinking mode
+    max_tokens = 8192
+    extra_body = {}
 
-    effective_model = model
-    if is_deepseek and not deep_think and not is_complex:
-        effective_model = DEEPSEEK_FAST_MODEL
+    effective_model = model  # Always use the configured model (v4-flash)
 
     # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
@@ -3487,7 +3482,7 @@ def main():
     parser = argparse.ArgumentParser(description="Investory 观澜 AI Agent")
     parser.add_argument("--mode", default="chat", choices=["chat", "suggestions", "populate-picks", "title"])
     parser.add_argument("--provider", default="openai", choices=["openai", "anthropic", "openai_compat"])
-    parser.add_argument("--model", default="gpt-4o-mini")
+    parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument("--api-key", default=os.environ.get("AI_API_KEY", ""))
     parser.add_argument("--api-base", default="")
     parser.add_argument("--deep-think", action="store_true")

@@ -38,7 +38,7 @@ public class AiApiController {
     private boolean aiTitleEnabled;
 
     private static final String DEFAULT_PROVIDER = "openai_compat";
-    private static final String DEFAULT_MODEL   = "deepseek-v4-pro";
+    private static final String DEFAULT_MODEL   = "deepseek-v4-flash";
     private static final String DEFAULT_BASE_URL = "https://api.deepseek.com";
     private static final List<String> STATIC_SUGGESTIONS = List.of(
         "\u6211\u7684\u7ec4\u5408\u98ce\u9669\u600e\u4e48\u6837\uff1f",
@@ -117,14 +117,13 @@ public class AiApiController {
         final String baseUrl = aiBaseUrl;
         final boolean deepThink = Boolean.TRUE.equals(body.get("deepThink"));
 
-        // DeepSeek: deep-think implies the reasoning-tier model (v4-pro); fast mode uses v4-flash.
+        // All calls use v4-flash — no deep-think tier switching.
         // Also rewrites legacy names (deepseek-chat / deepseek-reasoner) that may still be cached in the client.
         String resolvedModel = aiModel;
         boolean isDeepseek = baseUrl != null && baseUrl.contains("deepseek");
         if (isDeepseek) {
             if ("deepseek-chat".equals(resolvedModel)) resolvedModel = "deepseek-v4-flash";
-            else if ("deepseek-reasoner".equals(resolvedModel)) resolvedModel = "deepseek-v4-pro";
-            if (deepThink && !"deepseek-v4-pro".equals(resolvedModel)) resolvedModel = "deepseek-v4-pro";
+            else if ("deepseek-reasoner".equals(resolvedModel)) resolvedModel = "deepseek-v4-flash";
         }
         final String model = resolvedModel;
 
