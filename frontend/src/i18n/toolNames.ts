@@ -31,6 +31,7 @@ const zh: ToolLabelMap = {
   confirm_create_transaction: '记录交易',
   confirm_update_transaction: '修改交易',
   confirm_delete_transaction: '删除交易',
+  pick_stocks: '智能选股',
 }
 
 const en: ToolLabelMap = {
@@ -62,6 +63,7 @@ const en: ToolLabelMap = {
   confirm_create_transaction: 'Record transaction',
   confirm_update_transaction: 'Edit transaction',
   confirm_delete_transaction: 'Delete transaction',
+  pick_stocks: 'Smart stock picking',
 }
 
 const hk: ToolLabelMap = {
@@ -93,9 +95,10 @@ const hk: ToolLabelMap = {
   confirm_create_transaction: '記錄交易',
   confirm_update_transaction: '修改交易',
   confirm_delete_transaction: '刪除交易',
+  pick_stocks: '智能選股',
 }
 
-const MAPS: Record<Lang, ToolLabelMap> = { zh, en, hk }
+export const MAPS: Record<Lang, ToolLabelMap> = { zh, en, hk }
 
 export function localizeToolName(rawName: string, lang: Lang): string {
   if (!rawName) return ''

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useLayoutEffect } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle, Brain, BarChart2 } from 'lucide-react'
 import { useToast } from '@/components/Toast'
@@ -8,7 +8,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { SseEvent } from '@/types'
 import { useT } from '@/i18n/I18nContext'
-import { localizeToolName } from '@/i18n/toolNames'
+import { localizeToolName, MAPS } from '@/i18n/toolNames'
 import { getCachedSuggestions, getSuggestionsPromise } from '@/services/aiPreload'
 import { BASE } from '@/services/api'
 
@@ -114,6 +114,23 @@ function toolStyle(step: Extract<TimelineStep, { kind: 'tool' }>) {
 /** A single reasoning segment: collapsible text block with live elapsed timer.
  *  Claude Code style: "已思考 用时8s" when done, live count-up while streaming. */
 function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: boolean; _ts?: number; _elapsed?: number }) {
+  const { lang } = useT()
+  // Replace English tool names in thinking text with styled code-block tags
+  const localizedText = useMemo(() => {
+    if (!text) return ''
+    let t = text
+    // Build regex from tool label keys (longest first to avoid partial matches)
+    const toolNames = Object.keys(MAPS[lang] || {})
+      .sort((a, b) => b.length - a.length)
+    for (const name of toolNames) {
+      const label = MAPS[lang]?.[name]
+      if (label) {
+        // Replace with inline code block using the localized label
+        t = t.replace(new RegExp(`\\b${name}\\b`, 'g'), `\`🛠 ${label}\``)
+      }
+    }
+    return t
+  }, [text, lang])
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     if (done || _ts == null) return
@@ -140,8 +157,30 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
       </button>
       {open && (
         <div ref={innerRef}
-          className="mt-1 p-2.5 bg-slate-50 rounded-lg text-[11px] text-slate-500 whitespace-pre-wrap leading-relaxed border-l-2 border-purple-200 max-h-48 overflow-y-auto">
-          {text}
+          className="mt-1 p-2.5 bg-slate-50 rounded-lg text-[11px] text-slate-500 leading-relaxed border-l-2 border-purple-200 max-h-48 overflow-y-auto">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}
+            components={{
+              p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+              code: ({ className, children, ...props }) => {
+                const isInline = !className
+                const text = String(children)
+                if (isInline && text.startsWith('🛠 ')) {
+                  // Tool tag: render as a colored chip
+                  const toolName = text.replace('🛠 ', '')
+                  return (
+                    <code className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-medium border border-indigo-200">
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+                      {toolName}
+                    </code>
+                  )
+                }
+                return isInline
+                  ? <code className="px-1 py-0.5 bg-slate-200/70 rounded text-[10px] font-mono">{children}</code>
+                  : <pre className="p-2 bg-slate-800 text-slate-100 rounded-lg text-[10px] overflow-x-auto my-1">{children}</pre>
+              },
+            }}>
+            {localizedText}
+          </ReactMarkdown>
         </div>
       )}
     </div>
