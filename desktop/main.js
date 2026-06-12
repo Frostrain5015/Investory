@@ -158,8 +158,13 @@ function createWindow() {
 
 // ── Auto-update ────────────────────────────────────────────────────
 
+// The version being downloaded. `autoUpdater.currentVersion` is the *installed*
+// version, so progress events must use this instead.
+let downloadingVersion = ''
+
 autoUpdater.on('update-available', (info) => {
   console.log('Update available — downloading...')
+  downloadingVersion = info.version
   win?.webContents.send('update:status', { type: 'available', version: info.version })
 })
 
@@ -170,7 +175,7 @@ autoUpdater.on('update-not-available', () => {
 autoUpdater.on('download-progress', (progress) => {
   win?.webContents.send('update:status', {
     type: 'downloading',
-    version: autoUpdater.currentVersion?.version ?? '',
+    version: downloadingVersion,
     percent: progress.percent,
     bytesPerSecond: progress.bytesPerSecond,
   })

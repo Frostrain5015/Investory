@@ -132,10 +132,13 @@ export default function Layout() {
           className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:text-red-400 hover:bg-slate-800/50 transition-colors mt-0.5" >
           <LogOut className="w-4 h-4" />{lang === 'zh' ? '退出' : 'Logout'}
         </NavLink>
-        <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer"
-          className="block text-center text-[10px] text-slate-600 hover:text-slate-500 transition-colors mt-2 pt-2 border-t border-slate-800/50">
-          浙ICP备2026040257号-1
-        </a>
+        <div className="mt-2 pt-2 border-t border-slate-800/50 text-center">
+          <div className="text-[10px] text-slate-600 tabular-nums">v{__APP_VERSION__}</div>
+          <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer"
+            className="block text-[10px] text-slate-600 hover:text-slate-500 transition-colors mt-0.5">
+            浙ICP备2026040257号-1
+          </a>
+        </div>
       </div>
     </aside>
   )

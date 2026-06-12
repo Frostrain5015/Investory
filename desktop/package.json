@@ -1,6 +1,6 @@
 {
   "name": "investory-desktop",
-  "version": "6.0.0",
+  "version": "6.2.0",
   "description": "Investory Desktop Client",
   "author": "Investory",
   "main": "main.js",
@@ -44,7 +44,8 @@
     "publish": {
       "provider": "github",
       "owner": "Frostrain5015",
-      "repo": "Investory"
+      "repo": "Investory",
+      "releaseType": "release"
     }
   },
   "devDependencies": {
