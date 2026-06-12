@@ -11,11 +11,54 @@ autoUpdater.autoInstallOnAppQuit = true
 let win = null
 
 const PORT = 18256
+const PROTOCOL = 'investory'
 const DIST = path.join(__dirname, 'dist')
 const ICON = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'))
 
 app.commandLine.appendSwitch('ignore-certificate-errors')
 app.commandLine.appendSwitch('no-proxy-server')
+
+// ── Deep-link login (investory://auth?token=…) ─────────────────────
+// Frost ID login happens in the system browser; the backend redirects to an
+// investory:// deep link carrying a one-time token, which we forward to the
+// renderer to exchange for a session inside the app's own cookie jar.
+
+let pendingAuthToken = null
+
+if (process.defaultApp) {
+  // Dev (electron .): pass the entry script so OS re-launch resolves correctly.
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(PROTOCOL, process.execPath, [path.resolve(process.argv[1])])
+  }
+} else {
+  app.setAsDefaultProtocolClient(PROTOCOL)
+}
+
+function handleDeepLink(url) {
+  let token = null
+  try {
+    const u = new URL(url)
+    if (u.protocol === `${PROTOCOL}:`) token = u.searchParams.get('token')
+  } catch { /* invalid URL, ignore */ }
+  if (!token) return
+  if (win && win.webContents) win.webContents.send('frostid:callback', token)
+  else pendingAuthToken = token
+}
+
+// Single instance: on Windows a deep link arrives as a fresh launch; hand its
+// argv to the already-running instance and exit this one.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+  return
+}
+
+app.on('second-instance', (_event, argv) => {
+  const link = argv.find((a) => typeof a === 'string' && a.startsWith(`${PROTOCOL}://`))
+  if (link) handleDeepLink(link)
+  if (win) { if (win.isMinimized()) win.restore(); win.focus() }
+})
+
+app.on('open-url', (event, url) => { event.preventDefault(); handleDeepLink(url) }) // macOS
 
 // ── Local static server with SPA fallback ──────────────────────────
 
@@ -84,7 +127,23 @@ function createWindow() {
   })
   ipcMain.on('window:close', () => win.close())
 
+  // Open external URLs (e.g. Frost ID) in the system browser
+  ipcMain.handle('shell:open-external', (_e, url) => {
+    try {
+      const u = new URL(url)
+      if (u.protocol === 'https:' || u.protocol === 'http:') return shell.openExternal(url)
+    } catch { /* invalid URL, ignore */ }
+  })
+
   win.loadURL(`http://127.0.0.1:${PORT}/`)
+
+  // Deliver any deep-link token that arrived before the renderer was ready.
+  win.webContents.on('did-finish-load', () => {
+    if (pendingAuthToken) {
+      win.webContents.send('frostid:callback', pendingAuthToken)
+      pendingAuthToken = null
+    }
+  })
 
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {
     console.error(`FAIL: ${url} — ${desc} (${code})`)
@@ -139,6 +198,10 @@ app.whenReady().then(async () => {
     return
   }
   createWindow()
+
+  // Windows cold-start via deep link: the URL is passed as a launch argument.
+  const startLink = process.argv.find((a) => typeof a === 'string' && a.startsWith(`${PROTOCOL}://`))
+  if (startLink) handleDeepLink(startLink)
 
   // Check for updates (only works in packaged app)
   if (app.isPackaged) {

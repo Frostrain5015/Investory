@@ -24,6 +24,8 @@ import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Frost ID OAuth 2.1 登录控制器。
@@ -58,6 +60,32 @@ public class OAuthController {
     private final HttpClient httpClient = HttpClient.newHttpClient();
     private final SecureRandom secureRandom = new SecureRandom();
 
+    // ── 桌面客户端一次性登录令牌 ────────────────────────────────────────────────
+    // 浏览器完成 OAuth 登录后，无法直接把会话 Cookie 写回 Electron 客户端（不同 Cookie
+    // 罐）。改为签发一个短时、单次使用的令牌，经 investory:// 深链回传到客户端，客户端
+    // 再用自身会话调用 /oauth/frost-id/exchange 兑换，从而在客户端建立登录态。
+    private record DesktopToken(long userId, long expiresAt) {}
+    private final Map<String, DesktopToken> desktopTokens = new ConcurrentHashMap<>();
+    private static final long DESKTOP_TOKEN_TTL_MS = 120_000;
+
+    private String issueDesktopToken(long userId) {
+        long now = System.currentTimeMillis();
+        desktopTokens.entrySet().removeIf(e -> e.getValue().expiresAt() < now);
+        byte[] bytes = new byte[32];
+        secureRandom.nextBytes(bytes);
+        String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+        desktopTokens.put(token, new DesktopToken(userId, now + DESKTOP_TOKEN_TTL_MS));
+        return token;
+    }
+
+    /** 校验并消费一次性令牌；有效则返回 userId，否则 null。 */
+    private Long consumeDesktopToken(String token) {
+        if (token == null || token.isBlank()) return null;
+        DesktopToken dt = desktopTokens.remove(token); // 单次使用
+        if (dt == null || dt.expiresAt() < System.currentTimeMillis()) return null;
+        return dt.userId();
+    }
+
     private String generateCodeVerifier() {
         byte[] bytes = new byte[32];
         secureRandom.nextBytes(bytes);
@@ -81,6 +109,7 @@ public class OAuthController {
     @GetMapping("/oauth/frost-id/login")
     public String frostIdLogin(
             @RequestParam(value = "return_to", required = false) String returnTo,
+            @RequestParam(value = "client", required = false) String client,
             HttpServletRequest req) throws Exception {
         String verifier = generateCodeVerifier();
         String challenge = generateCodeChallenge(verifier);
@@ -89,6 +118,12 @@ public class OAuthController {
         HttpSession session = req.getSession(true);
         session.setAttribute("frostid_verifier", verifier);
         session.setAttribute("frostid_state",    state);
+        // 桌面客户端登录：登录在系统浏览器中完成，回调后通过深链回传令牌给客户端。
+        if ("desktop".equals(client)) {
+            session.setAttribute("frostid_client_desktop", Boolean.TRUE);
+        } else {
+            session.removeAttribute("frostid_client_desktop");
+        }
         String safeReturnTo = sanitizeReturnTo(returnTo);
         if (safeReturnTo != null) {
             session.setAttribute("frostid_return_to", safeReturnTo);
@@ -181,6 +216,15 @@ public class OAuthController {
                 session.setAttribute("portfolioId", portfolios.get(0).getId());
             }
 
+            // 桌面客户端：签发一次性令牌，经 investory:// 深链回传到 Electron 应用，
+            // 由应用用自身会话调用 /oauth/frost-id/exchange 兑换并建立登录态。
+            Object desktop = session.getAttribute("frostid_client_desktop");
+            if (Boolean.TRUE.equals(desktop)) {
+                session.removeAttribute("frostid_client_desktop");
+                String handoff = issueDesktopToken(user.getId());
+                return desktopHandoffPage("investory://auth?token=" + urlEncode(handoff));
+            }
+
             // 若此前是从 MCP OAuth 授权页跳来登录的，登录成功后回到该授权请求继续发码。
             Object pending = session.getAttribute("mcp_pending_authorize");
             if (pending instanceof String pendingUrl && !pendingUrl.isBlank()) {
@@ -199,6 +243,32 @@ public class OAuthController {
         } catch (Exception e) {
             return "error: " + e.getMessage();
         }
+    }
+
+    // ── 步骤 3（桌面端）：客户端用一次性令牌兑换会话 ──────────────────────────
+
+    /**
+     * 桌面客户端在收到 investory:// 深链后，用自身（Electron）会话调用此端点，
+     * 用一次性令牌换取登录态。请求所携带的 Cookie 即写入客户端的会话罐，从而完成登录。
+     */
+    @GetMapping(value = "/oauth/frost-id/exchange", produces = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public String frostIdExchange(@RequestParam String token, HttpServletRequest req) {
+        Long userId = consumeDesktopToken(token);
+        if (userId == null) return "{\"ok\":false,\"error\":\"invalid_or_expired_token\"}";
+
+        User user = userDao.findById(userId);
+        if (user == null) return "{\"ok\":false,\"error\":\"user_not_found\"}";
+
+        HttpSession session = req.getSession(true);
+        session.setAttribute("userId",   user.getId());
+        session.setAttribute("username", user.getUsername());
+        session.setAttribute("isAdmin",  user.isAdmin());
+        List<Portfolio> portfolios = portfolioDao.findByUser(user.getId());
+        if (!portfolios.isEmpty()) {
+            session.setAttribute("portfolioId", portfolios.get(0).getId());
+        }
+        return "{\"ok\":true}";
     }
 
     // ── 私有辅助方法 ──────────────────────────────────────────────────────────
@@ -279,6 +349,25 @@ public class OAuthController {
 
     private String redirectScript(String url) {
         return "<script>window.location.replace(" + jsString(url) + ")</script>";
+    }
+
+    /** 桌面端登录成功页：自动唤起 investory:// 深链返回客户端，并提供手动回退链接。 */
+    private String desktopHandoffPage(String deepLink) {
+        String js = jsString(deepLink);
+        return "<!DOCTYPE html><html lang=\"zh\"><head><meta charset=\"utf-8\">"
+                + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+                + "<title>登录成功</title><style>"
+                + "html,body{height:100%;margin:0}body{font-family:system-ui,-apple-system,sans-serif;"
+                + "background:#0f172a;color:#e2e8f0;display:flex;align-items:center;justify-content:center;text-align:center}"
+                + ".card{max-width:420px;padding:32px}h2{margin:0 0 12px;font-weight:600}"
+                + "p{margin:8px 0;font-size:14px;color:#94a3b8;line-height:1.6}a{color:#a5b4fc}"
+                + "</style></head><body><div class=\"card\"><h2>❄ 登录成功</h2>"
+                + "<p>正在返回 Investory 桌面应用…</p>"
+                + "<p>若未自动跳转，请点击 <a id=\"lnk\" href=\"#\">打开 Investory</a> 并允许浏览器启动应用。</p>"
+                + "<p style=\"color:#64748b;font-size:12px\">完成后可关闭此页面。</p></div>"
+                + "<script>var u=" + js + ";var a=document.getElementById('lnk');a.href=u;"
+                + "setTimeout(function(){window.location.href=u},300);</script>"
+                + "</body></html>";
     }
 
     private String jsString(String value) {

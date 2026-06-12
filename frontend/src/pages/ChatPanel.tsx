@@ -161,7 +161,7 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
           <ReactMarkdown remarkPlugins={[remarkGfm]}
             components={{
               p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
-              code: ({ className, children, ...props }) => {
+              code: ({ className, children }) => {
                 const isInline = !className
                 const text = String(children)
                 if (isInline && text.startsWith('🛠 ')) {

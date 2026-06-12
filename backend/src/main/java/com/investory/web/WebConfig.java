@@ -78,7 +78,7 @@ public class WebConfig implements WebMvcConfigurer {
         registry.addInterceptor(loginInterceptor)
                 .addPathPatterns("/**")
                 .excludePathPatterns("/", "/login", "/register", "/logout", "/error",
-                        "/oauth/frost-id/login", "/oauth/frost-id/callback",
+                        "/oauth/frost-id/login", "/oauth/frost-id/callback", "/oauth/frost-id/exchange",
                         "/mcp", "/.well-known/**",
                         "/oauth/mcp/authorize", "/oauth/mcp/token", "/oauth/mcp/register",
                         "/api/session", "/api/session/test-login", "/api/stock/search",

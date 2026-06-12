@@ -41,7 +41,7 @@ ai.title.enabled=${AI_TITLE_ENABLED:false}
 # Frost ID OAuth 2.1 configuration (secrets via env vars, no hardcoded defaults)
 frostid.oauth.client-id=${FROSTID_CLIENT_ID:}
 frostid.oauth.client-secret=${FROSTID_CLIENT_SECRET:}
-frostid.oauth.authorize-url=${FROSTID_AUTHORIZE_URL:https://116.62.179.231:4443/oauth/authorize}
+frostid.oauth.authorize-url=${FROSTID_AUTHORIZE_URL:https://frostrain.tech/oauth/authorize}
 frostid.oauth.token-url=${FROSTID_TOKEN_URL:http://127.0.0.1:4000/oauth/token}
 frostid.oauth.userinfo-url=${FROSTID_USERINFO_URL:http://127.0.0.1:4000/oauth/userinfo}
 frostid.oauth.redirect-url=${FROSTID_REDIRECT_URL:https://116.62.179.231:8443/investory/oauth/frost-id/callback}

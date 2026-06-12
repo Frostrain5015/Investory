@@ -47,6 +47,12 @@ export default function Login() {
         <div className="bg-white rounded-2xl border border-slate-200/60 shadow-sm p-6">
           <a
             href={frostIdLoginUrl}
+            onClick={(e) => {
+              if (window.electronAPI?.isDesktop) {
+                e.preventDefault()
+                window.electronAPI.openExternal(frostIdLoginUrl)
+              }
+            }}
             className="flex items-center justify-center gap-3 w-full h-12 rounded-xl text-sm font-medium transition-all duration-200"
             style={{
               backgroundColor: FROST_ACCENT,
