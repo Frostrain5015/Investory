@@ -1204,14 +1204,20 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         )}
       </AnimatePresence>
 
-      {/* Shell — width/height change directly, so text is never scale-distorted. */}
+      {/* Shell — width/height/borderRadius via CSS transition (direct sizing, no text distortion).
+          background via framer-motion so the purple→white switch only happens at bloom time,
+          not at click time (which caused the orb to "vanish" mid-glide). */}
       <div className={wrapperClass} style={wrapperPos}>
-      <div
+      <motion.div
         onClick={isIdle ? () => setMode(defaultMode) : undefined}
+        animate={{ background: shellBgVal }}
+        transition={{
+          // Open: delay 220ms (waits for glide to finish), close: no delay (reverses with shrink)
+          background: { duration: 300, ease: 'easeInOut', delay: isIdle ? 0 : 0.22 },
+        }}
         style={{
           width: shellW, height: shellH, borderRadius: shellR,
-          background: shellBgVal,
-          transition: `width ${sizeDur} ${SIZE_EASE} ${sizeDelay}, height ${sizeDur} ${SIZE_EASE} ${sizeDelay}, border-radius ${sizeDur} ${SIZE_EASE} ${sizeDelay}, background ${sizeDur} ease ${sizeDelay}`,
+          transition: `width ${sizeDur} ${SIZE_EASE} ${sizeDelay}, height ${sizeDur} ${SIZE_EASE} ${sizeDelay}, border-radius ${sizeDur} ${SIZE_EASE} ${sizeDelay}`,
           willChange: 'width, height, border-radius',
         }}
         className={`relative ring-1 shadow-2xl overflow-hidden flex flex-col pb-safe ${
@@ -1354,7 +1360,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           )}
         </AnimatePresence>
         <ReportDetailModal artifact={selectedArtifact} onClose={() => setSelectedArtifact(null)} />
-      </div>
+      </motion.div>
       </div>
     </>
   )
