@@ -33,6 +33,9 @@ public class LoginInterceptor implements HandlerInterceptor {
     /** MCP token 解析。带 Bearer token 的 /api/* 请求据此注入用户身份。 */
     @Autowired private McpTokenDao mcpTokenDao;
 
+    /** 请求属性标记：本请求的 session 是为 MCP token 临时创建的，请求结束后应失效，避免持久化累积。 */
+    private static final String MCP_TRANSIENT_SESSION = "investory.mcpTransientSession";
+
     /**
      * 请求预处理：在 Controller 方法执行前进行登录状态校验。
      *
@@ -56,8 +59,11 @@ public class LoginInterceptor implements HandlerInterceptor {
 
         // MCP token 认证：无 session 但带合法 Bearer token 时，解析为对应用户身份并
         // 注入当前请求的 session（getSession(true) 即用即建），使现有控制器无需改动即可
-        // 复用 session.getAttribute("userId"/"portfolioId") 逻辑。MCP 客户端不带 cookie，
-        // 每次请求得到一个新的临时 session，不会跨请求累积。
+        // 复用 session.getAttribute("userId"/"portfolioId") 逻辑。MCP 客户端不带 cookie。
+        //
+        // 注意：启用 Spring Session JDBC 后，session 会被持久化到数据库。MCP 每次请求都
+        // 新建临时 session，若不清理会在 SPRING_SESSION 表中无限累积。因此这里打标记，
+        // 由 afterCompletion 在请求结束时 invalidate，确保不落库。
         String token = bearerToken(req);
         if (token != null) {
             McpTokenDao.TokenInfo info = mcpTokenDao.resolveToken(token);
@@ -67,6 +73,7 @@ public class LoginInterceptor implements HandlerInterceptor {
                 injected.setAttribute("username", info.username());
                 injected.setAttribute("isAdmin", false);
                 if (info.portfolioId() != null) injected.setAttribute("portfolioId", info.portfolioId());
+                req.setAttribute(MCP_TRANSIENT_SESSION, Boolean.TRUE);
                 return true;
             }
         }
@@ -81,6 +88,24 @@ public class LoginInterceptor implements HandlerInterceptor {
         // 未登录：普通页面请求重定向到根路径，由 React SPA 负责渲染登录界面
         resp.sendRedirect(req.getContextPath() + "/");
         return false;
+    }
+
+    /**
+     * 请求处理完成后回调：若本请求的 session 是为 MCP token 临时创建的，则将其失效，
+     * 防止 Spring Session JDBC 把这些一次性会话持久化到 SPRING_SESSION 表中无限累积。
+     */
+    @Override
+    public void afterCompletion(HttpServletRequest req, HttpServletResponse resp, Object handler, Exception ex) {
+        if (Boolean.TRUE.equals(req.getAttribute(MCP_TRANSIENT_SESSION))) {
+            HttpSession session = req.getSession(false);
+            if (session != null) {
+                try {
+                    session.invalidate();
+                } catch (IllegalStateException ignored) {
+                    // session 已失效，忽略
+                }
+            }
+        }
     }
 
     /**

@@ -39,7 +39,19 @@ export type TimelineStep =
   // renders above that tool call — not dumped below the whole timeline.
   | { kind: 'text'; text: string }
 interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard; artifacts?: ReportArtifact[] }
-interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
+interface ConfirmBody {
+  stockName?: string
+  type?: string
+  shares?: number
+  price?: number
+  fee?: number
+  tradeDate?: string
+  currency?: string
+  amountPerShare?: number
+  note?: string
+  [key: string]: string | number | undefined
+}
+interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: ConfirmBody }
 interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
 type ConfirmStatus = 'pending' | 'accepted' | 'refused' | 'failed'
 
@@ -358,7 +370,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [dockHeight, setDockHeight] = useState(96)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
-  const pendingCard = useRef<{ type: string; data: any } | null>(null)
+  const pendingCard = useRef<
+    | { type: 'portfolio'; data: PortfolioCard }
+    | { type: 'picks'; data: PicksCard }
+    | null
+  >(null)
   const pendingArtifacts = useRef<ReportArtifact[]>([])
   const streamAccum = useRef('')
   // Authoritative timeline ref — frontend builds it from SSE events as the agent runs.
@@ -724,13 +740,15 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
 
   function loadConvList() {
     fetch(`${BASE}/api/ai/conversations`, { credentials: 'include' })
-      .then(r => r.json()).then((list: any[]) => setConvList(list || [])).catch(() => {})
+      .then(r => r.json() as Promise<{ id: number; title: string; createdAt: string; messageCount: number }[]>)
+      .then((list) => setConvList(list || [])).catch(() => {})
   }
 
   function openConv(id: number) {
     fetch(`${BASE}/api/ai/conversations/${id}`, { credentials: 'include' })
-      .then(r => r.json()).then((d: any) => {
-        const restored = (d.messages || []).map((m: { role: string; content: string; thinking?: string; artifacts?: ReportArtifact[] }) => {
+      .then(r => r.json() as Promise<{ messages?: { role: string; content: string; thinking?: string; artifacts?: ReportArtifact[] }[] }>)
+      .then((d) => {
+        const restored = (d.messages || []).map((m) => {
           let timeline: TimelineStep[] | undefined
           let thinkingLegacy: string | undefined
           const raw = m.thinking?.trim()
@@ -1103,10 +1121,10 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                     {showLabel && <div className="text-xs font-medium">{item.label}</div>}
                     {!isWatchlist && <div className="flex flex-wrap gap-x-3 gap-y-0.5">
                       {b.stockName && <span>{b.stockName}</span>}{b.type && <span className="font-semibold">{typeLabels[b.type] || b.type}</span>}
-                      {b.shares > 0 && <span>{isDiv ? `每股 ${b.shares}` : isTransfer ? `${b.shares}` : `${b.shares} 股`}</span>}
-                      {b.price > 0 && !isTransfer && <span>@ {b.price}</span>}{b.fee > 0 && <span>手续费 {b.fee}</span>}
+                      {(b.shares ?? 0) > 0 && <span>{isDiv ? `每股 ${b.shares}` : isTransfer ? `${b.shares}` : `${b.shares} 股`}</span>}
+                      {(b.price ?? 0) > 0 && !isTransfer && <span>@ {b.price}</span>}{(b.fee ?? 0) > 0 && <span>手续费 {b.fee}</span>}
                       {b.tradeDate && <span>日期 {b.tradeDate}</span>}{b.currency && <span>{b.currency}</span>}
-                      {b.amountPerShare != null && b.amountPerShare > 0 && <span>分红/股 {b.amountPerShare}</span>}
+                      {(b.amountPerShare ?? 0) > 0 && <span>分红/股 {b.amountPerShare}</span>}
                       {b.note && <span className="text-slate-400">备注: {b.note}</span>}
                     </div>}
                   </div>

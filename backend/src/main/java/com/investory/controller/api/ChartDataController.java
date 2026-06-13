@@ -34,6 +34,7 @@ public class ChartDataController {
     @Autowired private HoldingDao holdingDao;
     @Autowired private HoldingService holdingService;
     @Autowired private PortfolioAnalysisService analysisService;
+    @Autowired private com.investory.dao.PortfolioDao portfolioDao;
     @Autowired private JdbcTemplate jdbc;
 
     @GetMapping(value = "/chart", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -52,19 +53,22 @@ public class ChartDataController {
             return "{\"error\":\"unauthorized\"}";
         }
         long pid = resolvePortfolioId(portfolioId, session);
-        try {
-            return switch (type != null ? type : "") {
-                case "price"             -> priceData(symbol, days != null ? days : 180, start, end, benchmark);
-                case "allocation"        -> allocationData(pid);
-                case "pnl_rank"          -> pnlRankData(pid);
-                case "pnl_calendar"      -> pnlCalendarData(pid, year);
-                case "cumulative_return" -> cumulativeReturnData(pid, days != null ? days : 365, start, end);
-                default -> "{\"error\":\"unknown type\"}";
-            };
-        } catch (Exception e) {
-            resp.setStatus(500);
-            return "{\"error\":\"" + e.getMessage() + "\"}";
+        // 越权防护：请求指定了 portfolioId 但不属于当前用户 → resolvePortfolioId 返回 0，拒绝
+        // 价格类型(price)不依赖组合归属，单独放行
+        boolean portfolioScoped = !"price".equals(type);
+        if (portfolioScoped && pid <= 0) {
+            resp.setStatus(403);
+            return "{\"error\":\"forbidden\"}";
         }
+        // 异常不再回写 e.getMessage()，避免内部信息泄露；交由 GlobalExceptionHandler 统一处理
+        return switch (type != null ? type : "") {
+            case "price"             -> priceData(symbol, days != null ? days : 180, start, end, benchmark);
+            case "allocation"        -> allocationData(pid);
+            case "pnl_rank"          -> pnlRankData(pid);
+            case "pnl_calendar"      -> pnlCalendarData(pid, year);
+            case "cumulative_return" -> cumulativeReturnData(pid, days != null ? days : 365, start, end);
+            default -> "{\"error\":\"unknown type\"}";
+        };
     }
 
     private String priceData(String symbol, int days, String startStr, String endStr, String benchmarkSymbol) {
@@ -380,9 +384,23 @@ public class ChartDataController {
         return result;
     }
 
+    /**
+     * 解析目标组合 ID 并强制归属校验，防止越权（IDOR）。
+     *
+     * <ul>
+     *   <li>请求显式传入 portfolioId：仅当该组合属于当前登录用户时才返回，否则返回 0（拒绝）。</li>
+     *   <li>未传 portfolioId：回退到 Session 中的活跃组合（已由登录流程保证归属）。</li>
+     * </ul>
+     *
+     * @return 校验通过的组合 ID；无权访问或不存在时返回 0
+     */
     private long resolvePortfolioId(Long param, HttpSession session) {
-        if (param != null) return param;
+        Object uidAttr = session.getAttribute("userId");
+        Long userId = uidAttr instanceof Number ? ((Number) uidAttr).longValue() : null;
+        if (param != null) {
+            return portfolioDao.isOwner(param, userId) ? param : 0L;
+        }
         Object id = session.getAttribute("portfolioId");
-        return id != null ? (Long) id : 0L;
+        return id instanceof Number ? ((Number) id).longValue() : 0L;
     }
 }

@@ -33,7 +33,7 @@ const Dividends = lazy(() => import('@/pages/Dividends'))
 const StockDetail = lazy(() => import('@/pages/StockDetail'))
 const Research = lazy(() => import('@/pages/Research'))
 
-const isElectron = !!(window as any).electronAPI?.isDesktop
+const isElectron = !!window.electronAPI?.isDesktop
 
 function LoadingScreen() {
   const { t } = useT()

@@ -93,8 +93,8 @@ export default function Dashboard() {
         todayPnlPct: dash.todayPnlPct || 0,
         cashBalance: dash.cashBalance || 0,
       })
-      setCashByCurrency((dash as any).cashByCurrency || [])
-      setAllocation((dash as any).allocation || [])
+      setCashByCurrency(dash.cashByCurrency || [])
+      setAllocation(dash.allocation || [])
       setCumulative(cum || [])
     }).catch((e) => console.error('Dashboard load error:', e))
     .finally(() => setLoading(false))

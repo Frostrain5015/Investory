@@ -41,11 +41,29 @@ public class WebConfig implements WebMvcConfigurer {
      *
      * @param registry Spring 提供的 CORS 注册表，用于链式配置跨域规则
      */
+    /**
+     * 允许跨域携带凭证的来源白名单（逗号分隔，可经环境变量 CORS_ALLOWED_ORIGINS 覆盖）。
+     *
+     * <p>默认包含：
+     * <ul>
+     *   <li>{@code https://investory.frostrain.tech} — 生产 Web 站点</li>
+     *   <li>{@code http://127.0.0.1:18256}、{@code http://localhost:18256} — Electron 桌面端本地静态服务器</li>
+     *   <li>{@code http://localhost:5173}、{@code http://127.0.0.1:5173} — Vite 开发服务器</li>
+     * </ul>
+     */
+    @org.springframework.beans.factory.annotation.Value(
+            "${cors.allowed-origins:https://investory.frostrain.tech,http://127.0.0.1:18256,http://localhost:18256,http://localhost:5173,http://127.0.0.1:5173}")
+    private String allowedOrigins;
+
     @Override
     public void addCorsMappings(CorsRegistry registry) {
+        // 收敛 CORS：配合 allowCredentials(true) 必须使用明确来源白名单，
+        // 不再用 "*" 通配，避免任意站点携带 Cookie 越权请求（CSRF 面）。
+        String[] origins = java.util.Arrays.stream(allowedOrigins.split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).toArray(String[]::new);
         registry.addMapping("/**")
-                .allowedOriginPatterns("*")
-                .allowedMethods("*")
+                .allowedOrigins(origins)
+                .allowedMethods("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS")
                 .allowedHeaders("*")
                 .allowCredentials(true);
     }

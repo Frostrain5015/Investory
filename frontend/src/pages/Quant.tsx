@@ -10,7 +10,7 @@ import { BarChart2, RefreshCw, FlaskConical, Play, Trash2, Activity, ChevronDown
 import { AnimatePresence, motion } from 'framer-motion'
 import { displaySymbol } from '@/lib/format'
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, LineChart, Line, Legend, RadarChart, Radar, PolarGrid, PolarAngleAxis } from 'recharts'
-import type { BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent, CompareResult } from '@/types'
+import type { BacktestResult, BacktestMetrics, EquityPoint, TradeLogEntry, SseEvent, CompareResult, PortfolioAnalysisResult, PortfolioAnalysisHolding, PortfolioGroupExposure, HoldingsResponse, SavedStrategy, SimpleRule, StockSearchItem, IndicatorDef, BacktestConfig } from '@/types'
 import { useT } from '@/i18n/I18nContext'
 import type { Translation } from '@/i18n/translations'
 
@@ -87,7 +87,7 @@ const GROUP_COLORS: Record<string, string> = {
 export function RiskSection() {
   useT()
   useToast()
-  const [data, setData] = useState<any>(null)
+  const [data, setData] = useState<PortfolioAnalysisResult | null>(null)
   const [loading, setLoading] = useState(true)
   const [progress, setProgress] = useState('')
 
@@ -97,7 +97,7 @@ export function RiskSection() {
 
     try {
       const holdRes = await fetch(`${BASE}/api/holdings`, { credentials: 'include' })
-      const holdData = await holdRes.json()
+      const holdData = await holdRes.json() as HoldingsResponse
       const snaps = holdData.snapshots || []
       if (snaps.length === 0) {
         setData({ _error: 'no holdings' })
@@ -105,23 +105,23 @@ export function RiskSection() {
         return
       }
 
-      const totalVal = snaps.reduce((s: number, h: any) => s + (h.marketValue ?? h.marketValueCny ?? h.totalInvested ?? 0), 0)
-      const holdings = snaps.map((h: any) => ({
+      const totalVal = snaps.reduce((s, h) => s + (h.marketValue ?? h.totalInvested ?? 0), 0)
+      const holdings = snaps.map((h) => ({
         symbol: h.stockSymbol,
         name: h.stockName || h.stockSymbol,
-        weight: totalVal > 0 ? ((h.marketValue ?? h.marketValueCny ?? h.totalInvested ?? 0) / totalVal * 100) : (100 / snaps.length),
+        weight: totalVal > 0 ? ((h.marketValue ?? h.totalInvested ?? 0) / totalVal * 100) : (100 / snaps.length),
       }))
 
       setProgress('分析中...')
 
-      const result = await analyzePortfolio(holdings)
+      const result = await analyzePortfolio(holdings) as PortfolioAnalysisResult
       if (result.error) {
         setData({ _error: result.error })
       } else {
         setData(result)
       }
-    } catch (e: any) {
-      setData({ _error: e.message || '分析失败' })
+    } catch (e) {
+      setData({ _error: e instanceof Error ? e.message : '分析失败' })
     } finally {
       setLoading(false)
       setProgress('')
@@ -146,13 +146,13 @@ export function RiskSection() {
   }, [loadAnalysis])
 
   // Derived stats
-  const topHoldings: any[] = data?.top_holdings || []
-  const bottomHoldings: any[] = data?.bottom_holdings || []
-  const groupExposure: Record<string, any> = data?.group_exposure || {}
+  const topHoldings: PortfolioAnalysisHolding[] = data?.top_holdings || []
+  const bottomHoldings: PortfolioAnalysisHolding[] = data?.bottom_holdings || []
+  const groupExposure: Record<string, PortfolioGroupExposure> = data?.group_exposure || {}
   const portfolioScore = data?.portfolio_score ?? 0
 
   // Normalize group bars: find max buy_score, scale all relative to it
-  const maxGroupBuy = Math.max(1, ...Object.values(groupExposure).map((g: any) => g.buy_score || 0))
+  const maxGroupBuy = Math.max(1, ...Object.values(groupExposure).map((g) => g.buy_score || 0))
 
   return (<>
     <div className="flex items-center gap-3">
@@ -199,7 +199,7 @@ export function RiskSection() {
                 <p>加权均分</p>
               </div>
               <div className="text-center">
-                <p className="text-2xl font-bold text-slate-900">{(data.all_holdings || []).filter((h: any) => !h.error).length}</p>
+                <p className="text-2xl font-bold text-slate-900">{(data.all_holdings || []).filter((h) => !h.error).length}</p>
                 <p>已评分</p>
               </div>
             </div>
@@ -230,18 +230,18 @@ export function RiskSection() {
           <CardHeader><CardTitle className="text-sm">评分排名</CardTitle></CardHeader>
           <CardContent className="space-y-1.5">
             <p className="text-xs text-slate-400 mb-1">🟢 评分最高</p>
-            {topHoldings.map((h: any) => (
+            {topHoldings.map((h) => (
               <div key={h.symbol || h.code} className="flex items-center gap-2 text-xs">
-                <span className="font-medium text-slate-900 w-16">{displaySymbol(h.symbol || h.code, h.market || '')}</span>
+                <span className="font-medium text-slate-900 w-16">{displaySymbol(h.symbol || h.code || '', h.market || '')}</span>
                 <span className="text-slate-500 truncate flex-1">{h.name}</span>
                 <span className={`font-medium ${(h.total_score ?? 0) >= 60 ? 'text-emerald-600' : 'text-amber-600'}`}>{(h.total_score ?? 0).toFixed(0)}分</span>
               </div>
             ))}
             {topHoldings.length === 0 && <p className="text-xs text-slate-400">—</p>}
             <p className="text-xs text-slate-400 mb-1 mt-2">🔴 评分最低</p>
-            {bottomHoldings.map((h: any) => (
+            {bottomHoldings.map((h) => (
               <div key={h.symbol || h.code} className="flex items-center gap-2 text-xs">
-                <span className="font-medium text-slate-900 w-16">{displaySymbol(h.symbol || h.code, h.market || '')}</span>
+                <span className="font-medium text-slate-900 w-16">{displaySymbol(h.symbol || h.code || '', h.market || '')}</span>
                 <span className="text-slate-500 truncate flex-1">{h.name}</span>
                 <span className="font-medium text-red-500">{(h.total_score ?? 0).toFixed(0)}分</span>
               </div>
@@ -265,9 +265,9 @@ export function RiskSection() {
                 </tr>
               </thead>
               <tbody>
-                {(data.all_holdings || []).map((h: any) => (
+                {(data.all_holdings || []).map((h) => (
                   <tr key={h.symbol || h.code} className="border-b border-slate-50">
-                    <td className="py-1.5 font-medium text-slate-900">{displaySymbol(h.symbol || h.code, h.market || '')}</td>
+                    <td className="py-1.5 font-medium text-slate-900">{displaySymbol(h.symbol || h.code || '', h.market || '')}</td>
                     <td className="py-1.5 text-slate-600">{h.name}</td>
                     <td className="py-1.5 text-right text-slate-500">{(h.weight ?? 0).toFixed(1)}%</td>
                     <td className={`py-1.5 text-right font-bold ${(h.total_score ?? 0) >= 60 ? 'text-emerald-600' : (h.total_score ?? 0) >= 40 ? 'text-amber-600' : 'text-red-500'}`}>{(h.total_score ?? 0).toFixed(1)}</td>
@@ -297,7 +297,7 @@ export function BacktestSection() {
   const EXIT_INDICATORS = useMemo(() => [...buildEntryIndicators(t), ...buildExitOnlyIndicators(t)], [t])
 
   const [view, setView] = useState<'list' | 'builder' | 'run'>('list')
-  const [strategies, setStrategies] = useState<any[]>([])
+  const [strategies, setStrategies] = useState<SavedStrategy[]>([])
   const [editId, setEditId] = useState<number | null>(null)
   const [runStrategyId, setRunStrategyId] = useState<number | null>(null)
   const [results, setResults] = useState<BacktestResult[]>([])
@@ -318,11 +318,11 @@ export function BacktestSection() {
   const [optimize, setOptimize] = useState(false)
   const [strategyName, setStrategyName] = useState('')
   const [stockInput, setStockInput] = useState('')
-  const [stockSearchResults, setStockSearchResults] = useState<any[]>([])
+  const [stockSearchResults, setStockSearchResults] = useState<StockSearchItem[]>([])
   const [selectedStocks, setSelectedStocks] = useState<{ symbol: string; name: string }[]>([])
   const [entryLogic, setEntryLogic] = useState<'all' | 'any'>('all')
-  const [entryRules, setEntryRules] = useState<any[]>([])
-  const [exitRules, setExitRules] = useState<any[]>([])
+  const [entryRules, setEntryRules] = useState<SimpleRule[]>([])
+  const [exitRules, setExitRules] = useState<SimpleRule[]>([])
   const [startDate, setStartDate] = useState(yearAgoStr())
   const [baseCurrency, setBaseCurrency] = useState('CNY')
   const [endDate, setEndDate] = useState(todayStr())
@@ -365,8 +365,8 @@ export function BacktestSection() {
   // Reconnect on mount
   useEffect(() => {
     fetch(`${BASE}/api/backtest/status`, { credentials: 'include' })
-      .then(r => r.json())
-      .then((data: any) => { if (data.active) { setRunning(true); if (data.progress) setProgress(data.progress); if (data.recentLogs) setSseLogs(data.recentLogs); reconnectSSE() } })
+      .then(r => r.json() as Promise<{ active?: boolean; progress?: SseProgress; recentLogs?: string[] }>)
+      .then((data) => { if (data.active) { setRunning(true); if (data.progress) setProgress(data.progress); if (data.recentLogs) setSseLogs(data.recentLogs); reconnectSSE() } })
       .catch(() => {})
   }, [])
 
@@ -396,10 +396,25 @@ export function BacktestSection() {
     if (!runStrategyId) { toast(q.toastSelectStrategy, false); return }
     const savedStrat = strategies.find(s => s.id === runStrategyId)
     if (!savedStrat) { toast(q.toastStrategyNotFound, false); return }
-    let strategyData: any
+    interface StrategyData {
+      entry?: { logic?: string; rules?: SimpleRule[] }
+      exit?: { rules?: SimpleRule[] }
+      code?: string
+      stocks?: string[]
+      [key: string]: unknown
+    }
+    interface BacktestRunConfig extends BacktestConfig {
+      baseCurrency?: string
+      windowMonths?: number
+      stepMonths?: number
+      oosMonths?: number
+      paramGrid?: Record<string, number[]>
+      [key: string]: unknown
+    }
+    let strategyData: StrategyData
     try { strategyData = JSON.parse(savedStrat.strategy_json || '{}') } catch { console.error('Invalid strategy JSON'); return }
     const strategy = { ...strategyData, stocks }
-    const config: any = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.008, slippagePct: 0.001 }
+    const config: BacktestRunConfig = { startDate, endDate, initialCapital: Number(initialCapital), baseCurrency, commissionPct: 0.008, slippagePct: 0.001 }
     const effectiveStrategyType = optimize ? 'optimize' : wfEnabled ? 'walk_forward' : savedStrat.strategy_type
     if (wfEnabled) {
       Object.assign(config, { windowMonths: wfWindow, stepMonths: wfStep, oosMonths: wfOos })
@@ -471,7 +486,9 @@ export function BacktestSection() {
     const strategy = strategyType === 'advanced'
       ? { code: advancedCode }
       : { entry: { logic: entryLogic, rules: entryRules }, exit: { rules: exitRules } }
-    const body: any = { name: strategyName || (strategyType === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple), strategyType, strategy }
+    const body: { name: string; strategyType: string; strategy: Record<string, unknown>; id?: number } = {
+      name: strategyName || (strategyType === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple), strategyType, strategy,
+    }
     if (editId) body.id = editId
     let resp: Response
     try {
@@ -498,10 +515,14 @@ export function BacktestSection() {
     loadStrategies()
   }
 
-  function editStrategy(s: any) {
-    setEditId(s.id); setStrategyName(s.name); setStrategyType(s.strategy_type)
+  function editStrategy(s: SavedStrategy) {
+    setEditId(s.id); setStrategyName(s.name); setStrategyType(s.strategy_type === 'advanced' ? 'advanced' : 'simple')
     try {
-      const parsed = JSON.parse(s.strategy_json)
+      const parsed = JSON.parse(s.strategy_json) as {
+        code?: string
+        entry?: { logic?: 'all' | 'any'; rules?: SimpleRule[] }
+        exit?: { rules?: SimpleRule[] }
+      }
       if (s.strategy_type === 'advanced') { setAdvancedCode(parsed.code || '') }
       else {
         setEntryLogic(parsed.entry?.logic || 'all')
@@ -597,7 +618,7 @@ export function BacktestSection() {
         <div className="text-center py-12 text-slate-400 text-sm">{q.noStrategies}</div>
       ) : (
         <div className="space-y-2">
-          {strategies.map((s: any) => (
+          {strategies.map((s) => (
             <Card key={s.id} className="hover:border-blue-200 transition-colors">
               <CardContent className="flex items-center justify-between py-3">
                 <div className="flex items-center gap-3">
@@ -631,14 +652,14 @@ export function BacktestSection() {
                 <select value={runStrategyId || ''} onChange={e => setRunStrategyId(Number(e.target.value) || null)}
                   className="w-full h-8 px-2 rounded-lg border border-slate-200 text-xs">
                   <option value="">{q.selectPlaceholder}</option>
-                  {strategies.map((s: any) => <option key={s.id} value={s.id}>{s.name} ({s.strategy_type === 'walk_forward' ? 'WF' : s.strategy_type === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple})</option>)}
+                  {strategies.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.strategy_type === 'walk_forward' ? 'WF' : s.strategy_type === 'advanced' ? q.strategyTypeAdvanced : q.strategyTypeSimple})</option>)}
                 </select>
               </div>
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-xs font-medium text-slate-600">{q.testStocks}</label>
                   <button type="button" onClick={async () => {
-                    try { const data = await getHoldings(); const snaps = (data as any).snapshots || []; for (const s of snaps) { const sym = s.stockSymbol?.includes('.') ? s.stockSymbol : `${s.stockSymbol}.${s.market}`; if (!selectedStocks.find(x => x.symbol === sym)) setSelectedStocks(prev => [...prev, { symbol: sym, name: s.stockName || sym }]) } } catch {}
+                    try { const data = await getHoldings(); const snaps = data.snapshots || []; for (const s of snaps) { const sym = s.stockSymbol?.includes('.') ? s.stockSymbol : `${s.stockSymbol}.${s.market}`; if (!selectedStocks.find(x => x.symbol === sym)) setSelectedStocks(prev => [...prev, { symbol: sym, name: s.stockName || sym }]) } } catch {}
                   }} className="text-[10px] text-blue-600 hover:text-blue-800">{q.importHoldings}</button>
                 </div>
                 {selectedStocks.length > 0 && (
@@ -652,7 +673,7 @@ export function BacktestSection() {
                     onBlur={() => setTimeout(() => setStockSearchResults([]), 200)} placeholder={q.searchStocks} className="w-full h-8 px-3 rounded-lg border border-slate-200 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/5" />
                   {stockSearchResults.length > 0 && (
                     <div className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 max-h-48 overflow-auto">
-                      {stockSearchResults.map((r: any) => {
+                      {stockSearchResults.map((r) => {
                         const sym = displaySymbol(r.symbol, r.market)
                         return <button key={r.id} type="button" onMouseDown={e => e.preventDefault()} onClick={() => { if (!selectedStocks.find(s => s.symbol === sym)) setSelectedStocks([...selectedStocks, { symbol: sym, name: r.name }]); setStockInput(''); setStockSearchResults([]) }}
                           className="w-full flex items-center justify-between px-3 py-2 hover:bg-slate-50 text-left text-xs"><span className="font-medium text-slate-700">{r.name}</span><span className="text-slate-400">{sym}</span></button>
@@ -815,9 +836,9 @@ export function BacktestSection() {
                     )
                   }} />
                   <Area type="monotone" dataKey="equity" stroke="#2563eb" fill="url(#colorEquity)" strokeWidth={2}
-                    dot={(props: any) => {
+                    dot={(props: { cx?: number; cy?: number; index?: number }) => {
                       const { cx, cy, index } = props
-                      const date = equityCurve[index]?.date
+                      const date = equityCurve[index ?? -1]?.date
                       const trade = tradeLog?.find(t => t.date === date)
                       if (!trade) return <circle cx={cx} cy={cy} r={0} fill="none" />
                       const isBuy = trade.action === 'BUY'
@@ -1074,22 +1095,22 @@ function CompareView({ data, onClose }: {
 
 // ── Shared components ───────────────────────────────────────────────────
 
-function RuleEditor({ rule, indicators, onChange, onRemove, t }: { rule: any; indicators: any[]; onChange: (r: any) => void; onRemove: () => void; t: Translation }) {
+function RuleEditor({ rule, indicators, onChange, onRemove, t }: { rule: SimpleRule; indicators: IndicatorDef[]; onChange: (r: SimpleRule) => void; onRemove: () => void; t: Translation }) {
   const q = t.quant
   const indicator = indicators.find(ind => ind.name === rule.indicator) || indicators[0]
   return (
     <div className="flex items-center gap-1.5 mb-1.5 bg-slate-50 rounded-lg p-2">
-      <select value={rule.indicator} onChange={e => onChange({ ...rule, indicator: e.target.value, params: indicators.find(i => i.name === e.target.value)?.params.reduce((acc: any, p: any) => ({ ...acc, [p.name]: p.default }), {}) || {} })} className="h-7 px-1.5 rounded text-xs border border-slate-200 bg-white">
+      <select value={rule.indicator} onChange={e => onChange({ ...rule, indicator: e.target.value, params: indicators.find(i => i.name === e.target.value)?.params.reduce((acc: Record<string, number>, p) => ({ ...acc, [p.name]: p.default }), {}) || {} })} className="h-7 px-1.5 rounded text-xs border border-slate-200 bg-white">
         {indicators.map(ind => <option key={ind.name} value={ind.name}>{ind.label}</option>)}
       </select>
-      {indicator.params.map((p: any) => (
+      {indicator.params.map((p) => (
         <input key={p.name} type="number" value={rule.params?.[p.name] ?? p.default}
           onChange={e => onChange({ ...rule, params: { ...rule.params, [p.name]: Number(e.target.value) } })}
           className="w-14 h-7 px-1.5 rounded text-xs border border-slate-200 bg-white" placeholder={p.label} />
       ))}
       {indicator.conditions && (
         <select value={rule.condition} onChange={e => onChange({ ...rule, condition: e.target.value })} className="h-7 px-1.5 rounded text-xs border border-slate-200 bg-white">
-          {indicator.conditions.map((c: any) => <option key={c.value} value={c.value}>{c.label}</option>)}
+          {indicator.conditions.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
         </select>
       )}
       {(rule.condition === 'oversold' || rule.condition === 'overbought') && (

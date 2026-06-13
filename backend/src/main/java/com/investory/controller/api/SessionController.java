@@ -1,10 +1,7 @@
 package com.investory.controller.api;
 
-import com.investory.dao.PortfolioDao;
-import com.investory.dao.UserDao;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
@@ -13,7 +10,7 @@ import java.util.Map;
 /**
  * 会话与账户管理控制器
  *
- * <p>负责模块：用户登录态查询、账户注销删除。
+ * <p>负责模块：用户登录态查询。
  * <p>API 基础路径：/api
  *
  * <p>该控制器通过 HttpSession 维护用户身份信息，无需 JWT Token，
@@ -22,9 +19,6 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api")
 public class SessionController {
-
-    @Autowired private UserDao userDao;
-    @Autowired private PortfolioDao portfolioDao;
 
     /**
      * 查询当前用户的登录状态
@@ -92,47 +86,7 @@ public class SessionController {
      * @param req HTTP 请求，用于获取 Session
      * @return 操作结果 Map
      */
-    /**
-     * 测试用登录端点：直接用用户名密码创建会话（供自动化测试脚本使用）。
-     * 仅验证数据库中存在的用户，不检查 Frost ID OAuth。
-     * 需要在 WebConfig 中放行路径 /api/session/test-login。
-     */
-    @PostMapping("/session/test-login")
-    public Map<String, Object> testLogin(HttpServletRequest req) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        try {
-            String username = req.getParameter("username");
-            String password = req.getParameter("password");
-            if (username == null || password == null) {
-                result.put("error", "username and password required");
-                return result;
-            }
-            var user = userDao.findByUsername(username);
-            if (user == null) {
-                result.put("error", "user not found");
-                return result;
-            }
-            // Verify password using BCrypt
-            var found = userDao.findByUsername(username.trim());
-            if (found == null || !org.mindrot.jbcrypt.BCrypt.checkpw(password, found.getPasswordHash())) {
-                result.put("error", "invalid credentials");
-                return result;
-            }
-            HttpSession session = req.getSession(true);
-            session.setAttribute("userId", found.getId());
-            session.setAttribute("username", found.getUsername());
-            session.setAttribute("isAdmin", found.isAdmin());
-            // Pick first portfolio
-            var portfolios = portfolioDao.findByUser(found.getId());
-            if (!portfolios.isEmpty()) {
-                session.setAttribute("portfolioId", portfolios.get(0).getId());
-            }
-            result.put("authenticated", true);
-            result.put("userId", found.getId());
-            result.put("username", found.getUsername());
-        } catch (Exception e) {
-            result.put("error", e.getMessage());
-        }
-        return result;
-    }
+    // 说明：测试专用登录端点 /api/session/test-login 已迁移至
+    // TestLoginController，并通过 @Profile("test"|"dev") 限定仅在非生产环境注册，
+    // 生产构建中该端点不存在，杜绝被外部调用。
 }

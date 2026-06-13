@@ -8,7 +8,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { displaySymbol, fmtPriceTs } from '@/lib/format'
 import Sparkline from '@/components/Sparkline'
 import { useT } from '@/i18n/I18nContext'
-import type { StockSearchItem, PriceData, FactorScore } from '@/types'
+import type { StockSearchItem, PriceData, FactorScore, HoldingsResponse, HoldingSnapshot } from '@/types'
 import { Search, X, Plus, GripVertical } from 'lucide-react'
 
 interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number; changeToday?: number; changePctToday?: number; priceTimestamp?: string }
@@ -48,7 +48,7 @@ export default function Holdings() {
     if (items.length === 0) return
     items.forEach(item => {
       if (sparkData[item.symbol]) return
-      chartAPI.price(item.symbol, 30).then((raw: any) => {
+      chartAPI.price(item.symbol, 30).then((raw) => {
         const prices: PriceData[] = Array.isArray(raw) ? raw : raw.prices
         setSparkData(prev => ({ ...prev, [item.symbol]: prices.map(p => p.close) }))
       }).catch(() => {})
@@ -99,12 +99,13 @@ export default function Holdings() {
   const load = useCallback(() => {
     if (!portfolioId) return
     Promise.all([
-      fetch(`${BASE}/api/holdings`, { credentials: 'include' }).then(r => r.json()),
-      fetch(`${BASE}/api/watchlist`, { credentials: 'include' }).then(r => r.json()),
+      fetch(`${BASE}/api/holdings`, { credentials: 'include' }).then(r => r.json() as Promise<HoldingsResponse>),
+      fetch(`${BASE}/api/watchlist`, { credentials: 'include' }).then(r => r.json() as Promise<WatchItem[]>),
     ]).then(([hData, wData]) => {
-      const held = (hData.snapshots || []) as any[]
+      // 后端快照可能附带 priceTimestamp（未在 HoldingSnapshot 中声明），故按需扩展类型
+      const held = (hData.snapshots || []) as (HoldingSnapshot & { priceTimestamp?: string })[]
       const heldById = new Map(held.map(s => [s.stockId, s]))
-      const watchItems = (wData as WatchItem[]) || []
+      const watchItems = wData || []
 
       const merged: WatchItem[] = []
 
