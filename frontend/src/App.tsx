@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useEffect, lazy, Suspense } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { AuthProvider, useAuth } from '@/hooks/use-auth'
 import { SettingsProvider } from '@/hooks/use-settings'
 import { ThemeProvider } from '@/hooks/use-theme'
@@ -49,15 +49,23 @@ function PageTransition({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   return (
     <Suspense fallback={<LoadingScreen />}>
-      <motion.div
-        key={location.pathname}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.15, ease: 'easeOut' }}
-        className="h-full"
-      >
-        {children}
-      </motion.div>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={location.pathname}
+          initial={{ opacity: 0, clipPath: 'circle(0% at 50% 50%)' }}
+          animate={{ opacity: 1, clipPath: 'circle(75% at 50% 50%)' }}
+          exit={{ opacity: 0, scale: 0.97 }}
+          transition={{
+            type: 'spring',
+            stiffness: 120,
+            damping: 20,
+            mass: 0.8,
+          }}
+          className="h-full"
+        >
+          {children}
+        </motion.div>
+      </AnimatePresence>
     </Suspense>
   )
 }
