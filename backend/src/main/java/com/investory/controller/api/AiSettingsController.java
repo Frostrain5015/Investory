@@ -1,27 +1,26 @@
 package com.investory.controller.api;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.investory.server.AppContext;
+import com.google.gson.JsonParser;
 import com.investory.server.ConfigLoader;
 import com.investory.server.DatabaseManager;
+import com.investory.util.JsonUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 
-import java.io.StringReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.time.Duration;
 import java.util.*;
 
 public class AiSettingsController {
 
-    private static final Gson gson = new Gson();
     private static final String DEFAULT_PROVIDER = "openai_compat";
     private static final String DEFAULT_MODEL = "deepseek-v4-pro";
     private static final String DEFAULT_OPENAI_COMPAT_BASE_URL = "https://api.deepseek.com";
@@ -53,13 +52,13 @@ public class AiSettingsController {
 
     public void handleGetSettings(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long userId = getUserId(req);
-        resp.setContentType("application/json;charset=UTF-8");
         if (userId == 0) {
-            resp.getWriter().write("{\"error\":\"not authenticated\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "not authenticated")));
             return;
         }
 
-        List<Map<String, Object>> rows = queryForList(
+        List<Map<String, Object>> rows = jdbcQueryForList(
             "SELECT provider, model, base_url, LENGTH(api_key) > 0 AS has_key FROM ai_settings WHERE user_id = ?", userId);
         Map<String, Object> result;
         if (rows.isEmpty()) {
@@ -78,41 +77,43 @@ public class AiSettingsController {
                 "hasKey", row.getOrDefault("has_key", false)
             );
         }
-        resp.getWriter().write(gson.toJson(result));
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleListModels(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long userId = getUserId(req);
-        resp.setContentType("application/json;charset=UTF-8");
         if (userId == 0) {
-            resp.getWriter().write("{\"error\":\"not authenticated\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "not authenticated")));
             return;
         }
 
-        StringBuilder sb = new StringBuilder();
-        try (var reader = req.getReader()) {
-            String line;
-            while ((line = reader.readLine()) != null) sb.append(line);
-        }
-        JsonObject body = gson.fromJson(sb.toString(), JsonObject.class);
+        // Read JSON body
+        String jsonBody = new String(req.getReader().readAllBytes());
+        var gson = new com.google.gson.Gson();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = gson.fromJson(jsonBody, Map.class);
 
-        String provider = str(getJsonString(body, "provider")).trim();
-        String baseUrl = str(getJsonString(body, "baseUrl")).trim();
-        String apiKey = str(getJsonString(body, "apiKey")).trim();
+        String provider = str(body.get("provider")).trim();
+        String baseUrl = str(body.get("baseUrl")).trim();
+        String apiKey = str(body.get("apiKey")).trim();
 
         if (!isSupportedProvider(provider)) {
-            resp.getWriter().write("{\"error\":\"请选择 API 格式\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "请选择 API 格式")));
             return;
         }
 
         if (apiKey.isBlank()) {
-            List<Map<String, Object>> rows = queryForList(
+            List<Map<String, Object>> rows = jdbcQueryForList(
                 "SELECT api_key FROM ai_settings WHERE user_id = ?", userId);
             if (!rows.isEmpty()) apiKey = str(rows.get(0).get("api_key")).trim();
         }
         if (apiKey.isBlank()) apiKey = defaultKey == null ? "" : defaultKey.trim();
         if (apiKey.isBlank()) {
-            resp.getWriter().write("{\"error\":\"请先填写 API Key\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "请先填写 API Key")));
             return;
         }
 
@@ -121,80 +122,16 @@ public class AiSettingsController {
                 ? fetchAnthropicModels(baseUrl, apiKey)
                 : fetchOpenAiCompatibleModels(baseUrl, apiKey);
             if (models.isEmpty()) {
-                resp.getWriter().write("{\"error\":\"未获取到可用模型\"}");
+                resp.setContentType("application/json;charset=UTF-8");
+                resp.getWriter().write(JsonUtil.toJson(Map.of("error", "未获取到可用模型")));
                 return;
             }
-            Map<String, Object> r = Map.of("status", "ok", "models", models, "count", models.size());
-            resp.getWriter().write(gson.toJson(r));
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok", "models", models, "count", models.size())));
         } catch (Exception e) {
-            resp.getWriter().write("{\"error\":\"" + (e.getMessage() == null ? "模型列表获取失败" : e.getMessage()) + "\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", e.getMessage() == null ? "模型列表获取失败" : e.getMessage())));
         }
-    }
-
-    public void handleResetSettings(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        long userId = getUserId(req);
-        resp.setContentType("application/json;charset=UTF-8");
-        if (userId == 0) {
-            resp.getWriter().write("{\"error\":\"not authenticated\"}");
-            return;
-        }
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement("DELETE FROM ai_settings WHERE user_id = ?")) {
-            ps.setObject(1, userId);
-            ps.executeUpdate();
-        }
-        resp.getWriter().write("{\"status\":\"ok\"}");
-    }
-
-    public void handleSaveSettings(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        long userId = getUserId(req);
-        resp.setContentType("application/json;charset=UTF-8");
-        if (userId == 0) {
-            resp.getWriter().write("{\"error\":\"not authenticated\"}");
-            return;
-        }
-
-        StringBuilder sb = new StringBuilder();
-        try (var reader = req.getReader()) {
-            String line;
-            while ((line = reader.readLine()) != null) sb.append(line);
-        }
-        JsonObject body = gson.fromJson(sb.toString(), JsonObject.class);
-
-        String provider = str(getJsonString(body, "provider")).trim();
-        String model = str(getJsonString(body, "model")).trim();
-        String baseUrl = str(getJsonString(body, "baseUrl")).trim();
-        String apiKey = str(getJsonString(body, "apiKey")).trim();
-
-        if (!isSupportedProvider(provider)) {
-            resp.getWriter().write("{\"error\":\"请选择 API 格式\"}");
-            return;
-        }
-        if (model.isBlank()) {
-            resp.getWriter().write("{\"error\":\"model required\"}");
-            return;
-        }
-
-        String key = apiKey.isBlank() ? "" : apiKey;
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO ai_settings (user_id, provider, model, base_url, api_key) VALUES (?, ?, ?, ?, ?) " +
-                "ON DUPLICATE KEY UPDATE provider=VALUES(provider), model=VALUES(model), base_url=VALUES(base_url), api_key=VALUES(api_key)")) {
-            ps.setObject(1, userId);
-            ps.setString(2, provider);
-            ps.setString(3, model);
-            ps.setString(4, baseUrl);
-            ps.setString(5, key);
-            ps.executeUpdate();
-        }
-        resp.getWriter().write("{\"status\":\"ok\"}");
-    }
-
-    // ── Private helpers ──────────────────────────────────────────────
-
-    private String getJsonString(JsonObject obj, String key) {
-        if (obj == null || !obj.has(key) || obj.get(key).isJsonNull()) return "";
-        return obj.get(key).getAsString();
     }
 
     private List<String> fetchOpenAiCompatibleModels(String baseUrl, String apiKey) throws Exception {
@@ -227,57 +164,124 @@ public class AiSettingsController {
             .build();
         HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
         if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
-            switch (resp.statusCode()) {
-                case 401:
-                case 403:
-                    throw new IllegalStateException("API Key 无效或没有模型列表权限");
-                default:
-                    throw new IllegalStateException("模型列表请求失败: HTTP " + resp.statusCode());
-            }
+            return switch (resp.statusCode()) {
+                case 401, 403 -> throwError("API Key 无效或没有模型列表权限");
+                default -> throwError("模型列表请求失败: HTTP " + resp.statusCode());
+            };
         }
 
-        JsonObject root = gson.fromJson(resp.body(), JsonObject.class);
+        var json = new com.google.gson.Gson();
+        JsonObject root = JsonParser.parseString(resp.body()).getAsJsonObject();
         LinkedHashSet<String> ids = new LinkedHashSet<>();
-        if (root.has("data")) collectModelIds(root.get("data"), ids);
-        if (root.has("models")) collectModelIds(root.get("models"), ids);
+        collectModelIds(root.getAsJsonArray("data"), ids);
+        collectModelIds(root.getAsJsonArray("models"), ids);
 
         List<String> models = new ArrayList<>(ids);
         models.sort(String.CASE_INSENSITIVE_ORDER);
         return models;
     }
 
-    private void collectModelIds(JsonElement node, Set<String> ids) {
-        if (node == null || !node.isJsonArray()) return;
-        for (JsonElement item : node.getAsJsonArray()) {
-            if (item.isJsonPrimitive()) {
-                ids.add(item.getAsString());
-            } else if (item.isJsonObject()) {
-                JsonObject obj = item.getAsJsonObject();
-                if (obj.has("id") && !obj.get("id").isJsonNull()) ids.add(obj.get("id").getAsString());
-                else if (obj.has("model") && !obj.get("model").isJsonNull()) ids.add(obj.get("model").getAsString());
+    private List<String> throwError(String message) {
+        throw new IllegalStateException(message);
+    }
+
+    private void collectModelIds(com.google.gson.JsonArray node, Set<String> ids) {
+        if (node == null || node.isJsonNull()) return;
+        for (var element : node) {
+            if (element.isJsonPrimitive()) {
+                ids.add(element.getAsString());
+            } else if (element.isJsonObject()) {
+                var obj = element.getAsJsonObject();
+                if (obj.has("id") && !obj.get("id").isJsonNull()) {
+                    ids.add(obj.get("id").getAsString());
+                } else if (obj.has("model") && !obj.get("model").isJsonNull()) {
+                    ids.add(obj.get("model").getAsString());
+                }
             }
         }
     }
 
-    private List<Map<String, Object>> queryForList(String sql, Object... params) {
-        List<Map<String, Object>> results = new ArrayList<>();
+    public void handleResetSettings(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        long userId = getUserId(req);
+        if (userId == 0) {
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "not authenticated")));
+            return;
+        }
+        jdbcUpdate("DELETE FROM ai_settings WHERE user_id = ?", userId);
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
+    }
+
+    public void handleSaveSettings(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        long userId = getUserId(req);
+        if (userId == 0) {
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "not authenticated")));
+            return;
+        }
+
+        String jsonBody = new String(req.getReader().readAllBytes());
+        var gson = new com.google.gson.Gson();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = gson.fromJson(jsonBody, Map.class);
+
+        String provider = str(body.get("provider")).trim();
+        String model = str(body.get("model")).trim();
+        String baseUrl = str(body.get("baseUrl")).trim();
+        String apiKey = str(body.get("apiKey")).trim();
+
+        if (!isSupportedProvider(provider)) {
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "请选择 API 格式")));
+            return;
+        }
+        if (model.isBlank()) {
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "model required")));
+            return;
+        }
+
+        String key = apiKey.isBlank() ? "" : apiKey;
+        jdbcUpdate(
+            "INSERT INTO ai_settings (user_id, provider, model, base_url, api_key) VALUES (?, ?, ?, ?, ?) " +
+            "ON DUPLICATE KEY UPDATE provider=VALUES(provider), model=VALUES(model), base_url=VALUES(base_url), api_key=VALUES(api_key)",
+            userId, provider, model, baseUrl, key);
+
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
+    }
+
+    // ── JDBC helpers ─────────────────────────────────────────────────────
+
+    private List<Map<String, Object>> jdbcQueryForList(String sql, Object... args) throws Exception {
+        List<Map<String, Object>> result = new ArrayList<>();
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (int i = 0; i < params.length; i++) ps.setObject(i + 1, params[i]);
+            for (int i = 0; i < args.length; i++) {
+                ps.setObject(i + 1, args[i]);
+            }
             try (ResultSet rs = ps.executeQuery()) {
-                ResultSetMetaData rsmd = rs.getMetaData();
-                int colCount = rsmd.getColumnCount();
+                int colCount = rs.getMetaData().getColumnCount();
                 while (rs.next()) {
                     Map<String, Object> row = new LinkedHashMap<>();
-                    for (int i = 1; i <= colCount; i++) {
-                        row.put(rsmd.getColumnLabel(i), rs.getObject(i));
+                    for (int c = 1; c <= colCount; c++) {
+                        row.put(rs.getMetaData().getColumnLabel(c), rs.getObject(c));
                     }
-                    results.add(row);
+                    result.add(row);
                 }
             }
-        } catch (SQLException e) {
-            throw new RuntimeException("Query failed: " + sql, e);
         }
-        return results;
+        return result;
+    }
+
+    private int jdbcUpdate(String sql, Object... args) throws Exception {
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) {
+                ps.setObject(i + 1, args[i]);
+            }
+            return ps.executeUpdate();
+        }
     }
 }

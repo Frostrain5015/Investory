@@ -13,13 +13,8 @@ public class PortfolioValueCalculator {
 
     private static final Logger log = Logger.getLogger(PortfolioValueCalculator.class.getName());
 
-    private final DailyPortfolioValueDao dailyDao;
-    private final PnlLedgerService pnlLedgerService;
-
-    public PortfolioValueCalculator() {
-        this.dailyDao = AppContext.get(DailyPortfolioValueDao.class);
-        this.pnlLedgerService = AppContext.get(PnlLedgerService.class);
-    }
+    private final DailyPortfolioValueDao dailyDao = AppContext.get(DailyPortfolioValueDao.class);
+    private final PnlLedgerService pnlLedgerService = AppContext.get(PnlLedgerService.class);
 
     public void backfillFrom(long portfolioId, LocalDate fromDate) {
         backfillFrom(portfolioId, fromDate, 0, null, null);

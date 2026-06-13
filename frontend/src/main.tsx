@@ -4,6 +4,14 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
 
+// Desktop (Electron) is a frameless window that scrolls only inside inner
+// containers — the document itself never scrolls. Mark the root so CSS can drop
+// the reserved scrollbar gutter, which would otherwise show as an empty strip
+// down the right edge of the window.
+if (window.electronAPI?.isDesktop) {
+  document.documentElement.classList.add('electron')
+}
+
 // Recover gracefully from a lazy-loaded chunk that can't be fetched — e.g. an
 // open tab navigating during the brief service-restart window of a deploy, or a
 // chunk hash that changed after a redeploy. Vite fires `vite:preloadError` when

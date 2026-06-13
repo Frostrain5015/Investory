@@ -1,19 +1,22 @@
 package com.investory.crawler;
 
-import com.investory.server.SseClient;
-import jakarta.servlet.http.HttpServletResponse;
+import com.google.gson.Gson;
 
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.PrintWriter;
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class BacktestSessionManager {
+
+    private static final Gson GSON = new Gson();
 
     private volatile boolean active = false;
     private volatile Map<String, Object> currentProgress = null;
     private final LinkedList<String> recentLogs = new LinkedList<>();
     private static final int MAX_LOGS = 300;
 
-    private final List<SseClient> subscribers = new CopyOnWriteArrayList<>();
+    private final List<HttpServletResponse> subscribers = new CopyOnWriteArrayList<>();
 
     public synchronized void startSession() {
         this.active = true;
@@ -57,30 +60,19 @@ public class BacktestSessionManager {
         emitToAll("error", Map.of("msg", msg));
     }
 
-    /**
-     * Subscribe a new SSE client.
-     *
-     * @param response the HttpServletResponse to wrap into an SseClient
-     * @return the SseClient instance
-     */
-    public SseClient subscribe(HttpServletResponse response) {
-        try {
-            SseClient client = new SseClient(response);
-            subscribers.add(client);
+    public HttpServletResponse subscribe(HttpServletResponse response) {
+        subscribers.add(response);
 
-            synchronized (recentLogs) {
-                for (String log : recentLogs) {
-                    client.send("log", Map.of("msg", log));
-                }
+        synchronized (recentLogs) {
+            for (String log : recentLogs) {
+                emitSingle(response, "log", Map.of("msg", log));
             }
-            if (currentProgress != null) {
-                client.send("progress", currentProgress);
-            }
-
-            return client;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to create SSE client", e);
         }
+        if (currentProgress != null) {
+            emitSingle(response, "progress", currentProgress);
+        }
+
+        return response;
     }
 
     public Map<String, Object> getStatus() {
@@ -95,8 +87,19 @@ public class BacktestSessionManager {
     }
 
     private void emitToAll(String event, Object data) {
-        for (SseClient client : subscribers) {
-            client.send(event, data);
+        for (HttpServletResponse response : subscribers) {
+            emitSingle(response, event, data);
+        }
+    }
+
+    private void emitSingle(HttpServletResponse response, String event, Object data) {
+        try {
+            PrintWriter writer = response.getWriter();
+            writer.write("event: " + event + "\n");
+            writer.write("data: " + GSON.toJson(data) + "\n\n");
+            writer.flush();
+        } catch (Exception ignored) {
+            subscribers.remove(response);
         }
     }
 

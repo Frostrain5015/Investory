@@ -1,16 +1,16 @@
 package com.investory.controller.api;
 
-import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-import com.investory.server.AppContext;
 import com.investory.server.DatabaseManager;
+import com.investory.util.JsonUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
-import java.io.InputStream;
 import java.math.BigDecimal;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.logging.Logger;
@@ -18,7 +18,6 @@ import java.util.logging.Logger;
 public class MarketIndexController {
 
     private static final Logger log = Logger.getLogger(MarketIndexController.class.getName());
-    private static final Gson gson = new Gson();
 
     private final ExecutorService indexExecutor;
     private final Semaphore yahooSemaphore = new Semaphore(7, true);
@@ -31,7 +30,7 @@ public class MarketIndexController {
     private final Object refreshLock = new Object();
 
     public MarketIndexController() {
-        this.indexExecutor = AppContext.get(ExecutorService.class);
+        this.indexExecutor = Executors.newCachedThreadPool();
     }
 
     private enum Source { SINA, YAHOO }
@@ -45,6 +44,7 @@ public class MarketIndexController {
     }
 
     private static final List<IndexSpec> SPECS = List.of(
+        // ── Country indices ──────────────────────────────────────────
         new IndexSpec(Source.SINA,  "s_sh000001", "上证指数",   "CN", 31.23, 121.47, "000001.SH", false),
         new IndexSpec(Source.SINA,  "s_sz399001", "深证成指",   "CN", 31.23, 121.47, "399001.SZ", false),
         new IndexSpec(Source.SINA,  "s_sz399006", "创业板指",   "CN", 31.23, 121.47, "399006.SZ", false),
@@ -65,6 +65,7 @@ public class MarketIndexController {
         new IndexSpec(Source.YAHOO, "^AXJO",      "澳洲ASX200", "AU", -35.28, 149.13, "AXJO.AU",  false),
         new IndexSpec(Source.YAHOO, "^GSPTSE",    "加拿大TSX",  "CA", 49.28, -123.12, "GSPTSE.CA", false),
         new IndexSpec(Source.YAHOO, "^BVSP",      "巴西Bovespa", "BR", -15.80, -47.86, "BVSP.BR",  false),
+        // ── Global indicators ───────────────────────────────────────
         new IndexSpec(Source.YAHOO, "DX-Y.NYB",   "美元指数",    null, 0, 0, "DXY.IDX", true),
         new IndexSpec(Source.YAHOO, "GC=F",       "黄金/美元",   null, 0, 0, "XAU.CMD", true),
         new IndexSpec(Source.YAHOO, "BTC-USD",    "比特币/美元", null, 0, 0, "BTC.CCY", true),
@@ -80,9 +81,7 @@ public class MarketIndexController {
             }
         }
         resp.setContentType("application/json;charset=UTF-8");
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("indices", snap.indices()); result.put("indicators", snap.indicators());
-        resp.getWriter().write(gson.toJson(result));
+        resp.getWriter().write(JsonUtil.toJson(Map.of("indices", snap.indices(), "indicators", snap.indicators())));
     }
 
     private Snapshot buildSnapshot() {
@@ -108,6 +107,8 @@ public class MarketIndexController {
         return new Snapshot(List.copyOf(indices), List.copyOf(indicators), System.currentTimeMillis());
     }
 
+    // ── Per-symbol fetch (live, with per-symbol DB fallback on failure) ──
+
     private Map<String, Object> baseMap(IndexSpec s) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", s.name());
@@ -125,8 +126,8 @@ public class MarketIndexController {
                 if (eq >= 0) {
                     String[] f = body.substring(eq + 1, body.lastIndexOf('"')).split(",");
                     if (f.length >= 4) {
-                        m.put("price", new BigDecimal(f[1]));
-                        m.put("change", new BigDecimal(f[2]));
+                        m.put("price",     new BigDecimal(f[1]));
+                        m.put("change",    new BigDecimal(f[2]));
                         m.put("changePct", new BigDecimal(f[3]));
                         m.put("fetchedAt", java.time.Instant.now().toString());
                     }
@@ -138,9 +139,9 @@ public class MarketIndexController {
                         .getAsJsonObject("chart").getAsJsonArray("result")
                         .get(0).getAsJsonObject().getAsJsonObject("meta");
                 BigDecimal price = meta.get("regularMarketPrice").getAsBigDecimal();
-                BigDecimal prev = meta.get("previousClose").getAsBigDecimal();
-                m.put("price", price);
-                m.put("change", price.subtract(prev));
+                BigDecimal prev  = meta.get("previousClose").getAsBigDecimal();
+                m.put("price",     price);
+                m.put("change",    price.subtract(prev));
                 m.put("changePct", price.subtract(prev).divide(prev, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
                 m.put("fetchedAt", java.time.Instant.now().toString());
             }
@@ -161,8 +162,11 @@ public class MarketIndexController {
         java.net.HttpURLConnection conn = (java.net.HttpURLConnection) u.openConnection();
         conn.setRequestProperty("Referer", "https://finance.sina.com.cn");
         conn.setConnectTimeout(5000); conn.setReadTimeout(5000);
-        try { return new String(conn.getInputStream().readAllBytes()); }
-        finally { conn.disconnect(); }
+        try {
+            return new String(conn.getInputStream().readAllBytes());
+        } finally {
+            conn.disconnect();
+        }
     }
 
     private String yahooGet(String url) throws Exception {
@@ -171,7 +175,8 @@ public class MarketIndexController {
         try {
             String proxy = "socks5h://" + System.getProperty("socksProxyHost", "127.0.0.1")
                     + ":" + System.getProperty("socksProxyPort", "7897");
-            ProcessBuilder pb = new ProcessBuilder("curl", "-x", proxy, "-s", "--max-time", String.valueOf(CURL_MAX_TIME_SEC),
+            ProcessBuilder pb = new ProcessBuilder("curl", "-x", proxy, "-s",
+                    "--max-time", String.valueOf(CURL_MAX_TIME_SEC),
                     "-H", "User-Agent: Mozilla/5.0", url);
             pb.redirectErrorStream(true);
             p = pb.start();
@@ -186,6 +191,8 @@ public class MarketIndexController {
             yahooSemaphore.release();
         }
     }
+
+    // ── DB fallback: compute change from last 2 closes in stock_prices ──
 
     private String toStockSymbol(String dbSymbol) {
         if (dbSymbol == null || !dbSymbol.contains(".")) return dbSymbol;
@@ -203,16 +210,24 @@ public class MarketIndexController {
 
     private void fillFromHistory(Map<String, Object> m, String dbSymbol) {
         String stockSymbol = toStockSymbol(dbSymbol);
-        try {
-            List<Map<String, Object>> rows = queryForList(
-                "SELECT sp.close FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id WHERE s.symbol = ? ORDER BY sp.trade_date DESC LIMIT 2", stockSymbol);
-            if (rows.size() >= 2) {
-                BigDecimal today = (BigDecimal) rows.get(0).get("close");
-                BigDecimal yest = (BigDecimal) rows.get(1).get("close");
-                if (today != null && yest != null && yest.compareTo(BigDecimal.ZERO) != 0) {
-                    m.put("price", today); m.put("change", today.subtract(yest));
-                    m.put("changePct", today.subtract(yest).divide(yest, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
-                    m.put("fetchedAt", "close"); return;
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                "SELECT sp.close FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id " +
+                "WHERE s.symbol = ? ORDER BY sp.trade_date DESC LIMIT 2")) {
+            ps.setObject(1, stockSymbol);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<BigDecimal> closes = new ArrayList<>();
+                while (rs.next()) closes.add((BigDecimal) rs.getObject("close"));
+                if (closes.size() >= 2) {
+                    BigDecimal today  = closes.get(0);
+                    BigDecimal yest   = closes.get(1);
+                    if (today != null && yest != null && yest.compareTo(BigDecimal.ZERO) != 0) {
+                        m.put("price",     today);
+                        m.put("change",    today.subtract(yest));
+                        m.put("changePct", today.subtract(yest).divide(yest, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+                        m.put("fetchedAt", "close");
+                        return;
+                    }
                 }
             }
         } catch (Exception ignored) {}
@@ -220,17 +235,24 @@ public class MarketIndexController {
     }
 
     private void fillFromHistoryIndicators(Map<String, Object> m, String dbSymbol) {
-        try {
-            List<Map<String, Object>> rows = queryForList(
-                "SELECT sp.close FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id WHERE s.symbol LIKE ? ORDER BY sp.trade_date DESC LIMIT 2",
-                "%." + dbSymbol);
-            if (rows.size() >= 2) {
-                BigDecimal today = (BigDecimal) rows.get(0).get("close");
-                BigDecimal yest = (BigDecimal) rows.get(1).get("close");
-                if (today != null && yest != null && yest.compareTo(BigDecimal.ZERO) != 0) {
-                    m.put("price", today); m.put("change", today.subtract(yest));
-                    m.put("changePct", today.subtract(yest).divide(yest, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
-                    m.put("fetchedAt", "close"); return;
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                "SELECT sp.close FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id " +
+                "WHERE s.symbol LIKE ? ORDER BY sp.trade_date DESC LIMIT 2")) {
+            ps.setObject(1, "%." + dbSymbol);
+            try (ResultSet rs = ps.executeQuery()) {
+                List<BigDecimal> closes = new ArrayList<>();
+                while (rs.next()) closes.add((BigDecimal) rs.getObject("close"));
+                if (closes.size() >= 2) {
+                    BigDecimal today  = closes.get(0);
+                    BigDecimal yest   = closes.get(1);
+                    if (today != null && yest != null && yest.compareTo(BigDecimal.ZERO) != 0) {
+                        m.put("price",     today);
+                        m.put("change",    today.subtract(yest));
+                        m.put("changePct", today.subtract(yest).divide(yest, 4, java.math.RoundingMode.HALF_UP).multiply(new BigDecimal("100")));
+                        m.put("fetchedAt", "close");
+                        return;
+                    }
                 }
             }
         } catch (Exception ignored) {}
@@ -238,36 +260,50 @@ public class MarketIndexController {
     }
 
     public void handleGetNews(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        resp.setContentType("application/json;charset=UTF-8");
-        try { resp.getWriter().write(gson.toJson(queryForList(
-            "SELECT title, source, url, summary, category, score, country_code, published_at FROM world_news ORDER BY score DESC, published_at DESC LIMIT 25")));
-        } catch (Exception e) { resp.getWriter().write("[]"); }
+        try {
+            List<Map<String, Object>> result = jdbcQueryForList(
+                "SELECT title, source, url, summary, category, score, country_code, published_at FROM world_news ORDER BY score DESC, published_at DESC LIMIT 25");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(result));
+        } catch (Exception e) {
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write("[]");
+        }
     }
 
     public void handleGetWorldData(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        resp.setContentType("application/json;charset=UTF-8");
         Map<String, Object> data = new LinkedHashMap<>();
         try {
-            InputStream is = getClass().getClassLoader().getResourceAsStream("static/world.json");
-            if (is != null) { data.put("world", new String(is.readAllBytes())); is.close(); }
+            java.io.InputStream is = getClass().getClassLoader().getResourceAsStream("static/world.json");
+            if (is != null) {
+                data.put("world", new String(is.readAllBytes()));
+                is.close();
+            }
         } catch (Exception ignored) {}
-        resp.getWriter().write(gson.toJson(data));
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(data));
     }
 
-    private List<Map<String, Object>> queryForList(String sql, Object... params) {
-        List<Map<String, Object>> results = new ArrayList<>();
-        try (Connection conn = DatabaseManager.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (int i = 0; i < params.length; i++) ps.setObject(i + 1, params[i]);
+    // ── JDBC helpers ─────────────────────────────────────────────────────
+
+    private List<Map<String, Object>> jdbcQueryForList(String sql, Object... args) throws Exception {
+        List<Map<String, Object>> result = new ArrayList<>();
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) {
+                ps.setObject(i + 1, args[i]);
+            }
             try (ResultSet rs = ps.executeQuery()) {
-                ResultSetMetaData rsmd = rs.getMetaData();
-                int colCount = rsmd.getColumnCount();
+                int colCount = rs.getMetaData().getColumnCount();
                 while (rs.next()) {
                     Map<String, Object> row = new LinkedHashMap<>();
-                    for (int i = 1; i <= colCount; i++) row.put(rsmd.getColumnLabel(i), rs.getObject(i));
-                    results.add(row);
+                    for (int c = 1; c <= colCount; c++) {
+                        row.put(rs.getMetaData().getColumnLabel(c), rs.getObject(c));
+                    }
+                    result.add(row);
                 }
             }
-        } catch (SQLException e) { throw new RuntimeException(e); }
-        return results;
+        }
+        return result;
     }
 }

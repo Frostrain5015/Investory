@@ -88,8 +88,6 @@ public class UserDao extends BaseDao {
     /**
      * 按用户 ID 更新密码哈希（用于修改密码功能）。
      *
-     * <p>直接调用父类的 {@code update} 方法。</p>
-     *
      * @param userId 用户主键 ID
      * @param hash   新密码的 BCrypt 哈希值
      */

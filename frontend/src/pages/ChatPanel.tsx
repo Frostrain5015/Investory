@@ -39,7 +39,19 @@ export type TimelineStep =
   // renders above that tool call — not dumped below the whole timeline.
   | { kind: 'text'; text: string }
 interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard; artifacts?: ReportArtifact[] }
-interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: Record<string, any> }
+interface ConfirmBody {
+  stockName?: string
+  type?: string
+  shares?: number
+  price?: number
+  fee?: number
+  tradeDate?: string
+  currency?: string
+  amountPerShare?: number
+  note?: string
+  [key: string]: string | number | undefined
+}
+interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: ConfirmBody }
 interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
 type ConfirmStatus = 'pending' | 'accepted' | 'refused' | 'failed'
 
@@ -161,7 +173,7 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
           <ReactMarkdown remarkPlugins={[remarkGfm]}
             components={{
               p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
-              code: ({ className, children, ...props }) => {
+              code: ({ className, children }) => {
                 const isInline = !className
                 const text = String(children)
                 if (isInline && text.startsWith('🛠 ')) {
@@ -358,7 +370,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [dockHeight, setDockHeight] = useState(96)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
-  const pendingCard = useRef<{ type: string; data: any } | null>(null)
+  const pendingCard = useRef<
+    | { type: 'portfolio'; data: PortfolioCard }
+    | { type: 'picks'; data: PicksCard }
+    | null
+  >(null)
   const pendingArtifacts = useRef<ReportArtifact[]>([])
   const streamAccum = useRef('')
   // Authoritative timeline ref — frontend builds it from SSE events as the agent runs.
@@ -724,13 +740,15 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
 
   function loadConvList() {
     fetch(`${BASE}/api/ai/conversations`, { credentials: 'include' })
-      .then(r => r.json()).then((list: any[]) => setConvList(list || [])).catch(() => {})
+      .then(r => r.json() as Promise<{ id: number; title: string; createdAt: string; messageCount: number }[]>)
+      .then((list) => setConvList(list || [])).catch(() => {})
   }
 
   function openConv(id: number) {
     fetch(`${BASE}/api/ai/conversations/${id}`, { credentials: 'include' })
-      .then(r => r.json()).then((d: any) => {
-        const restored = (d.messages || []).map((m: { role: string; content: string; thinking?: string; artifacts?: ReportArtifact[] }) => {
+      .then(r => r.json() as Promise<{ messages?: { role: string; content: string; thinking?: string; artifacts?: ReportArtifact[] }[] }>)
+      .then((d) => {
+        const restored = (d.messages || []).map((m) => {
           let timeline: TimelineStep[] | undefined
           let thinkingLegacy: string | undefined
           const raw = m.thinking?.trim()
@@ -1103,10 +1121,10 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                     {showLabel && <div className="text-xs font-medium">{item.label}</div>}
                     {!isWatchlist && <div className="flex flex-wrap gap-x-3 gap-y-0.5">
                       {b.stockName && <span>{b.stockName}</span>}{b.type && <span className="font-semibold">{typeLabels[b.type] || b.type}</span>}
-                      {b.shares > 0 && <span>{isDiv ? `每股 ${b.shares}` : isTransfer ? `${b.shares}` : `${b.shares} 股`}</span>}
-                      {b.price > 0 && !isTransfer && <span>@ {b.price}</span>}{b.fee > 0 && <span>手续费 {b.fee}</span>}
+                      {(b.shares ?? 0) > 0 && <span>{isDiv ? `每股 ${b.shares}` : isTransfer ? `${b.shares}` : `${b.shares} 股`}</span>}
+                      {(b.price ?? 0) > 0 && !isTransfer && <span>@ {b.price}</span>}{(b.fee ?? 0) > 0 && <span>手续费 {b.fee}</span>}
                       {b.tradeDate && <span>日期 {b.tradeDate}</span>}{b.currency && <span>{b.currency}</span>}
-                      {b.amountPerShare != null && b.amountPerShare > 0 && <span>分红/股 {b.amountPerShare}</span>}
+                      {(b.amountPerShare ?? 0) > 0 && <span>分红/股 {b.amountPerShare}</span>}
                       {b.note && <span className="text-slate-400">备注: {b.note}</span>}
                     </div>}
                   </div>
@@ -1142,8 +1160,24 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const isIdle = mode === 'idle'
   const isExpanded = mode === 'expanded'
   const dockBottom = 'calc(1rem + env(safe-area-inset-bottom, 0px))'
-  const morphDuration = '320ms'
-  const morphEase = 'cubic-bezier(0.22, 1, 0.36, 1)'
+
+  // ── Two-stage morph choreography ────────────────────────────────────
+  // Open  (idle → open):  the orb GLIDES to its anchor first, then the body
+  //                       BLOOMS open one beat later, with a soft spring overshoot.
+  // Close (open → idle):  reversed AND a touch snappier — the body COLLAPSES
+  //                       first, then the orb glides back to the corner.
+  // CSS transitions are direction-blind, so we flip the per-property delays on
+  // the target state (isIdle): whichever stage leads gets delay 0, the other waits.
+  const POS_EASE  = 'cubic-bezier(0.22, 1, 0.36, 1)'     // smooth glide
+  const SIZE_EASE = 'cubic-bezier(0.34, 1.28, 0.64, 1)'  // gentle spring overshoot
+  // The trailing stage must wait until the leading stage is ~done, or it steals
+  // the show. Open: glide leads (delay 0), bloom waits 220ms so the orb visibly
+  // travels to center first. Close: shrink leads (delay 0), glide waits 110ms —
+  // already reads well, so it's left untouched.
+  const posDur    = isIdle ? '300ms' : '240ms'
+  const sizeDur   = isIdle ? '260ms' : '380ms'
+  const posDelay  = isIdle ? '110ms' : '0ms'    // close waits for shrink; open leads
+  const sizeDelay = isIdle ? '0ms'   : '220ms'  // open waits for glide;  close leads
 
   const shellW = isIdle ? '60px' : 'min(720px, calc(100vw - 32px))'
   const shellH = isIdle ? '60px'
@@ -1164,8 +1198,10 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       : isExpanded
       ? 'max(10svh, calc((100svh - 720px) / 2))'
       : dockBottom,
-    transform: 'translateX(-50%)',
-    transition: `left ${morphDuration} ${morphEase}, bottom ${morphDuration} ${morphEase}`,
+    // translateZ(0) promotes a compositing layer so the left/bottom glide
+    // repaints only this element's layer, not the page.
+    transform: 'translateX(-50%) translateZ(0)',
+    transition: `left ${posDur} ${POS_EASE} ${posDelay}, bottom ${posDur} ${POS_EASE} ${posDelay}`,
     willChange: 'left, bottom',
   }
 
@@ -1186,14 +1222,19 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         )}
       </AnimatePresence>
 
-      {/* Shell — width/height change directly, so text is never scale-distorted. */}
+      {/* Shell — width/height/borderRadius via CSS transition (direct sizing, no text distortion).
+          background via framer-motion so the purple→white switch only happens at bloom time,
+          not at click time (which caused the orb to "vanish" mid-glide). */}
       <div className={wrapperClass} style={wrapperPos}>
-      <div
+      <motion.div
         onClick={isIdle ? () => setMode(defaultMode) : undefined}
+        animate={{ background: shellBgVal }}
+        transition={{
+          background: { duration: 380, ease: 'easeInOut', delay: isIdle ? 0 : 0.22 },
+        }}
         style={{
           width: shellW, height: shellH, borderRadius: shellR,
-          background: shellBgVal,
-          transition: `width ${morphDuration} ${morphEase}, height ${morphDuration} ${morphEase}, border-radius ${morphDuration} ${morphEase}, background ${morphDuration} ease`,
+          transition: `width ${sizeDur} ${SIZE_EASE} ${sizeDelay}, height ${sizeDur} ${SIZE_EASE} ${sizeDelay}, border-radius ${sizeDur} ${SIZE_EASE} ${sizeDelay}`,
           willChange: 'width, height, border-radius',
         }}
         className={`relative ring-1 shadow-2xl overflow-hidden flex flex-col pb-safe ${
@@ -1202,16 +1243,41 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             : 'ring-slate-200/70 shadow-purple-500/15'
         }`}>
 
+        {/* Bloom + sheen — the "绽放" flourish. One-shot on open, fades on close.
+            Both pointer-events-none and clipped by the shell's overflow-hidden. */}
+        <AnimatePresence>
+          {!isIdle && (
+            <motion.div key="guanlan-bloom"
+              initial={{ opacity: 0, scale: 0.25 }}
+              animate={{ opacity: [0.5, 0], scale: 1.7 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.85, ease: 'easeOut', delay: 0.30 }}
+              className="pointer-events-none absolute left-1/2 bottom-0 -translate-x-1/2"
+              style={{ width: '120%', aspectRatio: '1', borderRadius: '9999px',
+                       background: 'radial-gradient(circle, rgba(134,59,255,0.40), transparent 62%)' }} />
+          )}
+          {!isIdle && (
+            <motion.div key="guanlan-sheen"
+              initial={{ x: '-130%', opacity: 0 }}
+              animate={{ x: '160%', opacity: [0, 0.55, 0] }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.9, ease: 'easeOut', delay: 0.36 }}
+              className="pointer-events-none absolute inset-y-0 w-1/2"
+              style={{ background: 'linear-gradient(105deg, transparent, rgba(255,255,255,0.6), transparent)' }} />
+          )}
+        </AnimatePresence>
+
         {/* Idle state: a single Sparkles centered in the pill.
-            Uses AnimatePresence so it fades in only when we land back on idle,
-            keeping the shell's layout animation uncluttered. */}
+            Stays visible throughout the glide, only exits when bloom kicks in.
+            On close, it reappears after the shrink lands (positive delay).
+            Friction is key: exit too fast and the orb looks hollow mid-glide. */}
         <AnimatePresence>
           {isIdle && (
             <motion.div key="idle-icon"
               initial={{ opacity: 0, scale: 0.6 }}
               animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.6 }}
-              transition={{ duration: 0.18, ease: 'easeOut' }}
+              exit={{ opacity: 0, scale: 0.6, transition: { duration: 0.18, ease: 'easeIn', delay: 0.22 } }}
+              transition={{ duration: 0.24, ease: [0.34, 1.28, 0.64, 1], delay: 0.15 }}
               className="absolute inset-0 flex items-center justify-center text-white pointer-events-none">
               <Sparkles className="w-6 h-6" />
             </motion.div>
@@ -1224,10 +1290,10 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         <AnimatePresence>
           {showInnerContent && (
             <motion.div key="shell-content"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.15, ease: 'easeOut' }}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 10, transition: { duration: 0.13, ease: 'easeIn' } }}
+              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1], delay: 0.36 }}
               className="flex flex-col h-full w-full">
 
               {/* Gradient hairline */}
@@ -1312,7 +1378,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           )}
         </AnimatePresence>
         <ReportDetailModal artifact={selectedArtifact} onClose={() => setSelectedArtifact(null)} />
-      </div>
+      </motion.div>
       </div>
     </>
   )

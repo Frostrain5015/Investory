@@ -1,0 +1,154 @@
+erDiagram
+  users {
+    bigint id PK
+    varchar username UK "unique"
+    varchar password_hash "bcrypt"
+    varchar email
+    varchar frost_id_id
+    boolean is_admin
+    timestamp created_at
+  }
+
+  portfolios {
+    bigint id PK
+    bigint user_id FK
+    varchar name
+    timestamp created_at
+    varchar currency
+  }
+
+  holdings {
+    bigint id PK
+    bigint portfolio_id FK
+    bigint stock_id FK
+    decimal total_shares
+    decimal avg_cost
+    decimal diluted_cost
+    decimal total_invested
+    decimal total_dividends
+  }
+
+  transactions {
+    bigint id PK
+    bigint portfolio_id FK
+    bigint stock_id FK
+    enum type "buy|sell|transfer_in|transfer_out"
+    decimal shares
+    decimal price
+    decimal fee
+    varchar currency
+    date trade_date
+    text note
+  }
+
+  dividends {
+    bigint id PK
+    bigint portfolio_id FK
+    bigint stock_id FK
+    decimal amount_per_share
+    decimal shares_held
+    decimal total_amount
+    date record_date
+  }
+
+  daily_portfolio_value {
+    bigint id PK
+    bigint portfolio_id FK
+    date snapshot_date
+    decimal total_value
+    decimal total_cost
+    decimal daily_pnl
+  }
+
+  cash_balances {
+    bigint portfolio_id FK "composite"
+    varchar currency "composite"
+    decimal amount
+  }
+
+  stocks {
+    bigint id PK
+    varchar symbol UK
+    varchar name
+    varchar market "sh/sz/hk/us"
+    varchar currency
+    varchar name_pinyin
+  }
+
+  stock_prices {
+    bigint id PK
+    bigint stock_id FK
+    date trade_date
+    decimal open
+    decimal close
+    decimal high
+    decimal low
+    bigint volume
+  }
+
+  watchlist {
+    bigint id PK
+    bigint user_id FK
+    bigint stock_id FK
+    int sort_order
+    timestamp created_at
+  }
+
+  backtest_results {
+    bigint id PK
+    bigint user_id FK
+    bigint portfolio_id FK
+    varchar name
+    varchar strategy_type
+    json strategy_json
+    json config_json
+    json equity_curve_json
+    json metrics_json
+    json trade_log_json
+  }
+
+  ai_settings {
+    bigint user_id PK "fk to users"
+    varchar provider
+    varchar model
+    varchar base_url
+    varchar api_key
+  }
+
+  stock_metric_cache {
+    bigint stock_id PK "fk to stocks"
+    decimal percentile_5y
+    decimal beta_1y
+    decimal volatility_1y
+    decimal max_drawdown_1y
+    varchar benchmark_symbol
+    timestamp computed_at
+  }
+
+  crawl_history {
+    bigint id PK
+    varchar market
+    timestamp started_at
+    timestamp ended_at
+    int rows_written
+    int stocks_failed
+    varchar status
+    text log_tail
+  }
+
+  users ||--o{ portfolios : "has"
+  users ||--o{ watchlist : "has"
+  users ||--o{ backtest_results : "runs"
+  users ||--o| ai_settings : "configures"
+  portfolios ||--o{ holdings : "contains"
+  portfolios ||--o{ transactions : "records"
+  portfolios ||--o{ dividends : "receives"
+  portfolios ||--o{ daily_portfolio_value : "tracks value"
+  portfolios ||--o{ cash_balances : "holds"
+  portfolios ||--o{ backtest_results : "belongs to"
+  stocks ||--o{ holdings : "held in"
+  stocks ||--o{ transactions : "traded in"
+  stocks ||--o{ stock_prices : "has prices"
+  stocks ||--o{ dividends : "pays"
+  stocks ||--o{ watchlist : "watched in"
+  stocks ||--o| stock_metric_cache : "caches metrics"

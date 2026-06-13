@@ -1,8 +1,9 @@
 package com.investory.crawler;
 
-import com.investory.server.SseClient;
-import jakarta.servlet.http.HttpServletResponse;
+import com.google.gson.Gson;
 
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.PrintWriter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -13,16 +14,19 @@ import java.util.concurrent.atomic.AtomicReference;
  *
  * Each authenticated user gets an isolated {@link UserSession} with its own
  * SSE subscribers and replay buffers, so concurrent chats never cross-talk.
+ * Anonymous users (userId = 0) share a single "anon" bucket — they shouldn't
+ * be hitting authenticated AI endpoints in practice.
  */
 public class AiSessionManager {
 
+    private static final Gson GSON = new Gson();
     private static final int MAX_BUFFER = 500;
 
     private static final class UserSession {
         volatile boolean active = false;
         final AtomicReference<Process> process = new AtomicReference<>(null);
         final LinkedList<Map<String, Object>> eventLog = new LinkedList<>();
-        final List<SseClient> subscribers = new CopyOnWriteArrayList<>();
+        final List<HttpServletResponse> subscribers = new CopyOnWriteArrayList<>();
     }
 
     private final ConcurrentHashMap<Long, UserSession> sessions = new ConcurrentHashMap<>();
@@ -157,29 +161,17 @@ public class AiSessionManager {
         emitToAll(get(userId), "error", Map.of("msg", msg));
     }
 
-    /**
-     * Subscribe a new SSE client for a given user.
-     *
-     * @param userId   the user id
-     * @param response the HttpServletResponse to wrap into an SseClient
-     * @return the SseClient instance
-     */
-    public SseClient subscribe(long userId, HttpServletResponse response) {
+    public HttpServletResponse subscribe(long userId, HttpServletResponse response) {
         UserSession s = get(userId);
-        try {
-            SseClient client = new SseClient(response);
-            s.subscribers.add(client);
+        s.subscribers.add(response);
 
-            // Replay the full ordered event log for late subscribers / reconnects.
-            synchronized (s.eventLog) {
-                for (Map<String, Object> ev : s.eventLog) {
-                    client.send(String.valueOf(ev.get("event")), ev.get("data"));
-                }
+        // Replay the full ordered event log for late subscribers / reconnects.
+        synchronized (s.eventLog) {
+            for (Map<String, Object> ev : s.eventLog) {
+                emitSingle(response, String.valueOf(ev.get("event")), ev.get("data"));
             }
-            return client;
-        } catch (Exception e) {
-            throw new RuntimeException("Failed to create SSE client for user " + userId, e);
         }
+        return response;
     }
 
     public Map<String, Object> getStatus(long userId) {
@@ -210,6 +202,16 @@ public class AiSessionManager {
             s.eventLog.addLast(entry);
             if (s.eventLog.size() > MAX_BUFFER) s.eventLog.removeFirst();
         }
-        for (SseClient client : s.subscribers) client.send(event, data);
+        for (HttpServletResponse response : s.subscribers) emitSingle(response, event, data);
+    }
+
+    private void emitSingle(HttpServletResponse response, String event, Object data) {
+        try {
+            PrintWriter writer = response.getWriter();
+            writer.write("event: " + event + "\n");
+            writer.write("data: " + GSON.toJson(data) + "\n\n");
+            writer.flush();
+        } catch (Exception ignored) {
+        }
     }
 }

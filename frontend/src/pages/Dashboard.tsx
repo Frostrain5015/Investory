@@ -93,8 +93,8 @@ export default function Dashboard() {
         todayPnlPct: dash.todayPnlPct || 0,
         cashBalance: dash.cashBalance || 0,
       })
-      setCashByCurrency((dash as any).cashByCurrency || [])
-      setAllocation((dash as any).allocation || [])
+      setCashByCurrency(dash.cashByCurrency || [])
+      setAllocation(dash.allocation || [])
       setCumulative(cum || [])
     }).catch((e) => console.error('Dashboard load error:', e))
     .finally(() => setLoading(false))
@@ -134,11 +134,11 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <Link to="/portfolio" className="text-xl font-bold text-slate-900 hover:text-blue-600 transition-colors tracking-tight inline-flex items-center gap-1.5">{portfolioName || t.dashboard.title}<ArrowLeftRight className="w-4 h-4 text-slate-300" /></Link>
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-2">
+        <Link to="/portfolio" className="min-w-0 text-xl font-bold text-slate-900 hover:text-blue-600 transition-colors tracking-tight inline-flex items-center gap-1.5"><span className="truncate">{portfolioName || t.dashboard.title}</span><ArrowLeftRight className="w-4 h-4 text-slate-300 shrink-0" /></Link>
+        <div className="flex items-center gap-2 shrink-0">
           {lastRefresh && (
-            <span className="text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>
+            <span className="hidden sm:inline text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>
           )}
           {snapshots.length > 0 && (
             <button disabled={refreshing}

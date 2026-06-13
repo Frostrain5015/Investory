@@ -1,7 +1,7 @@
 import { Minus, Square, X } from 'lucide-react'
 import { useState } from 'react'
 
-const api = (window as any).electronAPI
+const api = window.electronAPI
 
 export default function TitleBar() {
   const [maxed, setMaxed] = useState(false)
@@ -9,7 +9,7 @@ export default function TitleBar() {
   if (!api?.isDesktop) return null
 
   function onMaximize() {
-    api.maximize()
+    api?.maximize()
     setMaxed(!maxed)
   }
 
@@ -23,7 +23,7 @@ export default function TitleBar() {
       {/* Window controls */}
       <div className="flex h-full" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
         <button
-          onClick={() => api.minimize()}
+          onClick={() => api?.minimize()}
           className="w-11 h-full flex items-center justify-center hover:bg-slate-700/60 transition-colors"
           aria-label="Minimize"
         >
@@ -37,7 +37,7 @@ export default function TitleBar() {
           <Square className="w-3 h-3" />
         </button>
         <button
-          onClick={() => api.close()}
+          onClick={() => api?.close()}
           className="w-11 h-full flex items-center justify-center hover:bg-red-600 hover:text-white transition-colors"
           aria-label="Close"
         >

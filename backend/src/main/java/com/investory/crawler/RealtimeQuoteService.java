@@ -35,7 +35,9 @@ import java.util.logging.Logger;
 public class RealtimeQuoteService {
 
     private static final Logger log = Logger.getLogger(RealtimeQuoteService.class.getName());
+    // Direct connection for Chinese APIs (EastMoney, Tencent)
     private final HttpClient http = HttpClient.newHttpClient();
+    // SOCKS proxy for international APIs (Yahoo)
     private final HttpClient httpWithProxy = buildProxiedClient();
 
     private static HttpClient buildProxiedClient() {
@@ -54,13 +56,10 @@ public class RealtimeQuoteService {
 
     public RealtimeQuoteService() {
         this.stockDao = AppContext.get(StockDao.class);
-        this.quoteExecutor = Executors.newFixedThreadPool(3, r -> {
-            Thread t = new Thread(r, "quote-worker");
-            t.setDaemon(true);
-            return t;
-        });
+        this.quoteExecutor = Executors.newCachedThreadPool();
     }
 
+    /** Returns true if the given stock's market is currently in a trading session (weekday + session hours). */
     private boolean isMarketOpen(Stock stock) {
         String market = stock.getMarket();
         ZonedDateTime now = switch (market) {
@@ -81,6 +80,7 @@ public class RealtimeQuoteService {
         };
     }
 
+    /** Get the best available real-time price with fetch timestamp. Returns null if all sources fail. */
     public Quote getQuote(Stock stock) {
         if (!isMarketOpen(stock)) return null;
         List<Callable<Quote>> tasks = List.of(
@@ -96,10 +96,13 @@ public class RealtimeQuoteService {
         }
     }
 
+    /** Convenience wrapper — returns only the price, null if all sources fail. */
     public BigDecimal getPrice(Stock stock) {
         Quote q = getQuote(stock);
         return q != null ? q.price() : null;
     }
+
+    // ── Sina (real-time) ────────────────────────────────────────────────
 
     private BigDecimal fetchFromSina(Stock stock) throws Exception {
         if (!"SH".equals(stock.getMarket()) && !"SZ".equals(stock.getMarket())) {
@@ -122,6 +125,8 @@ public class RealtimeQuoteService {
         return new BigDecimal(fields[3]);
     }
 
+    // ── Symbol helpers ───────────────────────────────────────────────────
+
     private static String getTicker(Stock stock) {
         String symbol = stock.getSymbol();
         int dot = symbol.indexOf('.');
@@ -131,6 +136,8 @@ public class RealtimeQuoteService {
         }
         return symbol.substring(0, dot);
     }
+
+    // ── Tencent ──────────────────────────────────────────────────────────
 
     private BigDecimal fetchFromTencent(Stock stock) throws Exception {
         if (!"SH".equals(stock.getMarket()) && !"SZ".equals(stock.getMarket())) {
@@ -147,6 +154,8 @@ public class RealtimeQuoteService {
         if (fields.length < 4) throw new Exception("not enough fields");
         return new BigDecimal(fields[3]);
     }
+
+    // ── Yahoo Finance ────────────────────────────────────────────────────
 
     private static String toYahooSymbol(Stock stock) {
         String ticker = getTicker(stock);
@@ -173,6 +182,8 @@ public class RealtimeQuoteService {
         return meta.get("regularMarketPrice").getAsBigDecimal();
     }
 
+    // ── HTTP ─────────────────────────────────────────────────────────────
+
     private String httpGet(String url) throws Exception {
         HttpRequest req = HttpRequest.newBuilder(URI.create(url))
                 .header("User-Agent", "Mozilla/5.0")
@@ -190,4 +201,5 @@ public class RealtimeQuoteService {
         if (resp.statusCode() != 200) throw new Exception("HTTP " + resp.statusCode());
         return resp.body();
     }
+
 }

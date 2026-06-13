@@ -1,38 +1,36 @@
 package com.investory.controller;
 
-import com.google.gson.Gson;
 import com.investory.dao.McpTokenDao;
 import com.investory.server.AppContext;
-import com.investory.server.ConfigLoader;
+import com.investory.util.JsonUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 
-import java.io.StringReader;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.*;
 
+/**
+ * MCP 的 OAuth 2.1 授权服务器（最小集），让 Claude Desktop 等连接器原生连接。
+ */
 public class McpOAuthController {
 
-    private static final Gson gson = new Gson();
-
     private final McpTokenDao tokenDao = AppContext.get(McpTokenDao.class);
-    private final String contextPath = ConfigLoader.get("server.servlet.context-path", "");
+    private String contextPath = "";
 
     public void handleProtectedResource(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        resp.setContentType("application/json;charset=UTF-8");
         String base = base(req);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("resource", base + contextPath + "/mcp");
         m.put("authorization_servers", List.of(base + contextPath));
         m.put("bearer_methods_supported", List.of("header"));
-        resp.getWriter().write(gson.toJson(m));
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(m));
     }
 
     public void handleAuthServerMetadata(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        resp.setContentType("application/json;charset=UTF-8");
         String as = base(req) + contextPath;
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("issuer", as);
@@ -43,17 +41,20 @@ public class McpOAuthController {
         m.put("grant_types_supported", List.of("authorization_code"));
         m.put("code_challenge_methods_supported", List.of("S256"));
         m.put("token_endpoint_auth_methods_supported", List.of("none"));
-        resp.getWriter().write(gson.toJson(m));
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(m));
     }
 
     public void handleRegister(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        resp.setContentType("application/json;charset=UTF-8");
-        StringBuilder sb = new StringBuilder();
-        try (var reader = req.getReader()) { String l; while ((l = reader.readLine()) != null) sb.append(l); }
-        @SuppressWarnings("unchecked") Map<String, Object> body = gson.fromJson(sb.toString(), Map.class);
-        @SuppressWarnings("unchecked") List<String> redirects = body != null && body.get("redirect_uris") instanceof List
+        String jsonBody = new String(req.getReader().readAllBytes());
+        var gson = new com.google.gson.Gson();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> body = gson.fromJson(jsonBody, Map.class);
+
+        @SuppressWarnings("unchecked")
+        List<String> redirects = body.get("redirect_uris") instanceof List
                 ? (List<String>) body.get("redirect_uris") : List.of();
-        String clientName = body != null && body.get("client_name") != null ? body.get("client_name").toString() : "mcp-client";
+        String clientName = body.get("client_name") != null ? body.get("client_name").toString() : "mcp-client";
         String redirectUris = String.join("\n", redirects);
         String clientId = tokenDao.registerClient(redirectUris, clientName);
 
@@ -63,22 +64,18 @@ public class McpOAuthController {
         m.put("token_endpoint_auth_method", "none");
         m.put("grant_types", List.of("authorization_code"));
         m.put("response_types", List.of("code"));
-        resp.getWriter().write(gson.toJson(m));
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(m));
     }
 
     public void handleAuthorize(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         String clientId = req.getParameter("client_id");
         String redirectUri = req.getParameter("redirect_uri");
         String codeChallenge = req.getParameter("code_challenge");
-        String method = req.getParameter("code_challenge_method");
-        String state = req.getParameter("state");
-        String resource = req.getParameter("resource");
-        String scope = req.getParameter("scope");
-
-        if (method == null || method.isBlank()) method = "S256";
-        if (state == null) state = "";
-        if (resource == null) resource = "";
-        if (scope == null) scope = "";
+        String method = req.getParameter("code_challenge_method") != null ? req.getParameter("code_challenge_method") : "S256";
+        String state = req.getParameter("state") != null ? req.getParameter("state") : "";
+        String resource = req.getParameter("resource") != null ? req.getParameter("resource") : "";
+        String scope = req.getParameter("scope") != null ? req.getParameter("scope") : "";
 
         if (!"S256".equals(method)) {
             resp.sendRedirect(redirectUri + "?error=invalid_request&error_description=PKCE+S256+required" + stateParam(state));
@@ -93,7 +90,8 @@ public class McpOAuthController {
         HttpSession s = req.getSession(true);
         Object uid = s.getAttribute("userId");
         if (uid == null) {
-            s.setAttribute("mcp_pending_authorize", req.getRequestURI() + (req.getQueryString() != null ? "?" + req.getQueryString() : ""));
+            s.setAttribute("mcp_pending_authorize", req.getRequestURI()
+                    + (req.getQueryString() != null ? "?" + req.getQueryString() : ""));
             resp.sendRedirect(contextPath + "/oauth/frost-id/login");
             return;
         }
@@ -106,11 +104,11 @@ public class McpOAuthController {
         tokenDao.insertOAuthCode(code, clientId, userId, portfolioId, redirectUri, codeChallenge,
                 resource.isEmpty() ? null : resource);
         s.removeAttribute("mcp_pending_authorize");
+
         resp.sendRedirect(redirectUri + "?code=" + enc(code) + stateParam(state));
     }
 
     public void handleToken(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        resp.setContentType("application/json;charset=UTF-8");
         String grantType = req.getParameter("grant_type");
         String code = req.getParameter("code");
         String codeVerifier = req.getParameter("code_verifier");
@@ -118,24 +116,29 @@ public class McpOAuthController {
         String resource = req.getParameter("resource");
 
         if (!"authorization_code".equals(grantType)) {
-            resp.getWriter().write("{\"error\":\"unsupported_grant_type\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "unsupported_grant_type")));
             return;
         }
         if (code == null || codeVerifier == null) {
-            resp.getWriter().write("{\"error\":\"invalid_request\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "invalid_request")));
             return;
         }
         McpTokenDao.AuthCode ac = tokenDao.consumeOAuthCode(code);
         if (ac == null) {
-            resp.getWriter().write("{\"error\":\"invalid_grant\",\"error_description\":\"code invalid or expired\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "invalid_grant", "error_description", "code invalid or expired")));
             return;
         }
         if (redirectUri != null && !redirectUri.equals(ac.redirectUri())) {
-            resp.getWriter().write("{\"error\":\"invalid_grant\",\"error_description\":\"redirect_uri mismatch\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "invalid_grant", "error_description", "redirect_uri mismatch")));
             return;
         }
         if (!verifyPkce(codeVerifier, ac.codeChallenge())) {
-            resp.getWriter().write("{\"error\":\"invalid_grant\",\"error_description\":\"PKCE verification failed\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "invalid_grant", "error_description", "PKCE verification failed")));
             return;
         }
         String audience = ac.resource() != null ? ac.resource() : base(req) + contextPath + "/mcp";
@@ -145,7 +148,8 @@ public class McpOAuthController {
         m.put("access_token", token);
         m.put("token_type", "Bearer");
         m.put("scope", "mcp");
-        resp.getWriter().write(gson.toJson(m));
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(m));
     }
 
     private boolean verifyPkce(String verifier, String challenge) {
@@ -155,14 +159,18 @@ public class McpOAuthController {
             String computed = Base64.getUrlEncoder().withoutPadding().encodeToString(hash);
             return MessageDigest.isEqual(computed.getBytes(StandardCharsets.US_ASCII),
                     challenge.getBytes(StandardCharsets.US_ASCII));
-        } catch (Exception e) { return false; }
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static String stateParam(String state) {
         return state == null || state.isEmpty() ? "" : "&state=" + enc(state);
     }
 
-    private static String enc(String v) { return URLEncoder.encode(v, StandardCharsets.UTF_8); }
+    private static String enc(String v) {
+        return URLEncoder.encode(v, StandardCharsets.UTF_8);
+    }
 
     private String base(HttpServletRequest req) {
         String scheme = req.getScheme();

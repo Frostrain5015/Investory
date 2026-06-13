@@ -26,14 +26,10 @@ public class EastMoneyCrawler {
 
     private static final Logger log = Logger.getLogger(EastMoneyCrawler.class.getName());
 
-    private final StockDao stockDao;
-    private final StockPriceDao stockPriceDao;
-    private final HttpClient http = HttpClient.newHttpClient();
+    private final StockDao stockDao = AppContext.get(StockDao.class);
+    private final StockPriceDao stockPriceDao = AppContext.get(StockPriceDao.class);
 
-    public EastMoneyCrawler() {
-        this.stockDao = AppContext.get(StockDao.class);
-        this.stockPriceDao = AppContext.get(StockPriceDao.class);
-    }
+    private final HttpClient http = HttpClient.newHttpClient();
 
     public void updateRealtimePrices(List<Stock> stocks) {
         if (stocks.isEmpty()) return;
@@ -78,6 +74,7 @@ public class EastMoneyCrawler {
         }
     }
 
+    /** Fetch recent prices (last 30 trading days). Used by daily scheduler. */
     public void fetchHistory(Stock stock) {
         if (fetchRecentEastMoney(stock) > 0) return;
         if (fetchRecentSina(stock) > 0) return;
@@ -103,6 +100,7 @@ public class EastMoneyCrawler {
         return fetchAndSaveKlines(url, stock, "Sina");
     }
 
+    /** Sync today's prices for ALL stocks via Sina stock list API (includes trade price). */
     public int syncAllPricesFromSina() {
         int total = 0;
         for (String node : new String[]{"sh_a", "sz_a"}) {
@@ -214,6 +212,9 @@ public class EastMoneyCrawler {
         throw new RuntimeException("unreachable");
     }
 
+    // ── Full stock list ─────────────────────────────────────────────────────────
+
+    /** Fetch all stocks (A-shares from EastMoney + Sina in parallel, EastMoney优先). */
     public int fetchAllStocks() {
         var emFuture = CompletableFuture.supplyAsync(() ->
             fetchMarket("A股(东方财富)", "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23", "CNY", "SH"));

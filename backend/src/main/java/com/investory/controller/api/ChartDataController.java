@@ -2,15 +2,19 @@ package com.investory.controller.api;
 
 import com.investory.dao.*;
 import com.investory.model.*;
+import com.investory.service.*;
 import com.investory.server.AppContext;
 import com.investory.server.DatabaseManager;
-import com.investory.service.*;
 import com.investory.util.JsonUtil;
-import jakarta.servlet.http.*;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpSession;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.time.LocalDate;
 import java.util.*;
 
@@ -22,6 +26,7 @@ public class ChartDataController {
     private final HoldingDao holdingDao = AppContext.get(HoldingDao.class);
     private final HoldingService holdingService = AppContext.get(HoldingService.class);
     private final PortfolioAnalysisService analysisService = AppContext.get(PortfolioAnalysisService.class);
+    private final PortfolioDao portfolioDao = AppContext.get(PortfolioDao.class);
 
     public void handleChart(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         HttpSession session = req.getSession(false);
@@ -31,72 +36,67 @@ public class ChartDataController {
             resp.getWriter().write("{\"error\":\"unauthorized\"}");
             return;
         }
+        String portfolioIdParam = req.getParameter("portfolioId");
+        Long portfolioId = portfolioIdParam != null && !portfolioIdParam.isBlank() ? Long.parseLong(portfolioIdParam) : null;
+        long pid = resolvePortfolioId(portfolioId, session);
+        boolean portfolioScoped = !"price".equals(req.getParameter("type"));
+        if (portfolioScoped && pid <= 0) {
+            resp.setStatus(403);
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write("{\"error\":\"forbidden\"}");
+            return;
+        }
+
         String type = req.getParameter("type");
         String symbol = req.getParameter("symbol");
         String daysStr = req.getParameter("days");
-        String startStr = req.getParameter("start");
-        String endStr = req.getParameter("end");
-        String pidStr = req.getParameter("portfolioId");
+        String start = req.getParameter("start");
+        String end = req.getParameter("end");
         String yearStr = req.getParameter("year");
         String benchmark = req.getParameter("benchmark");
-
-        int days = daysStr != null ? Integer.parseInt(daysStr) : 180;
-        Long pidParam = pidStr != null ? Long.parseLong(pidStr) : null;
-        Integer year = yearStr != null ? Integer.parseInt(yearStr) : null;
-        long pid = resolvePortfolioId(pidParam, session);
+        int days = daysStr != null ? Integer.parseInt(daysStr) : 0;
 
         resp.setContentType("application/json;charset=UTF-8");
-        try {
-            String result;
-            String t = type != null ? type : "";
-            switch (t) {
-                case "price":
-                    result = priceData(symbol, days, startStr, endStr, benchmark);
-                    break;
-                case "allocation":
-                    result = allocationData(pid);
-                    break;
-                case "pnl_rank":
-                    result = pnlRankData(pid);
-                    break;
-                case "pnl_calendar":
-                    result = pnlCalendarData(pid, year);
-                    break;
-                case "cumulative_return":
-                    result = cumulativeReturnData(pid, days, startStr, endStr);
-                    break;
-                default:
-                    result = "{\"error\":\"unknown type\"}";
+        switch (type != null ? type : "") {
+            case "price" -> resp.getWriter().write(priceData(symbol, days != 0 ? days : 180, start, end, benchmark));
+            case "allocation" -> resp.getWriter().write(allocationData(pid));
+            case "pnl_rank" -> resp.getWriter().write(pnlRankData(pid));
+            case "pnl_calendar" -> {
+                Integer year = yearStr != null ? Integer.parseInt(yearStr) : null;
+                resp.getWriter().write(pnlCalendarData(pid, year));
             }
-            resp.getWriter().write(result);
-        } catch (Exception e) {
-            resp.setStatus(500);
-            resp.getWriter().write("{\"error\":\"" + e.getMessage() + "\"}");
+            case "cumulative_return" -> resp.getWriter().write(cumulativeReturnData(pid, days != 0 ? days : 365, start, end));
+            default -> resp.getWriter().write("{\"error\":\"unknown type\"}");
         }
     }
 
-    private String priceData(String symbol, int days, String startStr, String endStr, String benchmarkSymbol) {
+    private String priceData(String symbol, int days, String startStr, String endStr, String benchmarkSymbol) throws Exception {
         Stock stock = stockDao.findBySymbol(symbol);
         if (stock == null) return "[]";
         LocalDate to, from;
         if (startStr != null && endStr != null) {
             from = LocalDate.parse(startStr);
-            to = LocalDate.parse(endStr);
+            to   = LocalDate.parse(endStr);
         } else if (days == 0) {
             to = LocalDate.now();
-            java.sql.Date earliest = queryOne("SELECT MIN(trade_date) FROM stock_prices WHERE stock_id = ?", java.sql.Date.class, stock.getId());
+            List<java.sql.Date> dates = jdbcQueryForListSingle(
+                "SELECT MIN(trade_date) FROM stock_prices WHERE stock_id = ?",
+                java.sql.Date.class, stock.getId());
+            java.sql.Date earliest = dates.isEmpty() ? null : dates.get(0);
             from = earliest != null ? earliest.toLocalDate() : to.minusYears(1);
         } else {
-            to = LocalDate.now();
+            to   = LocalDate.now();
             from = to.minusDays(days);
         }
         List<StockPrice> prices = stockPriceDao.findRange(stock.getId(), from, to);
         List<Map<String, Object>> result = new ArrayList<>();
         for (StockPrice p : prices) {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("date", p.getTradeDate().toString());
-            m.put("open", p.getOpen()); m.put("close", p.getClose());
-            m.put("high", p.getHigh()); m.put("low", p.getLow());
+            m.put("date",   p.getTradeDate().toString());
+            m.put("open",   p.getOpen());
+            m.put("close",  p.getClose());
+            m.put("high",   p.getHigh());
+            m.put("low",    p.getLow());
             m.put("volume", p.getVolume());
             result.add(m);
         }
@@ -111,7 +111,6 @@ public class ChartDataController {
                     for (StockPrice p : prices) stockCloses.put(p.getTradeDate().toString(), p.getClose());
                     Map<String, BigDecimal> bmCloses = new LinkedHashMap<>();
                     for (StockPrice p : bmPrices) bmCloses.put(p.getTradeDate().toString(), p.getClose());
-
                     BigDecimal stockBase = null, bmBase = null;
                     benchmarkData = new ArrayList<>();
                     for (StockPrice p : prices) {
@@ -130,7 +129,6 @@ public class ChartDataController {
                 }
             }
         }
-
         if (benchmarkData != null) {
             Map<String, Object> wrapper = new LinkedHashMap<>();
             wrapper.put("prices", result);
@@ -145,8 +143,10 @@ public class ChartDataController {
         List<Map<String, Object>> result = new ArrayList<>();
         for (HoldingSnapshot s : snapshots) {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("name", s.getStockName()); m.put("symbol", s.getStockSymbol());
-            m.put("value", s.getMarketValue()); m.put("currency", s.getCurrency() != null ? s.getCurrency() : "CNY");
+            m.put("name",   s.getStockName());
+            m.put("symbol", s.getStockSymbol());
+            m.put("value",  s.getMarketValue());
+            m.put("currency", s.getCurrency() != null ? s.getCurrency() : "CNY");
             result.add(m);
         }
         return JsonUtil.toJson(result);
@@ -158,8 +158,10 @@ public class ChartDataController {
         List<Map<String, Object>> result = new ArrayList<>();
         for (HoldingSnapshot s : snapshots) {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("name", s.getStockName()); m.put("symbol", s.getStockSymbol());
-            m.put("pnl", s.getUnrealizedPnl()); m.put("pnlPct", s.getUnrealizedPnlPct());
+            m.put("name",   s.getStockName());
+            m.put("symbol", s.getStockSymbol());
+            m.put("pnl",    s.getUnrealizedPnl());
+            m.put("pnlPct", s.getUnrealizedPnlPct());
             result.add(m);
         }
         return JsonUtil.toJson(result);
@@ -168,7 +170,7 @@ public class ChartDataController {
     private String pnlCalendarData(long portfolioId, Integer year) {
         int y = year != null ? year : LocalDate.now().getYear();
         LocalDate from = LocalDate.of(y, 1, 1);
-        LocalDate to = LocalDate.of(y, 12, 31);
+        LocalDate to   = LocalDate.of(y, 12, 31);
         List<DailyValue> values = analysisService.getDailyValues(portfolioId, from, to);
         List<Object[]> result = new ArrayList<>();
         for (DailyValue v : values) {
@@ -181,16 +183,17 @@ public class ChartDataController {
         LocalDate to, from;
         if (startStr != null && endStr != null) {
             from = LocalDate.parse(startStr);
-            to = LocalDate.parse(endStr);
+            to   = LocalDate.parse(endStr);
         } else if (days == 0) {
-            to = LocalDate.now();
+            to   = LocalDate.now();
             from = LocalDate.of(1990, 1, 1);
         } else {
-            to = LocalDate.now();
+            to   = LocalDate.now();
             from = to.minusDays(days);
         }
+        List<Map<String, Object>> result = new ArrayList<>();
 
-        java.sql.Date firstTxDate = queryOne(
+        java.sql.Date firstTxDate = jdbcQueryForObject(
             "SELECT MIN(trade_date) FROM transactions WHERE portfolio_id=? AND type IN ('BUY','SELL','TRANSFER_IN','TRANSFER_OUT')",
             java.sql.Date.class, portfolioId);
         if (firstTxDate != null) {
@@ -201,7 +204,7 @@ public class ChartDataController {
         Map<String, BigDecimal> toCny = new HashMap<>();
         toCny.put("CNY", BigDecimal.ONE);
         try {
-            List<Map<String, Object>> rates = queryForList("SELECT currency, rate FROM exchange_rates");
+            List<Map<String, Object>> rates = jdbcQueryForList("SELECT currency, rate FROM exchange_rates");
             for (Map<String, Object> r : rates) {
                 String curr = (String) r.get("currency");
                 BigDecimal rate = (BigDecimal) r.get("rate");
@@ -210,9 +213,10 @@ public class ChartDataController {
             }
         } catch (Exception ignored) {}
 
-        List<Map<String, Object>> allTxns = queryForList(
+        List<Map<String, Object>> allTxns = jdbcQueryForList(
             "SELECT stock_id, type, shares, price, fee, trade_date, currency FROM transactions WHERE portfolio_id=? AND type IN ('BUY','SELL') ORDER BY trade_date",
             portfolioId);
+
         Map<Long, String> stockCurrency = new HashMap<>();
         Map<Long, BigDecimal> stockRate = new HashMap<>();
         for (Map<String, Object> t : allTxns) {
@@ -235,14 +239,13 @@ public class ChartDataController {
             BigDecimal price = t.get("price") != null ? (BigDecimal) t.get("price") : BigDecimal.ZERO;
             BigDecimal fee = t.get("fee") != null ? (BigDecimal) t.get("fee") : BigDecimal.ZERO;
             LocalDate d = ((java.sql.Date) t.get("trade_date")).toLocalDate();
-
             BigDecimal old = cumShares.getOrDefault(sid, BigDecimal.ZERO);
-            cumShares.put(sid, "BUY".equals(type) ? old.add(shares) : old.subtract(shares));
+            BigDecimal newShares = "BUY".equals(type) ? old.add(shares) : old.subtract(shares);
+            cumShares.put(sid, newShares);
             BigDecimal inv = cumInvested.getOrDefault(sid, BigDecimal.ZERO);
             if ("BUY".equals(type)) inv = inv.add(shares.multiply(price).add(fee));
             else inv = inv.subtract(shares.multiply(price).subtract(fee));
             cumInvested.put(sid, inv);
-
             Map<Long, BigDecimal[]> dayMap = new LinkedHashMap<>();
             for (Map.Entry<Long, BigDecimal> e : cumShares.entrySet()) {
                 long s = e.getKey();
@@ -276,7 +279,6 @@ public class ChartDataController {
             priceCache.put(sid, dateMap);
         }
 
-        List<Map<String, Object>> result = new ArrayList<>();
         Map<Long, BigDecimal> lastPrice = new HashMap<>();
         Map<Long, BigDecimal[]> currentHolding = null;
         LocalDate cursor = from;
@@ -295,7 +297,6 @@ public class ChartDataController {
                 BigDecimal sh = shInv[0] != null ? shInv[0] : BigDecimal.ZERO;
                 BigDecimal inv = shInv[1] != null ? shInv[1] : BigDecimal.ZERO;
                 BigDecimal r = stockRate.containsKey(sid) ? stockRate.get(sid) : BigDecimal.ONE;
-
                 BigDecimal close = priceCache.getOrDefault(sid, Collections.emptyMap()).get(cursor);
                 if (close == null) close = lastPrice.get(sid);
                 if (close != null) {
@@ -305,14 +306,12 @@ public class ChartDataController {
                     hasPrice = true;
                 }
             }
-
             if (hasPrice) {
                 BigDecimal cashFull = cashWithTransfers.getOrDefault(cursor, BigDecimal.ZERO);
                 BigDecimal cashExTf = cashNoTransfers.getOrDefault(cursor, BigDecimal.ZERO);
                 BigDecimal div = divByDate.getOrDefault(cursor, BigDecimal.ZERO);
                 BigDecimal totalToday = stockValue.add(cashFull).add(div);
                 BigDecimal totalExTransfer = stockValue.add(cashExTf).add(div);
-
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("date", cursor.toString());
                 m.put("value", totalToday);
@@ -328,9 +327,9 @@ public class ChartDataController {
     }
 
     private Map<LocalDate, BigDecimal> computeCashMap(long portfolioId, LocalDate from, LocalDate to,
-                                                       Map<String, BigDecimal> toCny, boolean includeTransfers) {
+                                                       Map<String, BigDecimal> toCny, boolean includeTransfers) throws Exception {
         TreeMap<LocalDate, BigDecimal> map = new TreeMap<>();
-        List<Map<String, Object>> txns = queryForList(
+        List<Map<String, Object>> txns = jdbcQueryForList(
             "SELECT trade_date, type, shares, price, currency, fee FROM transactions WHERE portfolio_id=? AND trade_date <= ? ORDER BY trade_date",
             portfolioId, java.sql.Date.valueOf(to));
         BigDecimal cum = BigDecimal.ZERO;
@@ -361,43 +360,54 @@ public class ChartDataController {
     }
 
     private long resolvePortfolioId(Long param, HttpSession session) {
-        if (param != null) return param;
-        Object id = session.getAttribute("portfolioId");
-        return id != null ? (Long) id : 0L;
-    }
-
-    private <T> T queryOne(String sql, Class<T> elementType, Object... params) {
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (int i = 0; i < params.length; i++) ps.setObject(i + 1, params[i]);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) return rs.getObject(1, elementType);
-            }
-        } catch (SQLException e) {
-            throw new RuntimeException("Query failed: " + sql, e);
+        Object uidAttr = session.getAttribute("userId");
+        Long userId = uidAttr instanceof Number ? ((Number) uidAttr).longValue() : null;
+        if (param != null) {
+            return portfolioDao.isOwner(param, userId) ? param : 0L;
         }
-        return null;
+        Object id = session.getAttribute("portfolioId");
+        return id instanceof Number ? ((Number) id).longValue() : 0L;
     }
 
-    private List<Map<String, Object>> queryForList(String sql, Object... params) {
-        List<Map<String, Object>> results = new ArrayList<>();
+    // ── JDBC helpers ─────────────────────────────────────────────────────
+
+    private List<Map<String, Object>> jdbcQueryForList(String sql, Object... args) throws Exception {
+        List<Map<String, Object>> result = new ArrayList<>();
         try (Connection conn = DatabaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (int i = 0; i < params.length; i++) ps.setObject(i + 1, params[i]);
+            for (int i = 0; i < args.length; i++) ps.setObject(i + 1, args[i]);
             try (ResultSet rs = ps.executeQuery()) {
-                ResultSetMetaData rsmd = rs.getMetaData();
-                int colCount = rsmd.getColumnCount();
+                int colCount = rs.getMetaData().getColumnCount();
                 while (rs.next()) {
                     Map<String, Object> row = new LinkedHashMap<>();
-                    for (int i = 1; i <= colCount; i++) {
-                        row.put(rsmd.getColumnLabel(i), rs.getObject(i));
-                    }
-                    results.add(row);
+                    for (int c = 1; c <= colCount; c++) row.put(rs.getMetaData().getColumnLabel(c), rs.getObject(c));
+                    result.add(row);
                 }
             }
-        } catch (SQLException e) {
-            throw new RuntimeException("Query failed: " + sql, e);
         }
-        return results;
+        return result;
+    }
+
+    private <T> List<T> jdbcQueryForListSingle(String sql, Class<T> clazz, Object... args) throws Exception {
+        List<T> result = new ArrayList<>();
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) ps.setObject(i + 1, args[i]);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) result.add((T) rs.getObject(1));
+            }
+        }
+        return result;
+    }
+
+    private <T> T jdbcQueryForObject(String sql, Class<T> clazz, Object... args) throws Exception {
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) ps.setObject(i + 1, args[i]);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return (T) rs.getObject(1);
+            }
+        }
+        return null;
     }
 }

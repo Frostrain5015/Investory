@@ -112,8 +112,8 @@ public class PortfolioDao extends BaseDao {
         // userId 为 null（未登录）时直接拒绝，避免无谓查库
         if (userId == null) return false;
         Long count = queryOne(
-            "SELECT COUNT(*) AS cnt FROM portfolios WHERE id = ? AND user_id = ?",
-            rs -> rs.getLong("cnt"), portfolioId, userId);
+            "SELECT COUNT(*) FROM portfolios WHERE id = ? AND user_id = ?",
+            rs -> rs.getLong(1), portfolioId, userId);
         return count != null && count > 0;
     }
 }

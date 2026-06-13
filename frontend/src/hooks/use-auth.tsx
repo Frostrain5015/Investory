@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { BASE, checkSession, login as apiLogin, register as apiRegister } from '@/services/api'
+import { BASE, checkSession, exchangeFrostIdToken, login as apiLogin, register as apiRegister } from '@/services/api'
 import { preloadPostLoginPages } from '@/services/pagePreload'
 import type { SessionResponse } from '@/types'
 
@@ -48,6 +48,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onExpired = () => { setUserId(null); setAuthenticated(false); window.location.href = import.meta.env.BASE_URL }
     window.addEventListener('investory:auth-expired', onExpired)
     return () => window.removeEventListener('investory:auth-expired', onExpired)
+  }, [])
+
+  // Desktop: Frost ID login completes in the system browser, which deep-links back
+  // with a one-time token. Exchange it for a session here, then refresh auth state.
+  useEffect(() => {
+    if (!window.electronAPI?.onFrostIdCallback) return
+    return window.electronAPI.onFrostIdCallback(async (token) => {
+      const ok = await exchangeFrostIdToken(token)
+      if (!ok) return
+      const data: SessionResponse = await checkSession()
+      if (data.authenticated && data.userId) {
+        setUserId(data.userId)
+        setUsername(data.username ?? null)
+        setPortfolioId(data.portfolioId ?? null)
+        setIsAdmin(data.isAdmin ?? false)
+        setAuthenticated(true)
+      }
+    })
   }, [])
 
   useEffect(() => {

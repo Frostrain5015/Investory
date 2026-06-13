@@ -10,7 +10,7 @@ import { useT } from '@/i18n/I18nContext'
 
 interface Activity {
   id: number; date: string; type: 'BUY' | 'SELL' | 'DIV' | 'TRANSFER_IN' | 'TRANSFER_OUT'
-  stockName?: string; stockSymbol?: string
+  stockName?: string; stockSymbol?: string; stockMarket?: string
   shares?: number; price?: number; fee?: number; note?: string
   amountPerShare?: number; sharesHeld?: number; totalAmount?: number
 }
@@ -117,7 +117,7 @@ export default function Transactions() {
                             ) : (
                               <span className="font-medium text-slate-600">{item.stockName || '—'}</span>
                             )}
-                            {item.stockSymbol && <span className="text-xs text-slate-400 ml-1">{displaySymbol(item.stockSymbol, (item as any).stockMarket || '')}</span>}
+                            {item.stockSymbol && <span className="text-xs text-slate-400 ml-1">{displaySymbol(item.stockSymbol, item.stockMarket || '')}</span>}
                           </td>
                           <td className="px-3 py-3">
                             <span className={`inline-flex items-center rounded-lg px-2 py-0.5 text-xs font-medium ${badge.cls}`}>{badge.label}</span>

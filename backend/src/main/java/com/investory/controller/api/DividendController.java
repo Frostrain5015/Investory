@@ -2,8 +2,8 @@ package com.investory.controller.api;
 
 import com.investory.dao.*;
 import com.investory.model.*;
-import com.investory.server.AppContext;
 import com.investory.service.*;
+import com.investory.server.AppContext;
 import com.investory.util.JsonUtil;
 import jakarta.servlet.http.*;
 import java.math.BigDecimal;
@@ -24,19 +24,18 @@ public class DividendController {
     }
 
     public void handleList(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        Map<String, Object> result = Map.of("dividends", dividendDao.findByPortfolio(getPortfolioId(req)));
         resp.setContentType("application/json;charset=UTF-8");
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("dividends", dividendDao.findByPortfolio(getPortfolioId(req)));
         resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleGetOne(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long pid = getPortfolioId(req);
         long id = Long.parseLong((String) req.getAttribute("id"));
-        resp.setContentType("application/json;charset=UTF-8");
         Dividend d = dividendDao.findById(id);
         if (d == null || d.getPortfolioId() != pid) {
-            resp.getWriter().write("{\"error\":\"Not found\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "Not found")));
             return;
         }
         Map<String, Object> m = new LinkedHashMap<>();
@@ -44,6 +43,7 @@ public class DividendController {
         m.put("stockSymbol", d.getStockSymbol()); m.put("amountPerShare", d.getAmountPerShare());
         m.put("sharesHeld", d.getSharesHeld()); m.put("totalAmount", d.getTotalAmount());
         m.put("date", d.getRecordDate().toString());
+        resp.setContentType("application/json;charset=UTF-8");
         resp.getWriter().write(JsonUtil.toJson(m));
     }
 
@@ -52,11 +52,10 @@ public class DividendController {
         long stockId = Long.parseLong(req.getParameter("stockId"));
         BigDecimal amountPerShare = new BigDecimal(req.getParameter("amountPerShare"));
         String recordDate = req.getParameter("recordDate");
-        resp.setContentType("application/json;charset=UTF-8");
-
         Holding h = holdingDao.findByPortfolioAndStock(pid, stockId);
         if (h == null || h.getTotalShares().compareTo(BigDecimal.ZERO) <= 0) {
-            resp.getWriter().write("{\"error\":\"该股票不在当前组合持仓中\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "该股票不在当前组合持仓中")));
             return;
         }
         BigDecimal sh = h != null ? h.getTotalShares() : BigDecimal.ONE;
@@ -66,7 +65,8 @@ public class DividendController {
         long id = dividendDao.insert(d);
         holdingService.rebuildHolding(pid, stockId);
         valueCalculator.backfillFrom(pid, LocalDate.parse(recordDate));
-        resp.getWriter().write("{\"id\":" + id + "}");
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("id", id)));
     }
 
     public void handleUpdate(HttpServletRequest req, HttpServletResponse resp) throws Exception {
@@ -75,11 +75,10 @@ public class DividendController {
         long stockId = Long.parseLong(req.getParameter("stockId"));
         BigDecimal amountPerShare = new BigDecimal(req.getParameter("amountPerShare"));
         String recordDate = req.getParameter("recordDate");
-        resp.setContentType("application/json;charset=UTF-8");
-
         Dividend old = dividendDao.findById(id);
         if (old == null || old.getPortfolioId() != pid) {
-            resp.getWriter().write("{\"error\":\"Not found\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "Not found")));
             return;
         }
         LocalDate oldDate = old.getRecordDate();
@@ -97,19 +96,20 @@ public class DividendController {
         }
         LocalDate fromDate = oldDate != null && oldDate.isBefore(newDate) ? oldDate : newDate;
         valueCalculator.backfillFrom(pid, fromDate);
-        resp.getWriter().write("{\"status\":\"ok\"}");
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
     }
 
     public void handleDelete(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long pid = getPortfolioId(req);
         long id = Long.parseLong((String) req.getAttribute("id"));
-        resp.setContentType("application/json;charset=UTF-8");
         Dividend d = dividendDao.findById(id);
         if (d != null && d.getPortfolioId() == pid) {
             dividendDao.delete(id);
             holdingService.rebuildHolding(pid, d.getStockId());
             if (d.getRecordDate() != null) valueCalculator.backfillFrom(pid, d.getRecordDate());
         }
-        resp.getWriter().write("{\"status\":\"ok\"}");
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
     }
 }

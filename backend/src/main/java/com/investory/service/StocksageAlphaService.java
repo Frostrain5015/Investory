@@ -11,6 +11,13 @@ import java.util.*;
 
 /**
  * StockSage Alpha 核心服务。
+ *
+ * <p>职责：
+ * <ul>
+ *   <li>调用 Python 桥接脚本执行多因子评分、市场环境检测、筹码分析</li>
+ *   <li>管理缓存表（读优先，缓存未命中时触发计算）</li>
+ *   <li>提供扫描结果、因子拆解、每日推荐等聚合查询</li>
+ * </ul>
  */
 public class StocksageAlphaService {
 
@@ -23,6 +30,11 @@ public class StocksageAlphaService {
         this.cacheDao = AppContext.get(StocksageCacheDao.class);
     }
 
+    // ── 因子评分 ─────────────────────────────────────────────────────────
+
+    /**
+     * 批量获取股票多因子评分。优先读缓存，缓存缺失时调用 Python 实时计算。
+     */
     public Map<String, Object> getFactorScores(List<String> symbols) {
         Map<String, Object> result = new LinkedHashMap<>();
         for (String sym : symbols) {
@@ -47,9 +59,13 @@ public class StocksageAlphaService {
         return Map.of("scores", result);
     }
 
+    /**
+     * 单股逐因子拆解，返回各因子的名称、分组、值、买入分、卖出分。
+     */
     public Map<String, Object> getFactorBreakdown(String symbol) {
         List<Map<String, Object>> factors = cacheDao.findFactorBreakdown(symbol);
         if (factors.isEmpty()) {
+            // 缓存未命中，实时调用 Python
             try {
                 return executor.execute("factor_breakdown", "--symbol", symbol);
             } catch (Exception e) {
@@ -81,6 +97,9 @@ public class StocksageAlphaService {
         );
     }
 
+    // ── 市场环境 ─────────────────────────────────────────────────────────
+
+    /** 获取当前市场环境，优先读缓存。统一返回 {"regime": {...}} 格式。 */
     public Map<String, Object> getRegimeStatus() {
         Map<String, Object> cached = null;
         try {
@@ -88,6 +107,7 @@ public class StocksageAlphaService {
         } catch (Exception ignored) {}
 
         if (cached != null && !cached.isEmpty() && cached.get("regime") != null) {
+            // Normalize DB row format to bridge format
             String signal = String.valueOf(cached.getOrDefault("regime", "NORMAL"));
             return Map.of("regime", Map.of(
                 "signal", signal,
@@ -97,6 +117,7 @@ public class StocksageAlphaService {
             ));
         }
 
+        // Cache miss — call bridge
         try {
             Map<String, Object> result = executor.execute("regime_status");
             if (result.containsKey("regime")) {
@@ -116,6 +137,7 @@ public class StocksageAlphaService {
         }
     }
 
+    /** 触发扫描刷新（异步，通过 SSE 推送进度） */
     public Map<String, Object> triggerUniverseScan() {
         try {
             return executor.execute("scan_universe", "--type", "main");
@@ -124,6 +146,9 @@ public class StocksageAlphaService {
         }
     }
 
+    // ── 筹码分布 ─────────────────────────────────────────────────────────
+
+    /** 获取筹码分布数据 */
     public Map<String, Object> getChipDistribution(String symbol) {
         try {
             Map<String, Object> cached = cacheDao.findChipDistribution(symbol);
@@ -137,11 +162,19 @@ public class StocksageAlphaService {
         }
     }
 
+    // ── 每日推荐 ─────────────────────────────────────────────────────────
+
+    /** 获取今日推荐 */
     public List<Map<String, Object>> getDailyPicks() {
         String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
         return cacheDao.findDailyPicks(today, 10);
     }
 
+    // ── 股票综合分析（聚合：因子 + 筹码 + 环境 + 同业对比） ───────────
+
+    /**
+     * 获取单只股票的完整分析：因子拆解、筹码分布、当前环境上下文。
+     */
     public Map<String, Object> getStockAnalysis(String symbol) {
         Map<String, Object> factors = getFactorBreakdown(symbol);
         Map<String, Object> chip = getChipDistribution(symbol);
@@ -154,6 +187,8 @@ public class StocksageAlphaService {
             "regime", regime
         );
     }
+
+    // ── 辅助 ─────────────────────────────────────────────────────────────
 
     private double toDouble(Object v) {
         if (v instanceof Number) return ((Number) v).doubleValue();

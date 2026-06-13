@@ -1,6 +1,6 @@
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useEffect, lazy, Suspense } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { AuthProvider, useAuth } from '@/hooks/use-auth'
 import { SettingsProvider } from '@/hooks/use-settings'
 import { ThemeProvider } from '@/hooks/use-theme'
@@ -33,14 +33,34 @@ const Dividends = lazy(() => import('@/pages/Dividends'))
 const StockDetail = lazy(() => import('@/pages/StockDetail'))
 const Research = lazy(() => import('@/pages/Research'))
 
-const isElectron = !!(window as any).electronAPI?.isDesktop
+const isElectron = !!window.electronAPI?.isDesktop
 
 function LoadingScreen() {
   const { t } = useT()
   return (
-    <div className="flex flex-col items-center justify-center gap-3 h-full bg-slate-50 dark:bg-slate-950">
-      <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 dark:border-slate-700 dark:border-t-slate-300 rounded-full animate-spin" />
-      <span className="text-sm text-slate-400">{t.common.loading}</span>
+    <div className="flex flex-col items-center justify-center gap-4 h-full bg-slate-50 dark:bg-slate-950">
+      {/* Orb — a small glowing pill that pulses like the Guanlan idle state */}
+      <motion.div
+        className="w-10 h-10 rounded-full"
+        style={{ background: 'linear-gradient(135deg, #863bff, #47bfff)' }}
+        animate={{
+          scale: [1, 1.15, 1],
+          opacity: [0.8, 1, 0.8],
+        }}
+        transition={{
+          duration: 1.5,
+          repeat: Infinity,
+          ease: 'easeInOut',
+        }}
+      />
+      <motion.span
+        className="text-sm text-slate-400"
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2, duration: 0.3 }}
+      >
+        {t.common.loading}
+      </motion.span>
     </div>
   )
 }
@@ -49,15 +69,23 @@ function PageTransition({ children }: { children: React.ReactNode }) {
   const location = useLocation()
   return (
     <Suspense fallback={<LoadingScreen />}>
-      <motion.div
-        key={location.pathname}
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.15, ease: 'easeOut' }}
-        className="h-full"
-      >
-        {children}
-      </motion.div>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={location.pathname}
+          initial={{ opacity: 0, clipPath: 'circle(0% at 50% 50%)' }}
+          animate={{ opacity: 1, clipPath: 'circle(75% at 50% 50%)' }}
+          exit={{ opacity: 0, scale: 0.97 }}
+          transition={{
+            type: 'spring',
+            stiffness: 120,
+            damping: 20,
+            mass: 0.8,
+          }}
+          className="h-full"
+        >
+          {children}
+        </motion.div>
+      </AnimatePresence>
     </Suspense>
   )
 }

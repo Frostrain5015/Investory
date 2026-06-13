@@ -83,8 +83,9 @@ public class StocksageCacheDao extends BaseDao {
 
     /** 获取最新的市场环境记录 */
     public Map<String, Object> findLatestRegime() {
-        return queryForMap(
+        List<Map<String, Object>> rows = queryForList(
             "SELECT * FROM stocksage_regime_cache ORDER BY regime_date DESC LIMIT 1");
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /** 插入或更新市场环境 */
@@ -100,9 +101,10 @@ public class StocksageCacheDao extends BaseDao {
 
     /** 获取某只股票的最新筹码分布 */
     public Map<String, Object> findChipDistribution(String symbol) {
-        return queryForMap(
+        List<Map<String, Object>> rows = queryForList(
             "SELECT * FROM stocksage_chip_cache WHERE stock_symbol = ? " +
             "ORDER BY computed_at DESC LIMIT 1", symbol);
+        return rows.isEmpty() ? null : rows.get(0);
     }
 
     /** 插入筹码分布（ON DUPLICATE KEY UPDATE） */

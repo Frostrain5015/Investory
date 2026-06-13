@@ -5,13 +5,17 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.investory.dao.McpTokenDao;
+import com.investory.service.McpToolRegistry;
 import com.investory.server.AppContext;
 import com.investory.server.ConfigLoader;
-import com.investory.server.SseClient;
-import com.investory.service.McpToolRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
+import java.io.IOException;
+
+/**
+ * MCP（Model Context Protocol）Streamable HTTP 端点。
+ */
 public class McpController {
 
     private static final String PROTOCOL_VERSION = "2025-06-18";
@@ -25,13 +29,12 @@ public class McpController {
         String token = bearer(req);
         McpTokenDao.TokenInfo user = token == null ? null : tokenDao.resolveToken(token);
 
-        StringBuilder sb = new StringBuilder();
-        try (var reader = req.getReader()) { String l; while ((l = reader.readLine()) != null) sb.append(l); }
-        JsonObject body = gson.fromJson(sb.toString(), JsonObject.class);
+        String jsonBody = new String(req.getReader().readAllBytes());
+        JsonObject body = jsonBody.isBlank() ? null : gson.fromJson(jsonBody, JsonObject.class);
 
         if (body == null || !body.has("method")) {
-            resp.setContentType("application/json;charset=UTF-8");
             resp.setStatus(400);
+            resp.setContentType("application/json;charset=UTF-8");
             resp.getWriter().write(gson.toJson(rpcError(idOf(body), -32600, "Invalid Request")));
             return;
         }
@@ -41,9 +44,9 @@ public class McpController {
 
         if (!"initialize".equals(method) && !method.startsWith("notifications/")) {
             if (user == null) {
-                resp.setContentType("application/json;charset=UTF-8");
                 resp.setStatus(401);
                 resp.setHeader("WWW-Authenticate", wwwAuthenticate(req));
+                resp.setContentType("application/json;charset=UTF-8");
                 resp.getWriter().write(gson.toJson(rpcError(id, -32001, "Unauthorized: missing or invalid Bearer token")));
                 return;
             }
@@ -83,20 +86,15 @@ public class McpController {
             return;
         }
 
+        resp.setContentType("text/event-stream");
+        resp.setCharacterEncoding("UTF-8");
         resp.setHeader("Cache-Control", "no-cache");
-        SseClient client = new SseClient(resp);
-        client.init();
-
-        String endpointUrl = baseUrl(req) + contextPath + "/mcp";
-        client.send("endpoint", Map.of("", endpointUrl));
-        // The client can use this endpoint to know where to POST JSON-RPC requests
-
-        req.startAsync();
-        // Keep connection alive - responses will be sent via the endpoint
-        while (!client.isCompleted()) { try { Thread.sleep(5000); } catch (InterruptedException e) { break; } }
+        jakarta.servlet.AsyncContext ac = req.startAsync();
+        ac.setTimeout(300000);
+        var writer = resp.getWriter();
+        writer.write("event: endpoint\ndata: " + baseUrl(req) + contextPath + "/mcp\n\n");
+        writer.flush();
     }
-
-    // ── JSON-RPC helpers ─────────────────────────────────────────────────
 
     private JsonObject initializeResult() {
         JsonObject r = new JsonObject();
@@ -126,20 +124,20 @@ public class McpController {
     }
 
     private JsonObject toolsCall(JsonElement id, JsonElement params, String token) {
-        String name = params != null && params.isJsonObject() && params.getAsJsonObject().has("name")
-            ? params.getAsJsonObject().get("name").getAsString() : "";
-        JsonElement args = params != null && params.isJsonObject() ? params.getAsJsonObject().get("arguments") : null;
+        String name = params != null && params.getAsJsonObject().has("name") ? params.getAsJsonObject().get("name").getAsString() : "";
+        JsonElement args = params != null ? params.getAsJsonObject().get("arguments") : null;
         McpToolRegistry.Tool tool = registry.get(name);
         if (tool == null) {
             return rpcError(id, -32602, "Unknown tool: " + name);
         }
         try {
             Object result = tool.handler().apply(args, token);
+            String text = gson.toJson(result);
             JsonObject res = new JsonObject();
             JsonArray content = new JsonArray();
             JsonObject block = new JsonObject();
             block.addProperty("type", "text");
-            block.addProperty("text", gson.toJson(result));
+            block.addProperty("text", text);
             content.add(block);
             res.add("content", content);
             if (result instanceof JsonObject jn) {

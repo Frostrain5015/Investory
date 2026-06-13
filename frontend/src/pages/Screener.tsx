@@ -56,7 +56,7 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
 
   // Expansion
   const [expanded, setExpanded] = useState<string | null>(null)
-  const [breakdowns, setBreakdowns] = useState<Record<string, FactorBreakdown>>({})
+  const [breakdowns, setBreakdowns] = useState<Record<string, FactorBreakdown | { error: string }>>({})
 
   const SCAN_STRATEGIES = [
     { key: 'main', label: '多因子综合' },
@@ -108,7 +108,7 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
         const bd = await getFactorBreakdown(sym)
         setBreakdowns(prev => ({ ...prev, [sym]: bd }))
       } catch {
-        setBreakdowns(prev => ({ ...prev, [sym]: { error: '加载失败' } as any }))
+        setBreakdowns(prev => ({ ...prev, [sym]: { error: '加载失败' } }))
       }
     }
   }, [expanded, breakdowns])
@@ -147,19 +147,20 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
     // Pass symbols to SSE endpoint so it only scans those stocks
     const url = `${BASE}/api/stocksage/refresh?symbols=${symbols.join(',')}&strategy=${scanStrategy}`
     const es = new EventSource(url, { withCredentials: true })
-    es.addEventListener('progress', (e: any) => {
+    es.addEventListener('progress', (e: MessageEvent) => {
       try {
         const d = JSON.parse(e.data)
         toast(`扫描进度: ${d.current}/${d.total}`, true)
       } catch { /* ignore */ }
     })
-    es.addEventListener('result', (e: any) => {
+    es.addEventListener('result', (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data)
         if (data.scores) {
           // score_stocks response: {scores: {code: {buy_score, sell_score, total_score}}}
           const map: Record<string, FactorScore> = {}
-          for (const [code, s] of Object.entries(data.scores as Record<string, any>)) {
+          const rawScores = data.scores as Record<string, { buy_score?: number; sell_score?: number; total_score?: number }>
+          for (const [code, s] of Object.entries(rawScores)) {
             map[code] = {
               symbol: code,
               buyScore: s.buy_score ?? 0,
@@ -414,13 +415,13 @@ function TableRow({ rank, score, expanded, breakdown, onToggle }: {
   rank: number
   score: FactorScore
   expanded: boolean
-  breakdown?: FactorBreakdown | null
+  breakdown?: FactorBreakdown | { error: string } | null
   onToggle: () => void
 }) {
   const totalScore = score.totalScore ?? 0
   const scoreColor = totalScore >= 70 ? 'text-emerald-600' : totalScore >= 50 ? 'text-amber-600' : 'text-slate-600'
-  const factors: FactorDetail[] = breakdown?.factors ?? []
-  const hasError = breakdown && 'error' in breakdown
+  const hasError = !!breakdown && 'error' in breakdown
+  const factors: FactorDetail[] = breakdown && 'factors' in breakdown ? breakdown.factors : []
 
   return (
     <>
@@ -451,14 +452,16 @@ function TableRow({ rank, score, expanded, breakdown, onToggle }: {
             {!breakdown ? (
               <p className="text-sm text-slate-400">加载中...</p>
             ) : hasError ? (
-              <p className="text-sm text-red-400">{(breakdown as any).error || '加载失败'}</p>
+              <p className="text-sm text-red-400">{(breakdown && 'error' in breakdown ? breakdown.error : '') || '加载失败'}</p>
             ) : factors.length > 0 ? (
               <div className="flex gap-6">
                 <FactorRadarChart factors={factors} size={180} />
                 <div className="flex-1 space-y-1.5 max-h-[200px] overflow-auto">
-                  {factors.map((f: any) => {
-                    const buy = f.buyScore ?? f.buy_score ?? 0
-                    const sell = f.sellScore ?? f.sell_score ?? 0
+                  {factors.map((f) => {
+                    // 后端可能返回 camelCase 或 snake_case，做容错
+                    const fr = f as FactorDetail & { buy_score?: number; sell_score?: number }
+                    const buy = fr.buyScore ?? fr.buy_score ?? 0
+                    const sell = fr.sellScore ?? fr.sell_score ?? 0
                     return (
                     <div key={f.name} className="flex items-center gap-2">
                       <span className="text-xs text-slate-500 w-20 truncate" title={f.description}>{f.name}</span>

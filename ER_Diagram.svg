@@ -1,0 +1,204 @@
+<svg viewBox="0 0 680 920" width="100%" role="img" aria-label="Investory database entity-relationship diagram" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowOne" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+    <path d="M2 1L8 5L2 9" fill="none" stroke="#888780" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<text x="340" y="28" text-anchor="middle" font-size="16" font-weight="500" fill="#3C3489" font-family="sans-serif">investory 数据库 ER 图</text>
+<!-- domain 1 -->
+<rect x="40" y="48" width="600" height="22" rx="4" fill="#EEEDFE" stroke="#CECBF6" stroke-width="0.5"/>
+<text x="56" y="63" font-size="12" font-weight="500" fill="#3C3489" font-family="sans-serif">域 1: 用户与认证</text>
+<!-- users -->
+<rect x="52" y="78" width="176" height="116" rx="8" fill="#EEEDFE" stroke="#AFA9EC" stroke-width="0.5"/>
+<rect x="52" y="78" width="176" height="24" rx="8" fill="#CECBF6"/><rect x="52" y="94" width="176" height="8" fill="#CECBF6"/>
+<text x="140" y="93" text-anchor="middle" font-size="13" font-weight="500" fill="#3C3489" font-family="sans-serif">users</text>
+<text x="62" y="112" font-size="11" fill="#534AB7" font-family="monospace">PK  id: bigint</text>
+<text x="62" y="127" font-size="11" fill="#3C3489" font-family="monospace">username: varchar UK</text>
+<text x="62" y="142" font-size="11" fill="#3C3489" font-family="monospace">password_hash: varchar</text>
+<text x="62" y="157" font-size="11" fill="#3C3489" font-family="monospace">email: varchar</text>
+<text x="62" y="172" font-size="11" fill="#3C3489" font-family="monospace">is_admin: boolean</text>
+<text x="62" y="187" font-size="11" fill="#3C3489" font-family="monospace">created_at: timestamp</text>
+<!-- watchlist -->
+<rect x="252" y="78" width="176" height="100" rx="8" fill="#EEEDFE" stroke="#AFA9EC" stroke-width="0.5"/>
+<rect x="252" y="78" width="176" height="24" rx="8" fill="#CECBF6"/><rect x="252" y="94" width="176" height="8" fill="#CECBF6"/>
+<text x="340" y="93" text-anchor="middle" font-size="13" font-weight="500" fill="#3C3489" font-family="sans-serif">watchlist</text>
+<text x="262" y="112" font-size="11" fill="#534AB7" font-family="monospace">PK  id: bigint</text>
+<text x="262" y="127" font-size="11" fill="#3C3489" font-family="monospace">FK  user_id: bigint</text>
+<text x="262" y="142" font-size="11" fill="#3C3489" font-family="monospace">FK  stock_id: bigint</text>
+<text x="262" y="157" font-size="11" fill="#3C3489" font-family="monospace">sort_order: int</text>
+<text x="262" y="172" font-size="11" fill="#3C3489" font-family="monospace">created_at: timestamp</text>
+<!-- ai_settings -->
+<rect x="452" y="78" width="176" height="84" rx="8" fill="#EEEDFE" stroke="#AFA9EC" stroke-width="0.5"/>
+<rect x="452" y="78" width="176" height="24" rx="8" fill="#CECBF6"/><rect x="452" y="94" width="176" height="8" fill="#CECBF6"/>
+<text x="540" y="93" text-anchor="middle" font-size="13" font-weight="500" fill="#3C3489" font-family="sans-serif">ai_settings</text>
+<text x="462" y="112" font-size="11" fill="#534AB7" font-family="monospace">PK  user_id: bigint</text>
+<text x="462" y="127" font-size="11" fill="#3C3489" font-family="monospace">provider: varchar</text>
+<text x="462" y="142" font-size="11" fill="#3C3489" font-family="monospace">model: varchar</text>
+<text x="462" y="157" font-size="11" fill="#3C3489" font-family="monospace">base_url / api_key</text>
+<!-- relationships row 1 -->
+<line x1="228" y1="136" x2="248" y2="128" stroke="#888780" stroke-width="0.5" marker-end="url(#arrowOne)"/>
+<text x="234" y="125" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="242" y="150" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<line x1="228" y1="136" x2="445" y2="120" stroke="#888780" stroke-width="0.5" marker-end="url(#arrowOne)"/>
+<text x="340" y="120" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="345" y="145" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<line x1="140" y1="194" x2="140" y2="214" stroke="#888780" stroke-width="0.5" marker-end="url(#arrowOne)"/>
+<text x="130" y="208" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="148" y="208" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- domain 2 -->
+<rect x="40" y="220" width="600" height="22" rx="4" fill="#E1F5EE" stroke="#9FE1CB" stroke-width="0.5"/>
+<text x="56" y="235" font-size="12" font-weight="500" fill="#0F6E56" font-family="sans-serif">域 2: 投资组合与交易</text>
+<!-- portfolios -->
+<rect x="52" y="250" width="176" height="84" rx="8" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="0.5"/>
+<rect x="52" y="250" width="176" height="24" rx="8" fill="#9FE1CB"/><rect x="52" y="266" width="176" height="8" fill="#9FE1CB"/>
+<text x="140" y="265" text-anchor="middle" font-size="13" font-weight="500" fill="#0F6E56" font-family="sans-serif">portfolios</text>
+<text x="62" y="284" font-size="11" fill="#0F6E56" font-family="monospace">PK  id: bigint</text>
+<text x="62" y="299" font-size="11" fill="#1D9E75" font-family="monospace">FK  user_id: bigint</text>
+<text x="62" y="314" font-size="11" fill="#0F6E56" font-family="monospace">name: varchar</text>
+<text x="62" y="329" font-size="11" fill="#0F6E56" font-family="monospace">created_at: timestamp</text>
+<!-- holdings -->
+<rect x="264" y="250" width="176" height="116" rx="8" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="0.5"/>
+<rect x="264" y="250" width="176" height="24" rx="8" fill="#9FE1CB"/><rect x="264" y="266" width="176" height="8" fill="#9FE1CB"/>
+<text x="352" y="265" text-anchor="middle" font-size="13" font-weight="500" fill="#0F6E56" font-family="sans-serif">holdings</text>
+<text x="274" y="284" font-size="11" fill="#0F6E56" font-family="monospace">PK  id: bigint</text>
+<text x="274" y="299" font-size="11" fill="#1D9E75" font-family="monospace">FK  portfolio_id</text>
+<text x="274" y="314" font-size="11" fill="#1D9E75" font-family="monospace">FK  stock_id</text>
+<text x="274" y="329" font-size="11" fill="#0F6E56" font-family="monospace">total_shares: decimal</text>
+<text x="274" y="344" font-size="11" fill="#0F6E56" font-family="monospace">avg_cost: decimal</text>
+<text x="274" y="359" font-size="11" fill="#0F6E56" font-family="monospace">diluted_cost: decimal</text>
+<!-- transactions -->
+<rect x="264" y="380" width="176" height="132" rx="8" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="0.5"/>
+<rect x="264" y="380" width="176" height="24" rx="8" fill="#9FE1CB"/><rect x="264" y="396" width="176" height="8" fill="#9FE1CB"/>
+<text x="352" y="395" text-anchor="middle" font-size="13" font-weight="500" fill="#0F6E56" font-family="sans-serif">transactions</text>
+<text x="274" y="414" font-size="11" fill="#0F6E56" font-family="monospace">PK  id: bigint</text>
+<text x="274" y="429" font-size="11" fill="#1D9E75" font-family="monospace">FK  portfolio_id</text>
+<text x="274" y="444" font-size="11" fill="#1D9E75" font-family="monospace">FK  stock_id</text>
+<text x="274" y="459" font-size="11" fill="#0F6E56" font-family="monospace">type: buy/sell/transfer</text>
+<text x="274" y="474" font-size="11" fill="#0F6E56" font-family="monospace">shares / price / fee</text>
+<text x="274" y="489" font-size="11" fill="#0F6E56" font-family="monospace">trade_date: date</text>
+<text x="274" y="504" font-size="11" fill="#0F6E56" font-family="monospace">note: text</text>
+<!-- dividends -->
+<rect x="52" y="380" width="176" height="100" rx="8" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="0.5"/>
+<rect x="52" y="380" width="176" height="24" rx="8" fill="#9FE1CB"/><rect x="52" y="396" width="176" height="8" fill="#9FE1CB"/>
+<text x="140" y="395" text-anchor="middle" font-size="13" font-weight="500" fill="#0F6E56" font-family="sans-serif">dividends</text>
+<text x="62" y="414" font-size="11" fill="#0F6E56" font-family="monospace">PK  id: bigint</text>
+<text x="62" y="429" font-size="11" fill="#1D9E75" font-family="monospace">FK  portfolio_id</text>
+<text x="62" y="444" font-size="11" fill="#1D9E75" font-family="monospace">FK  stock_id</text>
+<text x="62" y="459" font-size="11" fill="#0F6E56" font-family="monospace">total_amount: decimal</text>
+<text x="62" y="473" font-size="11" fill="#0F6E56" font-family="monospace">record_date: date</text>
+<!-- daily_portfolio_value -->
+<rect x="52" y="494" width="176" height="100" rx="8" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="0.5"/>
+<rect x="52" y="494" width="176" height="24" rx="8" fill="#9FE1CB"/><rect x="52" y="510" width="176" height="8" fill="#9FE1CB"/>
+<text x="140" y="509" text-anchor="middle" font-size="12" font-weight="500" fill="#0F6E56" font-family="sans-serif">daily_portfolio_value</text>
+<text x="62" y="528" font-size="11" fill="#0F6E56" font-family="monospace">PK  id: bigint</text>
+<text x="62" y="543" font-size="11" fill="#1D9E75" font-family="monospace">FK  portfolio_id</text>
+<text x="62" y="558" font-size="11" fill="#0F6E56" font-family="monospace">snapshot_date: date</text>
+<text x="62" y="573" font-size="11" fill="#0F6E56" font-family="monospace">total_value / cost</text>
+<text x="62" y="588" font-size="11" fill="#0F6E56" font-family="monospace">daily_pnl: decimal</text>
+<!-- cash_balances -->
+<rect x="264" y="526" width="176" height="84" rx="8" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="0.5"/>
+<rect x="264" y="526" width="176" height="24" rx="8" fill="#9FE1CB"/><rect x="264" y="542" width="176" height="8" fill="#9FE1CB"/>
+<text x="352" y="541" text-anchor="middle" font-size="13" font-weight="500" fill="#0F6E56" font-family="sans-serif">cash_balances</text>
+<text x="274" y="560" font-size="11" fill="#0F6E56" font-family="monospace">FK  portfolio_id</text>
+<text x="274" y="575" font-size="11" fill="#0F6E56" font-family="monospace">currency: varchar</text>
+<text x="274" y="590" font-size="11" fill="#0F6E56" font-family="monospace">amount: decimal</text>
+<!-- portfolio -> holdings -->
+<line x1="228" y1="290" x2="260" y2="290" stroke="#888780" stroke-width="0.5" marker-end="url(#arrowOne)"/>
+<text x="238" y="282" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="238" y="302" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- portfolio -> transactions -->
+<line x1="228" y1="300" x2="260" y2="440" stroke="#888780" stroke-width="0.5" stroke-dasharray="3,2" marker-end="url(#arrowOne)"/>
+<text x="232" y="370" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="230" y="385" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- portfolio -> dividends -->
+<line x1="140" y1="334" x2="140" y2="376" stroke="#888780" stroke-width="0.5" marker-end="url(#arrowOne)"/>
+<text x="130" y="358" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="148" y="358" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- portfolio -> daily_value -->
+<line x1="140" y1="334" x2="140" y2="490" stroke="#888780" stroke-width="0.5" stroke-dasharray="3,2" marker-end="url(#arrowOne)"/>
+<text x="130" y="418" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="148" y="418" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- portfolio -> cash_balances -->
+<line x1="228" y1="300" x2="260" y2="565" stroke="#888780" stroke-width="0.5" stroke-dasharray="3,2" marker-end="url(#arrowOne)"/>
+<text x="236" y="435" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="234" y="450" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- portfolio -> backtest_results -->
+<line x1="140" y1="334" x2="450" y2="700" stroke="#888780" stroke-width="0.5" stroke-dasharray="3,2" marker-end="url(#arrowOne)"/>
+<text x="320" y="510" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="460" y="720" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- domain 3 -->
+<rect x="40" y="610" width="600" height="22" rx="4" fill="#E6F1FB" stroke="#B5D4F4" stroke-width="0.5"/>
+<text x="56" y="625" font-size="12" font-weight="500" fill="#185FA5" font-family="sans-serif">域 3: 股票与行情</text>
+<!-- stocks -->
+<rect x="52" y="640" width="176" height="100" rx="8" fill="#E6F1FB" stroke="#85B7EB" stroke-width="0.5"/>
+<rect x="52" y="640" width="176" height="24" rx="8" fill="#B5D4F4"/><rect x="52" y="656" width="176" height="8" fill="#B5D4F4"/>
+<text x="140" y="655" text-anchor="middle" font-size="13" font-weight="500" fill="#185FA5" font-family="sans-serif">stocks</text>
+<text x="62" y="674" font-size="11" fill="#185FA5" font-family="monospace">PK  id: bigint</text>
+<text x="62" y="689" font-size="11" fill="#185FA5" font-family="monospace">symbol: varchar</text>
+<text x="62" y="704" font-size="11" fill="#185FA5" font-family="monospace">name: varchar</text>
+<text x="62" y="719" font-size="11" fill="#185FA5" font-family="monospace">market / currency</text>
+<text x="62" y="734" font-size="11" fill="#185FA5" font-family="monospace">name_pinyin: varchar</text>
+<!-- stock_prices -->
+<rect x="264" y="640" width="176" height="100" rx="8" fill="#E6F1FB" stroke="#85B7EB" stroke-width="0.5"/>
+<rect x="264" y="640" width="176" height="24" rx="8" fill="#B5D4F4"/><rect x="264" y="656" width="176" height="8" fill="#B5D4F4"/>
+<text x="352" y="655" text-anchor="middle" font-size="13" font-weight="500" fill="#185FA5" font-family="sans-serif">stock_prices</text>
+<text x="274" y="674" font-size="11" fill="#185FA5" font-family="monospace">PK  id: bigint</text>
+<text x="274" y="689" font-size="11" fill="#378ADD" font-family="monospace">FK  stock_id</text>
+<text x="274" y="704" font-size="11" fill="#185FA5" font-family="monospace">trade_date: date</text>
+<text x="274" y="719" font-size="11" fill="#185FA5" font-family="monospace">open/close/high/low</text>
+<text x="274" y="734" font-size="11" fill="#185FA5" font-family="monospace">volume: bigint</text>
+<!-- stock_metric_cache -->
+<rect x="52" y="754" width="176" height="100" rx="8" fill="#E6F1FB" stroke="#85B7EB" stroke-width="0.5"/>
+<rect x="52" y="754" width="176" height="24" rx="8" fill="#B5D4F4"/><rect x="52" y="770" width="176" height="8" fill="#B5D4F4"/>
+<text x="140" y="769" text-anchor="middle" font-size="12" font-weight="500" fill="#185FA5" font-family="sans-serif">stock_metric_cache</text>
+<text x="62" y="788" font-size="11" fill="#185FA5" font-family="monospace">PK  stock_id: bigint</text>
+<text x="62" y="803" font-size="11" fill="#185FA5" font-family="monospace">beta_1y: decimal</text>
+<text x="62" y="818" font-size="11" fill="#185FA5" font-family="monospace">volatility_1y: decimal</text>
+<text x="62" y="833" font-size="11" fill="#185FA5" font-family="monospace">max_drawdown_1y</text>
+<text x="62" y="848" font-size="11" fill="#185FA5" font-family="monospace">percentile_5y</text>
+<!-- backtest_results -->
+<rect x="452" y="680" width="176" height="132" rx="8" fill="#E1F5EE" stroke="#5DCAA5" stroke-width="0.5"/>
+<rect x="452" y="680" width="176" height="24" rx="8" fill="#9FE1CB"/><rect x="452" y="696" width="176" height="8" fill="#9FE1CB"/>
+<text x="540" y="695" text-anchor="middle" font-size="13" font-weight="500" fill="#0F6E56" font-family="sans-serif">backtest_results</text>
+<text x="462" y="714" font-size="11" fill="#0F6E56" font-family="monospace">PK  id: bigint</text>
+<text x="462" y="729" font-size="11" fill="#1D9E75" font-family="monospace">FK  user_id</text>
+<text x="462" y="744" font-size="11" fill="#1D9E75" font-family="monospace">FK  portfolio_id</text>
+<text x="462" y="759" font-size="11" fill="#0F6E56" font-family="monospace">name: varchar</text>
+<text x="462" y="774" font-size="11" fill="#0F6E56" font-family="monospace">strategy_type</text>
+<text x="462" y="789" font-size="11" fill="#0F6E56" font-family="monospace">equity_curve: json</text>
+<text x="462" y="804" font-size="11" fill="#0F6E56" font-family="monospace">metrics: json</text>
+<!-- stocks -> holdings -->
+<line x1="228" y1="690" x2="260" y2="320" stroke="#888780" stroke-width="0.5" stroke-dasharray="3,2" marker-end="url(#arrowOne)"/>
+<text x="238" y="500" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="238" y="520" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- stocks -> transactions -->
+<line x1="228" y1="700" x2="260" y2="460" stroke="#888780" stroke-width="0.5" stroke-dasharray="3,2" marker-end="url(#arrowOne)"/>
+<text x="230" y="580" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="230" y="595" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- stocks -> dividends -->
+<line x1="228" y1="680" x2="228" y2="440" stroke="#888780" stroke-width="0.5" stroke-dasharray="3,2" marker-end="url(#arrowOne)"/>
+<text x="218" y="555" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="236" y="555" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- stocks -> watchlist -->
+<line x1="228" y1="680" x2="340" y2="182" stroke="#888780" stroke-width="0.5" stroke-dasharray="3,2" marker-end="url(#arrowOne)"/>
+<text x="260" y="420" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="280" y="438" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- stocks -> stock_prices -->
+<line x1="228" y1="690" x2="260" y2="690" stroke="#888780" stroke-width="0.5" marker-end="url(#arrowOne)"/>
+<text x="238" y="682" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="238" y="702" font-size="9" fill="#888780" font-family="sans-serif">*</text>
+<!-- stocks -> stock_metric_cache -->
+<line x1="140" y1="740" x2="140" y2="750" stroke="#888780" stroke-width="0.5" marker-end="url(#arrowOne)"/>
+<text x="105" y="748" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<text x="155" y="748" font-size="9" fill="#888780" font-family="sans-serif">1</text>
+<!-- legend -->
+<rect x="40" y="870" width="600" height="36" rx="4" fill="#F1EFE8" stroke="#D3D1C7" stroke-width="0.5"/>
+<rect x="52" y="880" width="12" height="12" rx="2" fill="#CECBF6"/><text x="70" y="891" font-size="11" fill="#444441" font-family="sans-serif">用户与认证</text>
+<rect x="170" y="880" width="12" height="12" rx="2" fill="#9FE1CB"/><text x="188" y="891" font-size="11" fill="#444441" font-family="sans-serif">投资组合与交易</text>
+<rect x="340" y="880" width="12" height="12" rx="2" fill="#B5D4F4"/><text x="358" y="891" font-size="11" fill="#444441" font-family="sans-serif">股票与行情</text>
+<line x1="470" y1="886" x2="510" y2="886" stroke="#888780" stroke-width="0.5" stroke-dasharray="3,2"/>
+<text x="516" y="891" font-size="11" fill="#444441" font-family="sans-serif">跨域引用</text>
+</svg>

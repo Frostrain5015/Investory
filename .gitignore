@@ -15,6 +15,7 @@ frontend/dist/
 .claude/
 CLAUDE.md
 .mcp.json
+mcp-config.md
 .vscode/
 __pycache__/
 script/.checkpoints/

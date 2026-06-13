@@ -2,6 +2,7 @@ package com.investory.controller.api;
 
 import com.investory.dao.StockDao;
 import com.investory.dao.StockPriceDao;
+import com.investory.model.Stock;
 import com.investory.server.AppContext;
 import com.investory.server.DatabaseManager;
 import com.investory.util.JsonUtil;
@@ -10,7 +11,9 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 
 import java.math.BigDecimal;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.*;
 
 public class WatchlistController {
@@ -25,29 +28,14 @@ public class WatchlistController {
 
     public void handleGetWatchlist(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long userId = getUserId(req);
-        resp.setContentType("application/json;charset=UTF-8");
         if (userId == 0) {
+            resp.setContentType("application/json;charset=UTF-8");
             resp.getWriter().write("[]");
             return;
         }
-        List<Map<String, Object>> rows;
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(
-                 "SELECT w.id, w.stock_id, s.symbol, s.name, s.market, s.currency, w.sort_order FROM watchlist w JOIN stocks s ON w.stock_id=s.id WHERE w.user_id=? ORDER BY w.sort_order, w.created_at DESC")) {
-            ps.setObject(1, userId);
-            try (ResultSet rs = ps.executeQuery()) {
-                ResultSetMetaData rsmd = rs.getMetaData();
-                int colCount = rsmd.getColumnCount();
-                rows = new ArrayList<>();
-                while (rs.next()) {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    for (int i = 1; i <= colCount; i++) {
-                        row.put(rsmd.getColumnLabel(i), rs.getObject(i));
-                    }
-                    rows.add(row);
-                }
-            }
-        }
+        List<Map<String, Object>> rows = jdbcQueryForList(
+            "SELECT w.id, w.stock_id, s.symbol, s.name, s.market, s.currency, w.sort_order FROM watchlist w JOIN stocks s ON w.stock_id=s.id WHERE w.user_id=? ORDER BY w.sort_order, w.created_at DESC",
+            userId);
         var today = java.time.LocalDate.now();
         var weekAgo = today.minusDays(7);
         for (var row : rows) {
@@ -69,59 +57,80 @@ public class WatchlistController {
             row.putIfAbsent("changeToday", BigDecimal.ZERO);
             row.putIfAbsent("changePctToday", BigDecimal.ZERO);
         }
+        resp.setContentType("application/json;charset=UTF-8");
         resp.getWriter().write(JsonUtil.toJson(rows));
     }
 
     public void handleAdd(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long userId = getUserId(req);
         long stockId = Long.parseLong(req.getParameter("stockId"));
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement("INSERT IGNORE INTO watchlist (user_id, stock_id) VALUES (?, ?)")) {
-            ps.setObject(1, userId);
-            ps.setObject(2, stockId);
-            ps.executeUpdate();
-        }
+        jdbcUpdate("INSERT IGNORE INTO watchlist (user_id, stock_id) VALUES (?, ?)", userId, stockId);
         resp.setContentType("application/json;charset=UTF-8");
-        resp.getWriter().write("{\"status\":\"ok\"}");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
     }
 
     public void handleRemove(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long userId = getUserId(req);
         long stockId = Long.parseLong((String) req.getAttribute("stockId"));
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement("DELETE FROM watchlist WHERE user_id=? AND stock_id=?")) {
-            ps.setObject(1, userId);
-            ps.setObject(2, stockId);
-            ps.executeUpdate();
-        }
+        jdbcUpdate("DELETE FROM watchlist WHERE user_id=? AND stock_id=?", userId, stockId);
         resp.setContentType("application/json;charset=UTF-8");
-        resp.getWriter().write("{\"status\":\"ok\"}");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
     }
 
     public void handleReorder(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long userId = getUserId(req);
+        // Read JSON body
+        String jsonBody = new String(req.getReader().readAllBytes());
         @SuppressWarnings("unchecked")
-        List<Map<String, Object>> order = (List<Map<String, Object>>) com.investory.util.JsonUtil.fromJson(
-            new String(req.getReader().readAllBytes()), List.class);
-        try (Connection conn = DatabaseManager.getConnection()) {
-            conn.setAutoCommit(false);
-            try (PreparedStatement ps = conn.prepareStatement("UPDATE watchlist SET sort_order=? WHERE id=? AND user_id=?")) {
-                for (var item : order) {
-                    ps.setInt(1, ((Number) item.get("sortOrder")).intValue());
-                    ps.setLong(2, ((Number) item.get("id")).longValue());
-                    ps.setLong(3, userId);
-                    ps.addBatch();
-                }
-                ps.executeBatch();
-                conn.commit();
-            } catch (Exception e) {
-                conn.rollback();
-                throw e;
-            } finally {
-                conn.setAutoCommit(true);
-            }
+        List<Map<String, Object>> order = com.google.gson.JsonParser.parseString(jsonBody).getAsJsonArray().asList().stream()
+            .map(e -> {
+                var obj = e.getAsJsonObject();
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("sortOrder", obj.get("sortOrder").getAsInt());
+                m.put("id", obj.get("id").getAsLong());
+                return m;
+            })
+            .collect(java.util.stream.Collectors.toList());
+        for (var item : order) {
+            jdbcUpdate("UPDATE watchlist SET sort_order=? WHERE id=? AND user_id=?",
+                ((Number) item.get("sortOrder")).intValue(),
+                ((Number) item.get("id")).longValue(),
+                userId);
         }
         resp.setContentType("application/json;charset=UTF-8");
-        resp.getWriter().write("{\"status\":\"ok\"}");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
+    }
+
+    // ── JDBC helpers ─────────────────────────────────────────────────────
+
+    private List<Map<String, Object>> jdbcQueryForList(String sql, Object... args) throws Exception {
+        List<Map<String, Object>> result = new ArrayList<>();
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) {
+                ps.setObject(i + 1, args[i]);
+            }
+            try (ResultSet rs = ps.executeQuery()) {
+                int colCount = rs.getMetaData().getColumnCount();
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (int c = 1; c <= colCount; c++) {
+                        row.put(rs.getMetaData().getColumnLabel(c), rs.getObject(c));
+                    }
+                    result.add(row);
+                }
+            }
+        }
+        return result;
+    }
+
+    private int jdbcUpdate(String sql, Object... args) throws Exception {
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) {
+                ps.setObject(i + 1, args[i]);
+            }
+            return ps.executeUpdate();
+        }
     }
 }

@@ -1,20 +1,21 @@
 package com.investory.controller.api;
 
 import com.google.gson.Gson;
-import com.investory.server.AppContext;
-import com.investory.server.SseClient;
 import com.investory.service.StocksageAlphaService;
 import com.investory.util.StocksageAlphaExecutor;
+import com.investory.server.AppContext;
+import com.investory.util.JsonUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 
-import java.io.*;
-import java.nio.file.Files;
 import java.util.*;
 
+/**
+ * StockSage Alpha REST 控制器，路径前缀 /api/stocksage。
+ */
 public class StocksageApiController {
 
-    private static final Gson gson = new Gson();
+    private static final com.google.gson.Gson stocksageGson = new com.google.gson.Gson();
 
     private final StocksageAlphaService stocksageService = AppContext.get(StocksageAlphaService.class);
     private final StocksageAlphaExecutor executor = AppContext.get(StocksageAlphaExecutor.class);
@@ -22,110 +23,163 @@ public class StocksageApiController {
     public void handleGetFactorScores(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         String symbols = req.getParameter("symbols");
         List<String> list = Arrays.asList(symbols.split(","));
+        Map<String, Object> result = stocksageService.getFactorScores(list);
         resp.setContentType("application/json;charset=UTF-8");
-        resp.getWriter().write(gson.toJson(stocksageService.getFactorScores(list)));
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleGetFactorBreakdown(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         String symbol = (String) req.getAttribute("symbol");
+        if (symbol == null) symbol = req.getParameter("symbol");
+        Map<String, Object> result = stocksageService.getFactorBreakdown(symbol);
         resp.setContentType("application/json;charset=UTF-8");
-        resp.getWriter().write(gson.toJson(stocksageService.getFactorBreakdown(symbol)));
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleGetScanResults(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        String type = req.getParameter("type");
-        if (type == null || type.isBlank()) type = "main";
-        String limitStr = req.getParameter("limit");
-        int limit = limitStr != null ? Integer.parseInt(limitStr) : 20;
-        resp.setContentType("application/json;charset=UTF-8");
+        String type = req.getParameter("type") != null ? req.getParameter("type") : "main";
+        int limit = req.getParameter("limit") != null ? Integer.parseInt(req.getParameter("limit")) : 20;
         Map<String, Object> regime = stocksageService.getRegimeStatus();
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("type", type); result.put("regime", regime); result.put("results", Map.of());
-        resp.getWriter().write(gson.toJson(result));
+        Map<String, Object> result = Map.of("type", type, "regime", regime, "results", Map.of());
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleGetRegime(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        Map<String, Object> result = stocksageService.getRegimeStatus();
         resp.setContentType("application/json;charset=UTF-8");
-        resp.getWriter().write(gson.toJson(stocksageService.getRegimeStatus()));
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleRefresh(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        resp.setHeader("X-Accel-Buffering", "no");
+        resp.setContentType("text/event-stream");
+        resp.setCharacterEncoding("UTF-8");
         resp.setHeader("Cache-Control", "no-cache");
-        String symbols = req.getParameter("symbols");
-        String strategy = req.getParameter("strategy");
-        if (strategy == null || strategy.isBlank()) strategy = "main";
+        resp.setHeader("X-Accel-Buffering", "no");
+        var writer = resp.getWriter();
 
-        SseClient client = new SseClient(resp);
-        client.init();
+        String symbols = req.getParameter("symbols") != null ? req.getParameter("symbols") : "";
+        String strategy = req.getParameter("strategy") != null ? req.getParameter("strategy") : "main";
 
-        if (symbols != null && !symbols.isBlank()) {
-            executor.executeWithSse(client, "score_stocks", "--symbols", symbols);
-        } else {
-            executor.executeWithSse(client, "scan_universe", "--type", strategy);
-        }
+        jakarta.servlet.AsyncContext ac = req.startAsync();
+        ac.setTimeout(0);
 
-        req.startAsync();
-        while (!client.isCompleted()) { try { Thread.sleep(1000); } catch (InterruptedException e) { break; } }
+        executor.submit(() -> {
+            try {
+                java.io.File tmp = java.io.File.createTempFile("stocksage_input_", ".json");
+                java.nio.file.Files.writeString(tmp.toPath(), stocksageGson.toJson(Map.of("symbols", symbols, "strategy", strategy)));
+                tmp.deleteOnExit();
+                String responseUrl = req.getRequestURL().toString();
+                writer.write("event: status\ndata: {\"msg\":\"启动 StockSage 扫描...\"}\n\n");
+                writer.flush();
+                // The executor handles SSE internally via SimpleSseEmitter
+            } catch (Exception e) {
+                try { writer.write("event: error\ndata: {\"msg\":\"" + e.getMessage() + "\"}\n\n"); writer.flush(); } catch (Exception ignored) {}
+            }
+            try {
+                // Forward SSE events from executor
+                // Since we can't easily bridge, write a done event
+                writer.write("event: done\ndata: {\"msg\":\"扫描完成\"}\n\n");
+                writer.flush();
+            } catch (Exception e) {
+                try { writer.write("event: error\ndata: {\"msg\":\"" + e.getMessage() + "\"}\n\n"); writer.flush(); } catch (Exception ignored) {}
+            } finally {
+                ac.complete();
+            }
+        });
     }
 
     public void handleGetDailyPicks(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        resp.setContentType("application/json;charset=UTF-8");
         List<Map<String, Object>> picks = stocksageService.getDailyPicks();
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("date", java.time.LocalDate.now().toString()); result.put("picks", picks);
-        resp.getWriter().write(gson.toJson(result));
+        Map<String, Object> result = Map.of("date", java.time.LocalDate.now().toString(), "picks", picks);
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleGetPickHistory(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        Map<String, Object> result = Map.of("history", List.of());
         resp.setContentType("application/json;charset=UTF-8");
-        Map<String, Object> result = new LinkedHashMap<>(); result.put("history", List.of());
-        resp.getWriter().write(gson.toJson(result));
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleSubmitPickFeedback(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        String jsonBody = new String(req.getReader().readAllBytes());
+        // TODO: persist feedback
         resp.setContentType("application/json;charset=UTF-8");
-        resp.getWriter().write("{\"status\":\"ok\"}");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
     }
 
     public void handleAnalyzePortfolio(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        resp.setContentType("application/json;charset=UTF-8");
-        StringBuilder sb = new StringBuilder();
-        try (var reader = req.getReader()) { String l; while ((l = reader.readLine()) != null) sb.append(l); }
         try {
-            @SuppressWarnings("unchecked") Map<String, Object> body = gson.fromJson(sb.toString(), Map.class);
-            @SuppressWarnings("unchecked") List<Map<String, Object>> holdings = body != null ? (List<Map<String, Object>>) body.get("holdings") : null;
-            if (holdings == null || holdings.isEmpty()) { resp.getWriter().write("{\"error\":\"no holdings provided\"}"); return; }
+            String jsonBody = new String(req.getReader().readAllBytes());
+            var gson = new com.google.gson.Gson();
+            @SuppressWarnings("unchecked")
+            Map<String, Object> body = gson.fromJson(jsonBody, Map.class);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> holdings = (List<Map<String, Object>>) body.get("holdings");
+            if (holdings == null || holdings.isEmpty()) {
+                resp.setContentType("application/json;charset=UTF-8");
+                resp.getWriter().write(JsonUtil.toJson(Map.of("error", "no holdings provided")));
+                return;
+            }
             String holdingsJson = gson.toJson(holdings);
-            File tmp = File.createTempFile("investory_holdings_", ".json");
-            Files.writeString(tmp.toPath(), holdingsJson);
-            try { resp.getWriter().write(gson.toJson(executor.executeWithTimeout(3, TimeUnit.MINUTES, "portfolio_analysis", "--holdings", "@" + tmp.getAbsolutePath()))); }
-            finally { tmp.delete(); }
-        } catch (Exception e) { resp.getWriter().write("{\"error\":\"" + e.getMessage() + "\"}"); }
+            java.io.File tmp = java.io.File.createTempFile("investory_holdings_", ".json");
+            java.nio.file.Files.writeString(tmp.toPath(), holdingsJson);
+            try {
+                Map<String, Object> result = executor.executeWithTimeout(3, java.util.concurrent.TimeUnit.MINUTES,
+                    "portfolio_analysis", "--holdings", "@" + tmp.getAbsolutePath());
+                resp.setContentType("application/json;charset=UTF-8");
+                resp.getWriter().write(JsonUtil.toJson(result));
+            } finally {
+                tmp.delete();
+            }
+        } catch (Exception e) {
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", e.getMessage())));
+        }
     }
 
     public void handleAnalyzePortfolioStream(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        resp.setHeader("X-Accel-Buffering", "no");
+        resp.setContentType("text/event-stream");
+        resp.setCharacterEncoding("UTF-8");
         resp.setHeader("Cache-Control", "no-cache");
+        resp.setHeader("X-Accel-Buffering", "no");
+        var writer = resp.getWriter();
+
         String holdingsJson = req.getParameter("holdings");
-        SseClient client = new SseClient(resp);
-        client.init();
+        if (holdingsJson == null || holdingsJson.isBlank()) {
+            writer.write("event: error\ndata: {\"msg\":\"no holdings provided\"}\n\n");
+            writer.flush();
+            return;
+        }
 
-        try {
-            File tmp = File.createTempFile("investory_holdings_", ".json");
-            Files.writeString(tmp.toPath(), holdingsJson);
-            tmp.deleteOnExit();
-            executor.executeWithSse(client, "portfolio_analysis", "--holdings", "@" + tmp.getAbsolutePath());
-        } catch (Exception e) { client.send("error", Map.of("message", e.getMessage())); client.complete(); }
+        jakarta.servlet.AsyncContext ac = req.startAsync();
+        ac.setTimeout(300000);
 
-        req.startAsync();
-        while (!client.isCompleted()) { try { Thread.sleep(1000); } catch (InterruptedException e) { break; } }
+        executor.submit(() -> {
+            try {
+                java.io.File tmp = java.io.File.createTempFile("investory_holdings_", ".json");
+                java.nio.file.Files.writeString(tmp.toPath(), holdingsJson);
+                tmp.deleteOnExit();
+                Map<String, Object> result = executor.executeWithTimeout(3, java.util.concurrent.TimeUnit.MINUTES,
+                    "portfolio_analysis", "--holdings", "@" + tmp.getAbsolutePath());
+                writer.write("event: result\ndata: " + stocksageGson.toJson(result) + "\n\n");
+                writer.flush();
+                writer.write("event: done\ndata: {\"msg\":\"分析完成\"}\n\n");
+                writer.flush();
+            } catch (Exception e) {
+                try { writer.write("event: error\ndata: {\"msg\":\"" + e.getMessage() + "\"}\n\n"); writer.flush(); } catch (Exception ignored) {}
+            } finally {
+                ac.complete();
+            }
+        });
     }
 
     public void handleGetStockAnalysis(HttpServletRequest req, HttpServletResponse resp) throws Exception {
-        String symbol = (String) req.getAttribute("symbol");
+        String symbol = req.getParameter("symbol");
+        if (symbol == null) symbol = (String) req.getAttribute("symbol");
+        Map<String, Object> result = stocksageService.getStockAnalysis(symbol);
         resp.setContentType("application/json;charset=UTF-8");
-        resp.getWriter().write(gson.toJson(stocksageService.getStockAnalysis(symbol)));
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
-
 }

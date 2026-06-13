@@ -4,7 +4,7 @@ import { usePortfolioPreload } from '@/hooks/use-portfolio-preload'
 import { useMorningGreeting } from '@/hooks/use-morning-greeting'
 import { useT } from '@/i18n/I18nContext'
 import LangSwitcher from '@/components/LangSwitcher'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
   LogOut, TrendingUp, User, Search, Menu, Shield, FlaskConical
@@ -132,10 +132,13 @@ export default function Layout() {
           className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:text-red-400 hover:bg-slate-800/50 transition-colors mt-0.5" >
           <LogOut className="w-4 h-4" />{lang === 'zh' ? '退出' : 'Logout'}
         </NavLink>
-        <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer"
-          className="block text-center text-[10px] text-slate-600 hover:text-slate-500 transition-colors mt-2 pt-2 border-t border-slate-800/50">
-          浙ICP备2026040257号-1
-        </a>
+        <div className="mt-2 pt-2 border-t border-slate-800/50 text-center">
+          <div className="text-[10px] text-slate-600 tabular-nums">v{__APP_VERSION__}</div>
+          <a href="https://beian.miit.gov.cn" target="_blank" rel="noopener noreferrer"
+            className="block text-[10px] text-slate-600 hover:text-slate-500 transition-colors mt-0.5">
+            浙ICP备2026040257号-1
+          </a>
+        </div>
       </div>
     </aside>
   )
@@ -168,17 +171,29 @@ export default function Layout() {
               onFocus={() => results.length > 0 && setShowDropdown(true)}
               placeholder={lang === 'zh' ? '搜索股票...' : 'Search stocks...'}
               className="w-full h-9 lg:h-10 pl-9 lg:pl-10 pr-3 rounded-xl border border-slate-200 bg-slate-50 text-sm placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/5 focus:border-slate-300 transition-colors" />
-            {showDropdown && results.length > 0 && (
-              <div className="absolute top-full mt-1 w-full bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden z-50">
-                {results.map((s) => (
-                  <a key={s.id} href={`${import.meta.env.BASE_URL}stock?symbol=${encodeURIComponent(s.symbol)}`}
-                    className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors">
-                    <span className="text-sm font-medium text-slate-900 truncate">{s.name}</span>
-                    <span className="text-xs text-slate-400 shrink-0 ml-2">{displaySymbol(s.symbol, s.market)}</span>
-                  </a>
-                ))}
-              </div>
-            )}
+            <AnimatePresence>
+              {showDropdown && results.length > 0 && (
+                <motion.div
+                  initial={{ clipPath: 'inset(0 0 100% 0)', opacity: 0 }}
+                  animate={{ clipPath: 'inset(0)', opacity: 1 }}
+                  exit={{ clipPath: 'inset(0 0 100% 0)', opacity: 0 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                  className="absolute top-full mt-1 w-full bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden z-50">
+                  {results.map((s, i) => (
+                    <motion.a
+                      key={s.id}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: i * 0.04, type: 'spring', stiffness: 400, damping: 30 }}
+                      href={`${import.meta.env.BASE_URL}stock?symbol=${encodeURIComponent(s.symbol)}`}
+                      className="flex items-center justify-between px-4 py-2.5 hover:bg-slate-50 transition-colors">
+                      <span className="text-sm font-medium text-slate-900 truncate">{s.name}</span>
+                      <span className="text-xs text-slate-400 shrink-0 ml-2">{displaySymbol(s.symbol, s.market)}</span>
+                    </motion.a>
+                  ))}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
           <LangSwitcher />
         </header>

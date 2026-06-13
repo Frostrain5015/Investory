@@ -25,13 +25,8 @@ import java.sql.Connection;
  */
 public class AuthService {
 
-    private final UserDao userDao;
-    private final PortfolioDao portfolioDao;
-
-    public AuthService() {
-        this.userDao = AppContext.get(UserDao.class);
-        this.portfolioDao = AppContext.get(PortfolioDao.class);
-    }
+    private final UserDao userDao = AppContext.get(UserDao.class);
+    private final PortfolioDao portfolioDao = AppContext.get(PortfolioDao.class);
 
     /**
      * 注册新用户，并自动为其创建一个默认投资组合。
@@ -56,16 +51,16 @@ public class AuthService {
         if (password == null || password.length() < 6) return "密码至少6位";
         if (userDao.usernameExists(username)) return "用户名已被使用";
 
-        // 第2步：构建用户对象，使用 BCrypt 对明文密码加盐哈希后存储
-        User user = new User();
-        user.setUsername(username.trim());
-        user.setPasswordHash(BCrypt.hashpw(password, BCrypt.gensalt()));
-        user.setEmail(email != null ? email.trim() : null);
-
         Connection conn = null;
         try {
             conn = DatabaseManager.getConnection();
             conn.setAutoCommit(false);
+
+            // 第2步：构建用户对象，使用 BCrypt 对明文密码加盐哈希后存储
+            User user = new User();
+            user.setUsername(username.trim());
+            user.setPasswordHash(BCrypt.hashpw(password, BCrypt.gensalt()));
+            user.setEmail(email != null ? email.trim() : null);
 
             // 第3步：将用户写入数据库，获取自增主键
             long userId = userDao.insert(user);
@@ -79,10 +74,14 @@ public class AuthService {
             conn.commit();
             return null;
         } catch (Exception e) {
-            try { if (conn != null) conn.rollback(); } catch (Exception ignored) {}
+            if (conn != null) {
+                try { conn.rollback(); } catch (Exception ignored) {}
+            }
             throw new RuntimeException("注册失败", e);
         } finally {
-            try { if (conn != null) { conn.setAutoCommit(true); conn.close(); } } catch (Exception ignored) {}
+            if (conn != null) {
+                try { conn.setAutoCommit(true); conn.close(); } catch (Exception ignored) {}
+            }
         }
     }
 
@@ -90,6 +89,7 @@ public class AuthService {
      * 用户登录校验。
      *
      * <p>先按用户名查找用户，再用 BCrypt 校验明文密码与数据库哈希是否匹配。
+     * BCrypt 内部包含盐值，无需调用方单独处理。
      *
      * @param username 用户名
      * @param password 明文密码
@@ -98,19 +98,24 @@ public class AuthService {
     public User login(String username, String password) {
         if (username == null || password == null) return null;
 
+        // 第1步：按用户名查找用户（不区分大小写由 DAO 层决定）
         User user = userDao.findByUsername(username.trim());
         if (user == null) return null;
 
+        // 第2步：BCrypt 校验明文密码与存储的哈希值是否匹配
         return BCrypt.checkpw(password, user.getPasswordHash()) ? user : null;
     }
 
     /**
      * 修改用户密码。
      *
+     * <p>必须先通过旧密码校验，才能将新密码持久化。新密码同样经过 BCrypt 加盐哈希后存储。
+     *
      * @param userId      用户 ID
-     * @param oldPassword 当前（旧）明文密码
+     * @param oldPassword 当前（旧）明文密码，用于身份验证
      * @param newPassword 新明文密码（长度 ≥ 6）
-     * @return {@code true} 表示修改成功
+     * @return {@code true} 表示修改成功；以下情况返回 {@code false}：
+     *         新密码不满足长度要求、用户 ID 不存在、旧密码校验失败
      */
     public boolean changePassword(long userId, String oldPassword, String newPassword) {
         if (newPassword == null || newPassword.length() < 6) return false;

@@ -3,12 +3,24 @@ package com.investory.controller.api;
 import com.investory.crawler.RealtimeQuoteService;
 import com.investory.dao.*;
 import com.investory.model.*;
-import com.investory.server.AppContext;
+import com.investory.model.Quote;
 import com.investory.service.*;
+import com.investory.server.AppContext;
 import com.investory.util.JsonUtil;
 import jakarta.servlet.http.*;
+import java.math.BigDecimal;
 import java.util.*;
 
+/**
+ * 股票行情与持仓快照控制器
+ *
+ * <p>负责模块：当前持仓列表查询、历史已平仓头寸查询、
+ *   个股详情（含实时报价）、单只股票/全组合行情刷新。
+ * <p>API 基础路径：/api
+ *
+ * <p>所有接口均从 HttpSession 中隐式读取当前用户的 portfolioId，
+ * 无需在请求参数中显式传递，确保数据隔离。
+ */
 public class StockController {
 
     private final StockDao stockDao = AppContext.get(StockDao.class);
@@ -27,71 +39,75 @@ public class StockController {
     }
 
     public void handleHoldings(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        Map<String, Object> result = Map.of("snapshots", holdingService.getSnapshots(getPortfolioId(req)));
         resp.setContentType("application/json;charset=UTF-8");
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("snapshots", holdingService.getSnapshots(getPortfolioId(req)));
         resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleClosedPositions(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+        List<Map<String, Object>> result = analysisService.getClosedPositions(getPortfolioId(req));
         resp.setContentType("application/json;charset=UTF-8");
-        resp.getWriter().write(JsonUtil.toJson(analysisService.getClosedPositions(getPortfolioId(req))));
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleDetail(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long pid = getPortfolioId(req);
         String symbol = (String) req.getAttribute("symbol");
-        resp.setContentType("application/json;charset=UTF-8");
         if (pid == 0) {
-            resp.getWriter().write("{\"error\":\"No portfolio\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "No portfolio")));
             return;
         }
         Stock stock = stockDao.findBySymbol(symbol);
         if (stock == null) {
-            resp.getWriter().write("{\"error\":\"Stock not found\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "Stock not found")));
             return;
         }
         Map<String, Object> r = new LinkedHashMap<>();
-        r.put("stock", stock);
-        r.put("holding", holdingDao.findByPortfolioAndStock(pid, stock.getId()));
+        r.put("stock", stock); r.put("holding", holdingDao.findByPortfolioAndStock(pid, stock.getId()));
         r.put("transactions", transactionDao.findByPortfolioAndStock(pid, stock.getId()));
         r.put("dividends", dividendDao.findByPortfolioAndStock(pid, stock.getId()));
         Quote q = quoteService.getQuote(stock);
         r.put("livePrice", q != null ? q.price() : null);
         r.put("livePriceTs", q != null ? q.fetchedAt().toString() : (stockPriceDao.findLatest(stock.getId()) != null ? stockPriceDao.findLatest(stock.getId()).getTradeDate().toString() : null));
+        resp.setContentType("application/json;charset=UTF-8");
         resp.getWriter().write(JsonUtil.toJson(r));
     }
 
     public void handleQuote(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         String symbol = (String) req.getAttribute("symbol");
-        resp.setContentType("application/json;charset=UTF-8");
         Stock stock = stockDao.findBySymbol(symbol);
         if (stock == null) {
-            resp.getWriter().write("{\"error\":\"Stock not found\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "Stock not found")));
             return;
         }
-        java.math.BigDecimal price = quoteService.getPrice(stock);
-        java.math.BigDecimal cached = stockPriceDao.findLatestClose(stock.getId());
-        resp.getWriter().write(JsonUtil.toJson(Map.of("symbol", symbol, "price", price != null ? price : cached, "live", price != null)));
+        BigDecimal price = quoteService.getPrice(stock);
+        BigDecimal cached = stockPriceDao.findLatestClose(stock.getId());
+        Map<String, Object> result = Map.of("symbol", symbol, "price", price != null ? price : cached, "live", price != null);
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleRefresh(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         String symbol = (String) req.getAttribute("symbol");
-        resp.setContentType("application/json;charset=UTF-8");
         Stock stock = stockDao.findBySymbol(symbol);
         if (stock == null) {
-            resp.getWriter().write("{\"error\":\"Stock not found\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "Stock not found")));
             return;
         }
         quoteService.getPrice(stock);
-        resp.getWriter().write("{\"status\":\"ok\"}");
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
     }
 
     public void handleRefreshPortfolio(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long pid = getPortfolioId(req);
-        resp.setContentType("application/json;charset=UTF-8");
         if (pid == 0) {
-            resp.getWriter().write("{\"error\":\"No portfolio\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "No portfolio")));
             return;
         }
         List<HoldingSnapshot> snaps = holdingService.getSnapshots(pid);
@@ -99,6 +115,7 @@ public class StockController {
             Stock s = stockDao.findBySymbol(snap.getStockSymbol());
             if (s != null) quoteService.getPrice(s);
         }
-        resp.getWriter().write("{\"status\":\"ok\",\"count\":\"" + snaps.size() + "\"}");
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok", "count", String.valueOf(snaps.size()))));
     }
 }

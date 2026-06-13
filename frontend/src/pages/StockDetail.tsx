@@ -7,6 +7,7 @@ import { useT } from '@/i18n/I18nContext'
 import type { StockDetailResponse, Transaction, Dividend, PriceData, HoldingCorrelation } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot, Legend, Line } from 'recharts'
+import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent'
 import { displaySymbol, fmtPriceTs } from '@/lib/format'
 
 export default function StockDetail() {
@@ -55,7 +56,7 @@ export default function StockDetail() {
         const bm = rawPrices.benchmark
         if (bm && bm.length > 0) {
           const bmName = BENCHMARKS[stock?.market || '']?.find(b => b.symbol === benchmark)?.name || benchmark
-          setBmData(bm.map((d: any) => ({ date: d.date, base100: d.base100, bmBase100: d.bmBase100, bmName })))
+          setBmData(bm.map((d) => ({ date: d.date, base100: d.base100, bmBase100: d.bmBase100, bmName })))
         } else {
           setBmData(null)
         }
@@ -63,8 +64,8 @@ export default function StockDetail() {
     }).finally(() => setLoading(false))
     // Check watchlist status
     fetch(`${BASE}/api/watchlist`, { credentials: 'include' })
-      .then(r => r.json()).then((list: any[]) => {
-        const found = list.find((w: any) => w.symbol === symbol)
+      .then(r => r.json() as Promise<{ id: number; symbol: string }[]>).then((list) => {
+        const found = list.find((w) => w.symbol === symbol)
         if (found) { setWatching(true); setWatchId(found.id) }
       }).catch(() => {})
     // Holdings correlation
@@ -268,7 +269,7 @@ export default function StockDetail() {
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={(bmData || priceData) as any}>
+            <AreaChart data={(bmData || priceData) as Record<string, unknown>[]}>
               {!bmData ? (
                 <>
                   <defs>
@@ -286,7 +287,7 @@ export default function StockDetail() {
                     <ReferenceLine y={Number(holding.dilutedCost)} stroke="#0ea5e9" strokeDasharray="6 4" strokeWidth={1.5}
                       label={{ value: `${t.stockDetail.dilutedLabel} ${Number(holding.dilutedCost).toFixed(2)}`, position: 'insideTopRight', fontSize: 11, fill: '#0ea5e9' }} />
                   )}
-                  <Tooltip formatter={(value: any) => [
+                  <Tooltip formatter={(value: ValueType | undefined) => [
                     Number(value).toFixed(2), stock?.name || ''
                   ]} />
                   <Area type="monotone" dataKey="close" stroke={chartColor} fill="url(#colorPrice)" strokeWidth={2} />
@@ -316,11 +317,11 @@ export default function StockDetail() {
                   <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8"
                     label={{ value: t.stockDetail.base100, angle: -90, position: 'insideLeft', fontSize: 10, fill: '#94a3b8' }}
                     domain={['auto', 'auto']} />
-                  <Tooltip formatter={(value: any, name: any) => {
+                  <Tooltip formatter={(value: ValueType | undefined, name: NameType | undefined) => {
                     const v = Number(value)
                     if (name === 'base100') return [v.toFixed(2), stock?.name || 'Stock']
                     if (name === 'bmBase100') return [v.toFixed(2), bmData?.[0]?.bmName || 'BM']
-                    return [v, name]
+                    return [String(v), name ?? '']
                   }} />
                   <Legend />
                   <defs>

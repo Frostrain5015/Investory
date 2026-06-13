@@ -12,6 +12,9 @@ import Modal, { ModalRow } from '@/components/Modal'
 import { BASE, aiListModels, getMcpTokens, revokeMcpToken, type McpTokenInfo } from '@/services/api'
 import { motion } from 'framer-motion'
 
+// Frost ID 账户管理中心（云端已迁移至 frostrain.tech 域名）
+const FROST_ID_URL = 'https://frostrain.tech/dashboard/account'
+
 // ── Primitives ──────────────────────────────────────────────────────────
 
 function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
@@ -244,8 +247,14 @@ export default function Settings() {
           />
 
           <motion.a
-            href="https://116.62.179.231:4443/dashboard/account"
+            href={FROST_ID_URL}
             target="_blank" rel="noopener noreferrer"
+            onClick={(e) => {
+              if (window.electronAPI?.isDesktop) {
+                e.preventDefault()
+                window.electronAPI.openExternal(FROST_ID_URL)
+              }
+            }}
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.32, duration: 0.3, ease: 'easeOut' }}

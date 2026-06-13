@@ -2,16 +2,25 @@ package com.investory.controller.api;
 
 import com.investory.dao.*;
 import com.investory.model.*;
+import com.investory.service.*;
 import com.investory.server.AppContext;
 import com.investory.server.DatabaseManager;
-import com.investory.service.*;
 import com.investory.util.JsonUtil;
 import jakarta.servlet.http.*;
 import java.math.BigDecimal;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.time.LocalDate;
 import java.util.*;
 
+/**
+ * 交易记录管理控制器
+ *
+ * <p>负责模块：交易流水（买入/卖出/资金划转）与股息的增删改查，
+ *   同时维护现金余额（cash_balances）的变更，确保每笔操作后账户余额准确。
+ * <p>API 基础路径：/api
+ */
 public class TransactionController {
 
     private final TransactionDao transactionDao = AppContext.get(TransactionDao.class);
@@ -29,7 +38,6 @@ public class TransactionController {
 
     public void handleList(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long pid = getPortfolioId(req);
-        resp.setContentType("application/json;charset=UTF-8");
         List<Map<String, Object>> list = new ArrayList<>();
         for (Transaction t : transactionDao.findByPortfolio(pid)) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -49,16 +57,17 @@ public class TransactionController {
             list.add(m);
         }
         list.sort((a, b) -> ((String) b.get("date")).compareTo((String) a.get("date")));
+        resp.setContentType("application/json;charset=UTF-8");
         resp.getWriter().write(JsonUtil.toJson(list));
     }
 
     public void handleGetOne(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long pid = getPortfolioId(req);
         long id = Long.parseLong((String) req.getAttribute("id"));
-        resp.setContentType("application/json;charset=UTF-8");
         Transaction t = transactionDao.findById(id);
         if (t == null || t.getPortfolioId() != pid) {
-            resp.getWriter().write("{\"error\":\"Not found\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "Not found")));
             return;
         }
         String cur = "CNY";
@@ -71,71 +80,60 @@ public class TransactionController {
         m.put("currency", cur); m.put("date", t.getTradeDate().toString()); m.put("type", t.getType());
         m.put("shares", t.getShares()); m.put("price", t.getPrice()); m.put("fee", t.getFee());
         m.put("note", t.getNote());
+        resp.setContentType("application/json;charset=UTF-8");
         resp.getWriter().write(JsonUtil.toJson(m));
     }
 
+    @SuppressWarnings("unchecked")
     public void handleCreate(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long pid = getPortfolioId(req);
         long stockId = Long.parseLong(req.getParameter("stockId"));
         String type = req.getParameter("type");
         BigDecimal shares = new BigDecimal(req.getParameter("shares"));
         BigDecimal price = new BigDecimal(req.getParameter("price"));
-        String feeStr = req.getParameter("fee");
+        String fee = req.getParameter("fee");
         String tradeDate = req.getParameter("tradeDate");
         String currency = req.getParameter("currency");
         String note = req.getParameter("note");
-        BigDecimal feeVal = (feeStr != null && !feeStr.isBlank()) ? new BigDecimal(feeStr) : BigDecimal.ZERO;
+
+        BigDecimal feeVal = (fee != null && !fee.isBlank()) ? new BigDecimal(fee) : BigDecimal.ZERO;
         if (currency == null || currency.isBlank()) currency = "CNY";
-        resp.setContentType("application/json;charset=UTF-8");
 
-        Connection conn = DatabaseManager.getConnection();
-        try {
-            conn.setAutoCommit(false);
-
-            if ("TRANSFER_IN".equals(type) || "TRANSFER_OUT".equals(type)) {
-                if ("TRANSFER_OUT".equals(type) && !checkCash(conn, pid, currency, shares)) {
-                    conn.rollback();
-                    resp.getWriter().write(JsonUtil.toJson(cashError(conn, pid, currency, shares)));
-                    return;
-                }
-                BigDecimal amount = "TRANSFER_IN".equals(type) ? shares : shares.negate();
-                try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?")) {
-                    ps.setLong(1, pid); ps.setString(2, currency); ps.setBigDecimal(3, amount); ps.setBigDecimal(4, amount);
-                    ps.executeUpdate();
-                }
-                Transaction t = buildTx(pid, null, type, shares, BigDecimal.ZERO, BigDecimal.ZERO, tradeDate, note);
-                t.setCurrency(currency);
-                long id = transactionDao.insert(t);
-                valueCalculator.backfillFrom(pid, LocalDate.parse(tradeDate));
-                conn.commit();
-                resp.getWriter().write("{\"id\":" + id + "}");
+        if ("TRANSFER_IN".equals(type) || "TRANSFER_OUT".equals(type)) {
+            if ("TRANSFER_OUT".equals(type) && !checkCash(pid, currency, shares)) {
+                resp.setContentType("application/json;charset=UTF-8");
+                resp.getWriter().write(JsonUtil.toJson(cashError(pid, currency, shares)));
                 return;
             }
-            Stock stock = stockDao.findById(stockId);
-            String cur = stock != null ? stock.getCurrency() : "CNY";
-            BigDecimal cost = "BUY".equals(type) ? shares.multiply(price).add(feeVal) : BigDecimal.ZERO;
-            if ("BUY".equals(type) && stock != null && !checkCash(conn, pid, cur, cost)) {
-                conn.rollback();
-                resp.getWriter().write(JsonUtil.toJson(cashError(conn, pid, cur, cost)));
-                return;
-            }
-            applyCash(conn, pid, cur, type, shares, price, feeVal);
-            Transaction t = buildTx(pid, stockId, type, shares, price, feeVal, tradeDate, note);
-            t.setCurrency(cur);
+            BigDecimal amount = "TRANSFER_IN".equals(type) ? shares : shares.negate();
+            jdbcUpdate("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?", pid, currency, amount, amount);
+            Transaction t = buildTx(pid, null, type, shares, BigDecimal.ZERO, BigDecimal.ZERO, tradeDate, note);
+            t.setCurrency(currency);
             long id = transactionDao.insert(t);
-            holdingService.rebuildHolding(pid, stockId);
-            if (stock != null) valueCalculator.backfillFrom(pid, LocalDate.parse(tradeDate), stockId, price, shares);
-            conn.commit();
-            resp.getWriter().write("{\"id\":" + id + "}");
-        } catch (Exception e) {
-            try { conn.rollback(); } catch (Exception ignored) {}
-            throw e;
-        } finally {
-            try { conn.setAutoCommit(true); conn.close(); } catch (Exception ignored) {}
+            valueCalculator.backfillFrom(pid, LocalDate.parse(tradeDate));
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("id", id)));
+            return;
         }
+        Stock stock = stockDao.findById(stockId);
+        String cur = stock != null ? stock.getCurrency() : "CNY";
+        BigDecimal cost = "BUY".equals(type) ? shares.multiply(price).add(feeVal) : BigDecimal.ZERO;
+        if ("BUY".equals(type) && stock != null && !checkCash(pid, cur, cost)) {
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(cashError(pid, cur, cost)));
+            return;
+        }
+        applyCash(pid, cur, type, shares, price, feeVal);
+        Transaction t = buildTx(pid, stockId, type, shares, price, feeVal, tradeDate, note);
+        t.setCurrency(cur);
+        long id = transactionDao.insert(t);
+        holdingService.rebuildHolding(pid, stockId);
+        if (stock != null) valueCalculator.backfillFrom(pid, LocalDate.parse(tradeDate), stockId, price, shares);
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("id", id)));
     }
 
+    @SuppressWarnings("unchecked")
     public void handleUpdate(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long pid = getPortfolioId(req);
         long id = Long.parseLong((String) req.getAttribute("id"));
@@ -143,89 +141,54 @@ public class TransactionController {
         String type = req.getParameter("type");
         BigDecimal shares = new BigDecimal(req.getParameter("shares"));
         BigDecimal price = new BigDecimal(req.getParameter("price"));
-        String feeStr = req.getParameter("fee");
+        String fee = req.getParameter("fee");
         String tradeDate = req.getParameter("tradeDate");
-        String currencyStr = req.getParameter("currency");
+        String currency = req.getParameter("currency");
         String note = req.getParameter("note");
-        BigDecimal feeVal = (feeStr != null && !feeStr.isBlank()) ? new BigDecimal(feeStr) : BigDecimal.ZERO;
-        resp.setContentType("application/json;charset=UTF-8");
 
+        BigDecimal feeVal = (fee != null && !fee.isBlank()) ? new BigDecimal(fee) : BigDecimal.ZERO;
         Transaction old = transactionDao.findById(id);
         if (old == null || old.getPortfolioId() != pid) {
-            resp.getWriter().write("{\"error\":\"Not found\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "Not found")));
             return;
         }
         LocalDate oldTradeDate = old.getTradeDate();
         LocalDate newTradeDate = LocalDate.parse(tradeDate);
         Long oldStockId = old.getStockId();
-        String cur = (currencyStr != null && !currencyStr.isBlank()) ? currencyStr : (stockId > 0 ? getCur(stockId) : "CNY");
-
-        Connection conn = DatabaseManager.getConnection();
-        try {
-            conn.setAutoCommit(false);
-            reverseCash(conn, pid, old);
-            if ("BUY".equals(type)) {
-                BigDecimal c = shares.multiply(price).add(feeVal);
-                if (!checkCash(conn, pid, cur, c)) {
-                    applyCash(conn, pid, cur, old.getType(), old.getShares(), old.getPrice(), old.getFee());
-                    conn.commit();
-                    resp.getWriter().write(JsonUtil.toJson(cashError(conn, pid, cur, c)));
-                    return;
-                }
-            }
-            if ("TRANSFER_OUT".equals(type) && !checkCash(conn, pid, cur, shares)) {
-                applyCash(conn, pid, cur, old.getType(), old.getShares(), old.getPrice(), old.getFee());
-                conn.commit();
-                resp.getWriter().write(JsonUtil.toJson(cashError(conn, pid, cur, shares)));
-                return;
-            }
-            applyCash(conn, pid, cur, type, shares, price, feeVal);
-            Transaction t = buildTx(pid, stockId, type, shares, price, feeVal, tradeDate, note);
-            t.setId(id); t.setCurrency(cur);
-            transactionDao.update(t);
-            if (stockId > 0) holdingService.rebuildHolding(pid, stockId);
-            if (oldStockId != null && oldStockId > 0 && oldStockId.longValue() != stockId) {
-                holdingService.rebuildHolding(pid, oldStockId);
-            }
-            LocalDate fromDate = oldTradeDate != null && oldTradeDate.isBefore(newTradeDate) ? oldTradeDate : newTradeDate;
-            valueCalculator.backfillFrom(pid, fromDate);
-            conn.commit();
-            resp.getWriter().write("{\"status\":\"ok\"}");
-        } catch (Exception e) {
-            try { conn.rollback(); } catch (Exception ignored) {}
-            throw e;
-        } finally {
-            try { conn.setAutoCommit(true); conn.close(); } catch (Exception ignored) {}
+        reverseCash(pid, old);
+        String cur = (currency != null && !currency.isBlank()) ? currency : (stockId > 0 ? getCur(stockId) : "CNY");
+        if ("BUY".equals(type)) { BigDecimal c = shares.multiply(price).add(feeVal); if (!checkCash(pid, cur, c)) { applyCashDirect(pid, old); resp.setContentType("application/json;charset=UTF-8"); resp.getWriter().write(JsonUtil.toJson(cashError(pid, cur, c))); return; } }
+        if ("TRANSFER_OUT".equals(type) && !checkCash(pid, cur, shares)) { applyCashDirect(pid, old); resp.setContentType("application/json;charset=UTF-8"); resp.getWriter().write(JsonUtil.toJson(cashError(pid, cur, shares))); return; }
+        applyCash(pid, cur, type, shares, price, feeVal);
+        Transaction t = buildTx(pid, stockId, type, shares, price, feeVal, tradeDate, note); t.setId(id); t.setCurrency(cur);
+        transactionDao.update(t);
+        if (stockId > 0) holdingService.rebuildHolding(pid, stockId);
+        if (oldStockId != null && oldStockId > 0 && oldStockId.longValue() != stockId) {
+            holdingService.rebuildHolding(pid, oldStockId);
         }
+        LocalDate fromDate = oldTradeDate != null && oldTradeDate.isBefore(newTradeDate) ? oldTradeDate : newTradeDate;
+        valueCalculator.backfillFrom(pid, fromDate);
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
     }
 
     public void handleDelete(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long pid = getPortfolioId(req);
         long id = Long.parseLong((String) req.getAttribute("id"));
+        transactionDao.findByPortfolio(pid).stream().filter(t -> t.getId() == id).findFirst().ifPresent(old -> {
+            try {
+                reverseCash(pid, old);
+                transactionDao.delete(id);
+                if (old.getStockId() != null && old.getStockId() > 0) holdingService.rebuildHolding(pid, old.getStockId());
+                if (old.getTradeDate() != null) valueCalculator.backfillFrom(pid, old.getTradeDate());
+            } catch (Exception e) { throw new RuntimeException(e); }
+        });
         resp.setContentType("application/json;charset=UTF-8");
-
-        Connection conn = DatabaseManager.getConnection();
-        try {
-            conn.setAutoCommit(false);
-            transactionDao.findByPortfolio(pid).stream().filter(t -> t.getId() == id).findFirst().ifPresent(old -> {
-                try {
-                    reverseCash(conn, pid, old);
-                    transactionDao.delete(id);
-                    if (old.getStockId() != null && old.getStockId() > 0) holdingService.rebuildHolding(pid, old.getStockId());
-                    if (old.getTradeDate() != null) valueCalculator.backfillFrom(pid, old.getTradeDate());
-                } catch (Exception e) { throw new RuntimeException(e); }
-            });
-            conn.commit();
-            resp.getWriter().write("{\"status\":\"ok\"}");
-        } catch (Exception e) {
-            try { conn.rollback(); } catch (Exception ignored) {}
-            throw e;
-        } finally {
-            try { conn.setAutoCommit(true); conn.close(); } catch (Exception ignored) {}
-        }
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", "ok")));
     }
 
-    // ── Private helpers ──────────────────────────────────────────────
+    // ── Private helpers ──
 
     private Transaction buildTx(long pid, Long sid, String type, BigDecimal sh, BigDecimal pr, BigDecimal fee, String date, String note) {
         Transaction t = new Transaction(); t.setPortfolioId(pid); t.setStockId(sid); t.setType(type);
@@ -234,86 +197,80 @@ public class TransactionController {
         return t;
     }
 
-    private boolean checkCash(Connection conn, long pid, String cur, BigDecimal need) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement("SELECT amount FROM cash_balances WHERE portfolio_id=? AND currency=?")) {
-            ps.setLong(1, pid); ps.setString(2, cur);
-            try (ResultSet rs = ps.executeQuery()) {
-                BigDecimal bal = rs.next() ? rs.getBigDecimal("amount") : BigDecimal.ZERO;
-                if (bal == null) bal = BigDecimal.ZERO;
-                return bal.compareTo(need) >= 0;
-            }
-        }
+    private boolean checkCash(long pid, String cur, BigDecimal need) throws Exception {
+        List<BigDecimal> rows = jdbcQueryForListSingle("SELECT amount FROM cash_balances WHERE portfolio_id=? AND currency=?", BigDecimal.class, pid, cur);
+        BigDecimal bal = rows.isEmpty() ? BigDecimal.ZERO : rows.get(0); if (bal == null) bal = BigDecimal.ZERO;
+        return bal.compareTo(need) >= 0;
     }
 
-    private Map<String, Object> cashError(Connection conn, long pid, String cur, BigDecimal need) {
-        BigDecimal bal = BigDecimal.ZERO;
-        try (PreparedStatement ps = conn.prepareStatement("SELECT amount FROM cash_balances WHERE portfolio_id=? AND currency=?")) {
-            ps.setLong(1, pid); ps.setString(2, cur);
-            try (ResultSet rs = ps.executeQuery()) {
-                if (rs.next()) bal = rs.getBigDecimal("amount");
-                if (bal == null) bal = BigDecimal.ZERO;
-            }
-        } catch (Exception ignored) {}
+    private Map<String, Object> cashError(long pid, String cur, BigDecimal need) throws Exception {
+        List<BigDecimal> rows = jdbcQueryForListSingle("SELECT amount FROM cash_balances WHERE portfolio_id=? AND currency=?", BigDecimal.class, pid, cur);
+        BigDecimal bal = rows.isEmpty() ? BigDecimal.ZERO : rows.get(0);
         Map<String, Object> err = new LinkedHashMap<>();
         err.put("error", "INSUFFICIENT_CASH"); err.put("balance", bal); err.put("required", need); err.put("currency", cur);
         return err;
     }
 
-    private void applyCash(Connection conn, long pid, String cur, String type, BigDecimal sh, BigDecimal pr, BigDecimal fee) throws SQLException {
-        if ("BUY".equals(type)) {
-            try (PreparedStatement ps = conn.prepareStatement("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?")) {
-                ps.setBigDecimal(1, sh.multiply(pr).add(fee)); ps.setLong(2, pid); ps.setString(3, cur);
-                ps.executeUpdate();
-            }
-        } else if ("SELL".equals(type)) {
-            try (PreparedStatement ps = conn.prepareStatement("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?")) {
-                BigDecimal amt = sh.multiply(pr).subtract(fee);
-                ps.setLong(1, pid); ps.setString(2, cur); ps.setBigDecimal(3, amt); ps.setBigDecimal(4, amt);
-                ps.executeUpdate();
-            }
-        } else if ("TRANSFER_IN".equals(type)) {
-            try (PreparedStatement ps = conn.prepareStatement("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?")) {
-                ps.setLong(1, pid); ps.setString(2, cur); ps.setBigDecimal(3, sh); ps.setBigDecimal(4, sh);
-                ps.executeUpdate();
-            }
-        } else if ("TRANSFER_OUT".equals(type)) {
-            try (PreparedStatement ps = conn.prepareStatement("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?")) {
-                ps.setBigDecimal(1, sh); ps.setLong(2, pid); ps.setString(3, cur);
-                ps.executeUpdate();
-            }
-        }
+    private void applyCash(long pid, String cur, String type, BigDecimal sh, BigDecimal pr, BigDecimal fee) throws Exception {
+        if ("BUY".equals(type)) jdbcUpdate("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?", sh.multiply(pr).add(fee), pid, cur);
+        else if ("SELL".equals(type)) jdbcUpdate("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?", pid, cur, sh.multiply(pr).subtract(fee), sh.multiply(pr).subtract(fee));
+        else if ("TRANSFER_IN".equals(type)) jdbcUpdate("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?", pid, cur, sh, sh);
+        else if ("TRANSFER_OUT".equals(type)) jdbcUpdate("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?", sh, pid, cur);
     }
 
-    private void reverseCash(Connection conn, long pid, Transaction old) throws SQLException {
+    private void reverseCash(long pid, Transaction old) throws Exception {
         String cur = old.getCurrency(); if (cur == null && old.getStockId() != null && old.getStockId() > 0) cur = getCur(old.getStockId()); if (cur == null) cur = "CNY";
-        if ("BUY".equals(old.getType())) {
-            try (PreparedStatement ps = conn.prepareStatement("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?")) {
-                BigDecimal amt = old.getShares().multiply(old.getPrice()).add(old.getFee());
-                ps.setLong(1, pid); ps.setString(2, cur); ps.setBigDecimal(3, amt); ps.setBigDecimal(4, amt);
-                ps.executeUpdate();
-            }
-        } else if ("SELL".equals(old.getType())) {
-            try (PreparedStatement ps = conn.prepareStatement("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?")) {
-                ps.setBigDecimal(1, old.getShares().multiply(old.getPrice()).subtract(old.getFee())); ps.setLong(2, pid); ps.setString(3, cur);
-                ps.executeUpdate();
-            }
-        } else if ("TRANSFER_IN".equals(old.getType())) {
-            try (PreparedStatement ps = conn.prepareStatement("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?")) {
-                ps.setBigDecimal(1, old.getShares()); ps.setLong(2, pid); ps.setString(3, cur);
-                ps.executeUpdate();
-            }
-        } else if ("TRANSFER_OUT".equals(old.getType())) {
-            try (PreparedStatement ps = conn.prepareStatement("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?")) {
-                ps.setLong(1, pid); ps.setString(2, cur); ps.setBigDecimal(3, old.getShares()); ps.setBigDecimal(4, old.getShares());
-                ps.executeUpdate();
-            }
-        }
+        if ("BUY".equals(old.getType())) jdbcUpdate("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?", pid, cur, old.getShares().multiply(old.getPrice()).add(old.getFee()), old.getShares().multiply(old.getPrice()).add(old.getFee()));
+        else if ("SELL".equals(old.getType())) jdbcUpdate("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?", old.getShares().multiply(old.getPrice()).subtract(old.getFee()), pid, cur);
+        else if ("TRANSFER_IN".equals(old.getType())) jdbcUpdate("UPDATE cash_balances SET amount = amount - ? WHERE portfolio_id=? AND currency=?", old.getShares(), pid, cur);
+        else if ("TRANSFER_OUT".equals(old.getType())) jdbcUpdate("INSERT INTO cash_balances (portfolio_id, currency, amount) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE amount = amount + ?", pid, cur, old.getShares(), old.getShares());
     }
 
-    private void applyCashDirect(Connection conn, long pid, Transaction t) throws SQLException {
+    private void applyCashDirect(long pid, Transaction t) throws Exception {
         String cur = t.getCurrency(); if (cur == null && t.getStockId() != null && t.getStockId() > 0) cur = getCur(t.getStockId()); if (cur == null) cur = "CNY";
-        applyCash(conn, pid, cur, t.getType(), t.getShares(), t.getPrice(), t.getFee());
+        applyCash(pid, cur, t.getType(), t.getShares(), t.getPrice(), t.getFee());
     }
 
     private String getCur(long sid) { Stock s = stockDao.findById(sid); return s != null ? s.getCurrency() : "CNY"; }
+
+    // ── JDBC helpers ─────────────────────────────────────────────────────
+
+    private List<Map<String, Object>> jdbcQueryForList(String sql, Object... args) throws Exception {
+        List<Map<String, Object>> result = new ArrayList<>();
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) ps.setObject(i + 1, args[i]);
+            try (ResultSet rs = ps.executeQuery()) {
+                int colCount = rs.getMetaData().getColumnCount();
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (int c = 1; c <= colCount; c++) row.put(rs.getMetaData().getColumnLabel(c), rs.getObject(c));
+                    result.add(row);
+                }
+            }
+        }
+        return result;
+    }
+
+    private <T> List<T> jdbcQueryForListSingle(String sql, Class<T> clazz, Object... args) throws Exception {
+        List<T> result = new ArrayList<>();
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) ps.setObject(i + 1, args[i]);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    result.add((T) rs.getObject(1));
+                }
+            }
+        }
+        return result;
+    }
+
+    private int jdbcUpdate(String sql, Object... args) throws Exception {
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            for (int i = 0; i < args.length; i++) ps.setObject(i + 1, args[i]);
+            return ps.executeUpdate();
+        }
+    }
 }

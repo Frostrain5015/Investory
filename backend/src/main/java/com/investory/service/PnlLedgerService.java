@@ -11,20 +11,16 @@ import java.math.RoundingMode;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Date;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.NavigableMap;
 
 public class PnlLedgerService {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO;
     private static final BigDecimal HUNDRED = new BigDecimal("100");
 
-    private final StockPriceDao stockPriceDao;
-
-    public PnlLedgerService() {
-        this.stockPriceDao = AppContext.get(StockPriceDao.class);
-    }
+    private final StockPriceDao stockPriceDao = AppContext.get(StockPriceDao.class);
 
     public List<DailyValue> calculateDailyValues(long portfolioId, LocalDate fromDate, LocalDate toDate) {
         Ledger ledger = buildLedger(portfolioId, fromDate, toDate);
@@ -205,52 +201,60 @@ public class PnlLedgerService {
     }
 
     private List<Tx> loadTransactions(long portfolioId, LocalDate endDate) {
-        String sql = """
-            SELECT id, stock_id, type, shares, price, fee, trade_date, currency
-            FROM transactions
-            WHERE portfolio_id = ? AND trade_date <= ?
-            ORDER BY trade_date, id
-            """;
-        List<Map<String, Object>> rows = query(sql, portfolioId, Date.valueOf(endDate));
         List<Tx> txs = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
-            Object stock = row.get("stock_id");
-            Object tradeDate = row.get("trade_date");
-            LocalDate td = tradeDate instanceof LocalDate ? (LocalDate) tradeDate
-                    : ((Date) tradeDate).toLocalDate();
-            txs.add(new Tx(
-                    ((Number) row.get("id")).longValue(),
-                    stock instanceof Number ? ((Number) stock).longValue() : null,
-                    Objects.toString(row.get("type"), ""),
-                    decimal(row.get("shares")),
-                    decimal(row.get("price")),
-                    decimal(row.get("fee")),
-                    text(row.get("currency"), "CNY"),
-                    td
-            ));
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                SELECT id, stock_id, type, shares, price, fee, trade_date, currency
+                FROM transactions
+                WHERE portfolio_id = ? AND trade_date <= ?
+                ORDER BY trade_date, id
+                """)) {
+            ps.setLong(1, portfolioId);
+            ps.setObject(2, endDate);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    Object stock = rs.getObject("stock_id");
+                    txs.add(new Tx(
+                            rs.getLong("id"),
+                            stock instanceof Number ? ((Number) stock).longValue() : null,
+                            Objects.toString(rs.getString("type"), ""),
+                            decimal(rs.getObject("shares")),
+                            decimal(rs.getObject("price")),
+                            decimal(rs.getObject("fee")),
+                            text(rs.getString("currency"), "CNY"),
+                            rs.getObject("trade_date", LocalDate.class)
+                    ));
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load transactions", e);
         }
         return txs;
     }
 
     private List<Div> loadDividends(long portfolioId, LocalDate endDate) {
-        String sql = """
-            SELECT id, stock_id, total_amount, record_date
-            FROM dividends
-            WHERE portfolio_id = ? AND record_date <= ?
-            ORDER BY record_date, id
-            """;
-        List<Map<String, Object>> rows = query(sql, portfolioId, Date.valueOf(endDate));
         List<Div> divs = new ArrayList<>();
-        for (Map<String, Object> row : rows) {
-            Object recordDate = row.get("record_date");
-            LocalDate rd = recordDate instanceof LocalDate ? (LocalDate) recordDate
-                    : ((Date) recordDate).toLocalDate();
-            divs.add(new Div(
-                    ((Number) row.get("id")).longValue(),
-                    ((Number) row.get("stock_id")).longValue(),
-                    decimal(row.get("total_amount")),
-                    rd
-            ));
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                SELECT id, stock_id, total_amount, record_date
+                FROM dividends
+                WHERE portfolio_id = ? AND record_date <= ?
+                ORDER BY record_date, id
+                """)) {
+            ps.setLong(1, portfolioId);
+            ps.setObject(2, endDate);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    divs.add(new Div(
+                            rs.getLong("id"),
+                            rs.getLong("stock_id"),
+                            decimal(rs.getObject("total_amount")),
+                            rs.getObject("record_date", LocalDate.class)
+                    ));
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load dividends", e);
         }
         return divs;
     }
@@ -259,13 +263,21 @@ public class PnlLedgerService {
         Set<Long> ids = new TreeSet<>();
         for (Tx tx : txs) if (tx.stockId != null) ids.add(tx.stockId);
         for (Div div : divs) ids.add(div.stockId);
-        for (Long id : ids) {
-            List<Map<String, Object>> rows = query("SELECT id, symbol, name, currency FROM stocks WHERE id = ?", id);
-            if (rows.isEmpty()) continue;
-            Map<String, Object> row = rows.get(0);
-            ledger.stockSymbols.put(id, Objects.toString(row.get("symbol"), ""));
-            ledger.stockNames.put(id, Objects.toString(row.get("name"), "Unknown"));
-            ledger.stockCurrencies.put(id, Objects.toString(row.get("currency"), "CNY"));
+        if (ids.isEmpty()) return;
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT id, symbol, name, currency FROM stocks WHERE id = ?")) {
+            for (Long id : ids) {
+                ps.setLong(1, id);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        ledger.stockSymbols.put(id, Objects.toString(rs.getString("symbol"), ""));
+                        ledger.stockNames.put(id, Objects.toString(rs.getString("name"), "Unknown"));
+                        ledger.stockCurrencies.put(id, Objects.toString(rs.getString("currency"), "CNY"));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to load stock metadata", e);
         }
     }
 
@@ -283,19 +295,53 @@ public class PnlLedgerService {
 
     private List<Map<String, Object>> periodEvents(long portfolioId, LocalDate start, LocalDate end) {
         List<Map<String, Object>> events = new ArrayList<>();
-        events.addAll(query("""
-            SELECT t.trade_date AS date, t.type, s.name AS stockName, t.shares, t.price
-            FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
-            WHERE t.portfolio_id = ? AND t.trade_date BETWEEN ? AND ?
-            ORDER BY t.trade_date, t.id
-            """, portfolioId, Date.valueOf(start), Date.valueOf(end)));
-        events.addAll(query("""
-            SELECT d.record_date AS date, 'DIV' AS type, s.name AS stockName,
-                   d.shares_held AS shares, d.amount_per_share AS price
-            FROM dividends d LEFT JOIN stocks s ON d.stock_id = s.id
-            WHERE d.portfolio_id = ? AND d.record_date BETWEEN ? AND ?
-            ORDER BY d.record_date, d.id
-            """, portfolioId, Date.valueOf(start), Date.valueOf(end)));
+        try (Connection conn = DatabaseManager.getConnection()) {
+            try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT t.trade_date AS date, t.type, s.name AS stockName, t.shares, t.price
+                FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
+                WHERE t.portfolio_id = ? AND t.trade_date BETWEEN ? AND ?
+                ORDER BY t.trade_date, t.id
+                """)) {
+                ps.setLong(1, portfolioId);
+                ps.setObject(2, start);
+                ps.setObject(3, end);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("date", rs.getObject("date"));
+                        row.put("type", rs.getString("type"));
+                        row.put("stockName", rs.getString("stockName"));
+                        row.put("shares", rs.getObject("shares"));
+                        row.put("price", rs.getObject("price"));
+                        events.add(row);
+                    }
+                }
+            }
+            try (PreparedStatement ps = conn.prepareStatement("""
+                SELECT d.record_date AS date, 'DIV' AS type, s.name AS stockName,
+                       d.shares_held AS shares, d.amount_per_share AS price
+                FROM dividends d LEFT JOIN stocks s ON d.stock_id = s.id
+                WHERE d.portfolio_id = ? AND d.record_date BETWEEN ? AND ?
+                ORDER BY d.record_date, d.id
+                """)) {
+                ps.setLong(1, portfolioId);
+                ps.setObject(2, start);
+                ps.setObject(3, end);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("date", rs.getObject("date"));
+                        row.put("type", rs.getString("type"));
+                        row.put("stockName", rs.getString("stockName"));
+                        row.put("shares", rs.getObject("shares"));
+                        row.put("price", rs.getObject("price"));
+                        events.add(row);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to query period events", e);
+        }
         events.sort(Comparator.comparing(e -> Objects.toString(e.get("date"), "")));
         return events;
     }
@@ -338,13 +384,16 @@ public class PnlLedgerService {
     private Map<String, BigDecimal> loadRates() {
         Map<String, BigDecimal> rates = new HashMap<>();
         rates.put("CNY", BigDecimal.ONE);
-        try {
-            for (Map<String, Object> row : query("SELECT currency, rate FROM exchange_rates")) {
-                String currency = Objects.toString(row.get("currency"), "CNY");
-                BigDecimal rate = decimal(row.get("rate"));
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT currency, rate FROM exchange_rates");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                String currency = Objects.toString(rs.getString("currency"), "CNY");
+                BigDecimal rate = decimal(rs.getObject("rate"));
                 if (rate.compareTo(ZERO) > 0) rates.put(currency, BigDecimal.ONE.divide(rate, 8, RoundingMode.HALF_UP));
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
         return rates;
     }
 
@@ -378,42 +427,6 @@ public class PnlLedgerService {
 
     private BigDecimal scale2(BigDecimal value) {
         return value.setScale(2, RoundingMode.HALF_UP);
-    }
-
-    // ── JDBC helper ─────────────────────────────────────────────────────
-
-    private List<Map<String, Object>> query(String sql, Object... params) {
-        List<Map<String, Object>> result = new ArrayList<>();
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (int i = 0; i < params.length; i++) {
-                if (params[i] instanceof LocalDate) {
-                    ps.setObject(i + 1, params[i]);
-                } else if (params[i] instanceof java.sql.Date) {
-                    ps.setDate(i + 1, (java.sql.Date) params[i]);
-                } else {
-                    ps.setObject(i + 1, params[i]);
-                }
-            }
-            try (ResultSet rs = ps.executeQuery()) {
-                int colCount = rs.getMetaData().getColumnCount();
-                while (rs.next()) {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    for (int i = 1; i <= colCount; i++) {
-                        String col = rs.getMetaData().getColumnLabel(i);
-                        Object val = rs.getObject(i);
-                        if (val instanceof java.sql.Date) {
-                            val = ((java.sql.Date) val).toLocalDate();
-                        }
-                        row.put(col, val);
-                    }
-                    result.add(row);
-                }
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Query failed: " + sql, e);
-        }
-        return result;
     }
 
     private record Tx(long id, Long stockId, String type, BigDecimal shares, BigDecimal price, BigDecimal fee, String currency, LocalDate date) {}
@@ -457,4 +470,5 @@ public class PnlLedgerService {
         Map<Long, String> stockNames = new HashMap<>();
         Map<Long, String> stockCurrencies = new HashMap<>();
     }
+
 }

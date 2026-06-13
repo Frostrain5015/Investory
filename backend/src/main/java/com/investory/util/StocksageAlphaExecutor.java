@@ -1,10 +1,12 @@
 package com.investory.util;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.investory.server.SseClient;
+import com.google.gson.Gson;
 
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.net.ConnectException;
 import java.net.URI;
 import java.net.URLEncoder;
@@ -29,9 +31,18 @@ import java.util.regex.Pattern;
  *
  * <p>封装 {@link ProcessBuilder} 调用模式，与 {@code QuantApiController}
  * 中已有的 Python 脚本调用方式保持一致。
+ *
+ * <p>职责：
+ * <ul>
+ *   <li>解析桥接脚本 {@code bridge.py} 的绝对路径</li>
+ *   <li>执行同步调用，返回 JSON Map</li>
+ *   <li>执行 SSE 流式调用，实时推送进度和结果</li>
+ *   <li>超时处理、错误解析、工作目录管理</li>
+ * </ul>
  */
 public class StocksageAlphaExecutor {
 
+    private static final Gson GSON = new Gson();
     private final String pythonExecutable;
     private final ObjectMapper json = new ObjectMapper();
     private static final int DEFAULT_TIMEOUT_SECONDS = 130;
@@ -42,9 +53,11 @@ public class StocksageAlphaExecutor {
         .connectTimeout(Duration.ofSeconds(2))
         .build();
 
+    /** 进度行正则，与 QuantApiController 一致 */
     private static final Pattern PROGRESS_RE = Pattern.compile(
         "\\[(\\d+)/(\\d+)\\s+(\\d+(?:\\.\\d+)?)%\\]\\s+(.+)");
 
+    /** 结果行正则：RESULT: 后接 JSON，与 CrawlerScheduler 一致 */
     private static final Pattern RESULT_RE = Pattern.compile(
         "RESULT:\\s*(\\{.+\\})");
 
@@ -52,6 +65,18 @@ public class StocksageAlphaExecutor {
         this.pythonExecutable = pythonExecutable;
     }
 
+    // ── 脚本定位 ─────────────────────────────────────────────────────────
+
+    /**
+     * 查找桥接脚本的绝对路径。
+     *
+     * <p>查找顺序：
+     * <ol>
+     *   <li>工作目录下的 {@code backend/src/main/python/stocksage_alpha/bridge.py}（开发环境）</li>
+     *   <li>{@code ../backend/src/main/python/stocksage_alpha/bridge.py}（Maven 构建）</li>
+     *   <li>{@code stocksage_alpha/bridge.py}（部署环境）</li>
+     * </ol>
+     */
     private File findBridgeScript() throws IOException {
         String[] candidates = {
             "backend/src/main/python/stocksage_alpha/bridge.py",
@@ -65,10 +90,26 @@ public class StocksageAlphaExecutor {
         throw new IOException("bridge.py not found in any candidate location");
     }
 
+    // ── 同步执行 ─────────────────────────────────────────────────────────
+
+    /**
+     * 同步执行桥接命令，返回 JSON 解析结果。
+     *
+     * @param args 命令行参数，不含 python 和脚本路径
+     * @return JSON 反序列化的 Map
+     * @throws IOException 脚本未找到或进程启动失败
+     */
     public Map<String, Object> execute(String... args) throws IOException, InterruptedException {
         return executeWithTimeout(DEFAULT_TIMEOUT_SECONDS, TimeUnit.SECONDS, args);
     }
 
+    /**
+     * 带超时的同步执行。
+     *
+     * @param timeout 超时时间
+     * @param unit    时间单位
+     * @param args    命令行参数
+     */
     @SuppressWarnings("unchecked")
     public Map<String, Object> executeWithTimeout(int timeout, TimeUnit unit, String... args)
         throws IOException, InterruptedException {
@@ -209,13 +250,18 @@ public class StocksageAlphaExecutor {
         return sb.toString();
     }
 
+    // ── SSE 流式执行 ─────────────────────────────────────────────────────
+
     /**
      * 异步执行命令，通过 SSE 实时推送进度行。
      *
-     * @param client SSE 客户端
-     * @param args   命令行参数
+     * <p>进度行匹配 {@link #PROGRESS_RE} 格式的将被解析为进度事件发送；
+     * 脚本结束时，stdout 中最后一段 JSON 作为结果事件发送。
+     *
+     * @param response HTTP 响应对象，用于 SSE 输出
+     * @param args     命令行参数
      */
-    public void executeWithSse(SseClient client, String... args) {
+    public void executeWithSse(HttpServletResponse response, String... args) {
         try {
             File script = findBridgeScript();
             File workDir = script.getParentFile();
@@ -230,6 +276,7 @@ public class StocksageAlphaExecutor {
             pb.redirectErrorStream(true);
 
             Process p = pb.start();
+            PrintWriter writer = response.getWriter();
             StringBuilder output = new StringBuilder();
             try (var reader = new java.io.BufferedReader(
                 new java.io.InputStreamReader(p.getInputStream(), "UTF-8"))) {
@@ -237,12 +284,14 @@ public class StocksageAlphaExecutor {
                 while ((line = reader.readLine()) != null) {
                     Matcher m = PROGRESS_RE.matcher(line);
                     if (m.matches()) {
-                        client.send("progress", Map.of(
+                        writer.write("event: progress\n");
+                        writer.write("data: " + GSON.toJson(Map.of(
                             "current", m.group(1),
                             "total", m.group(2),
                             "percent", m.group(3),
                             "description", m.group(4)
-                        ));
+                        )) + "\n\n");
+                        writer.flush();
                     }
                     output.append(line).append("\n");
                 }
@@ -250,21 +299,23 @@ public class StocksageAlphaExecutor {
 
             int exitCode = p.waitFor();
 
+            // Parse RESULT: line from output (same as sync execute)
             String fullOutput = output.toString();
             Matcher rm = RESULT_RE.matcher(fullOutput);
             if (exitCode == 0 && rm.find()) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> result = json.readValue(rm.group(1), Map.class);
-                client.send("result", result);
+                writer.write("event: result\n");
+                writer.write("data: " + GSON.toJson(result) + "\n\n");
+                writer.flush();
             } else if (exitCode != 0) {
-                client.send("error", Map.of(
-                    "exitCode", exitCode, "message", fullOutput.substring(0, Math.min(fullOutput.length(), 300))));
+                writer.write("event: error\n");
+                writer.write("data: " + GSON.toJson(Map.of(
+                    "exitCode", exitCode, "message", fullOutput.substring(0, Math.min(fullOutput.length(), 300)))) + "\n\n");
+                writer.flush();
             }
-            client.send("done", Map.of("msg", "complete"));
-            client.complete();
         } catch (Exception e) {
-            client.send("error", Map.of("message", e.getMessage()));
-            client.complete();
+            // Error already sent or connection closed
         }
     }
 }

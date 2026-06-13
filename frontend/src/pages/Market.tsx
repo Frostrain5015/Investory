@@ -16,6 +16,25 @@ type IndexData = PreloadMarketIndex
 type IndicatorData = PreloadMarketIndicator
 type NewsItem = PreloadMarketNewsItem
 
+// 散点(新闻)系列的数据项形状，与下方 series.data 映射保持一致
+interface NewsPointData {
+  url?: string
+  title?: string
+  source?: string
+  category?: string
+  country_code?: string
+}
+
+// echarts 回调参数最小形状（仅取本组件实际访问的字段）。
+// echarts 官方回调类型为复杂联合，这里用结构化最小子集 + 边界处 cast 衔接。
+interface EChartsCallbackParams {
+  dataIndex: number
+  data?: NewsPointData
+  name?: string
+  seriesType?: string
+  seriesIndex?: number
+}
+
 const LEADING = ['上证指数', '恒生指数', '标普500']
 
 // Flag → GeoJSON country names + leading index for country coloring
@@ -181,13 +200,14 @@ export default function Market() {
             borderRadius: 16,
             padding: [14, 18],
             textStyle: { color: '#334155', fontSize: 13 },
-            formatter: (params: any) => {
+            formatter: (raw: unknown) => {
+              const params = raw as EChartsCallbackParams
               const group = markers[params.dataIndex]
               if (!group) return ''
               const f = group[0].flag.toLowerCase()
               const countryName = t.market.countryNames[f as keyof typeof t.market.countryNames] || group[0].flag
               return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:700;font-size:14px">
-                <img src="${import.meta.env.BASE_URL}flags/${f}.svg" style="width:22px;height:15px;border-radius:2px"/>
+                <img src="${import.meta.env.BASE_URL}flags/${f}.svg" onerror="this.style.display='none'" style="width:22px;height:15px;border-radius:2px"/>
                 ${countryName}
               </div>${group.map(d => {
                   const valid = Number(d.price) !== 0
@@ -244,15 +264,16 @@ export default function Market() {
                 backgroundColor: '#fff', borderColor: '#e2e8f0',
                 borderWidth: 1, borderRadius: 16, padding: [12, 16],
                 textStyle: { color: '#334155', fontSize: 13 },
-                formatter: (params: any) => {
-                  const d = params.data
+                formatter: (raw: unknown) => {
+                  const params = raw as EChartsCallbackParams
+                  const d = params.data || {}
                   const cc = d.category === 'finance' ? '#6366f1' : '#f97316'
                   const cl = d.category === 'finance' ? t.market.categoryFinance : t.market.categoryGeopolitics
                   const flag = (d.country_code || '').toLowerCase()
                   const countryName = t.market.countryNames[flag as keyof typeof t.market.countryNames] || d.country_code || ''
                   return `<div style="max-width:300px">
                     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                      ${flag ? `<img src=\"${import.meta.env.BASE_URL}flags/${flag}.svg\" style=\"width:18px;height:12px;border-radius:2px\"/>` : ''}
+                      ${flag ? `<img src=\"${import.meta.env.BASE_URL}flags/${flag}.svg\" onerror=\"this.style.display='none'\" style=\"width:18px;height:12px;border-radius:2px\"/>` : ''}
                       <span style="background:${cc};color:#fff;font-size:10px;padding:2px 7px;border-radius:4px">${cl}</span>
                       <span style="font-size:10px;color:#64748b">${countryName}</span>
                     </div>
@@ -268,7 +289,8 @@ export default function Market() {
 
         // Click on country → navigate to leading index detail page; click on news pin → open URL
         chart.off('click')
-        chart.on('click', (params: any) => {
+        chart.on('click', (raw: unknown) => {
+          const params = raw as EChartsCallbackParams
           if (params.seriesType === 'scatter' && params.seriesIndex === 1) {
             const url = params.data?.url
             if (url) window.open(url, '_blank', 'noopener')

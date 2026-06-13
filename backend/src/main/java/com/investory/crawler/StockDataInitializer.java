@@ -9,13 +9,8 @@ public class StockDataInitializer {
 
     private static final Logger log = Logger.getLogger(StockDataInitializer.class.getName());
 
-    private final EastMoneyCrawler crawler;
-    private final StockDao stockDao;
-
-    public StockDataInitializer() {
-        this.crawler = AppContext.get(EastMoneyCrawler.class);
-        this.stockDao = AppContext.get(StockDao.class);
-    }
+    private final EastMoneyCrawler crawler = AppContext.get(EastMoneyCrawler.class);
+    private final StockDao stockDao = AppContext.get(StockDao.class);
 
     public void init() {
         if (!stockDao.findAll().isEmpty()) {

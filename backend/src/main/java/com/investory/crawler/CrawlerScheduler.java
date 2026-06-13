@@ -5,7 +5,6 @@ import com.investory.model.Portfolio;
 import com.investory.server.AppContext;
 import com.investory.server.ConfigLoader;
 import com.investory.server.DatabaseManager;
-import com.investory.server.SchedulerService;
 import com.investory.service.PortfolioValueCalculator;
 
 import java.io.BufferedReader;
@@ -33,14 +32,17 @@ import com.google.gson.JsonParser;
 
 /**
  * Schedules daily close-price syncs via external Python scripts.
+ * Results are saved to the crawl_history table for the admin dashboard.
  */
 public class CrawlerScheduler {
 
     private static final Logger log = Logger.getLogger(CrawlerScheduler.class.getName());
     private static final ZoneId SHANGHAI = ZoneId.of("Asia/Shanghai");
     private static final String SCRIPT_DIR = "script";
+
     private static final Pattern RESULT_JSON_RE = Pattern.compile("RESULT: (\\{.+\\})");
-    private static final Pattern SUMMARY_RE = Pattern.compile("写入\\s+(\\d+)\\s+行.*?(\\d+)\\s+只");
+    private static final Pattern SUMMARY_RE = Pattern.compile(
+        "写入\\s+(\\d+)\\s+行.*?(\\d+)\\s+只");
 
     private final CrawlSessionManager sessionManager;
     private final java.net.Proxy socksProxy;
@@ -48,61 +50,14 @@ public class CrawlerScheduler {
     private final PortfolioDao portfolioDao;
     private final String pythonExecutable;
 
+    public CrawlSessionManager sessionManager() { return sessionManager; }
+
     public CrawlerScheduler() {
         this.sessionManager = AppContext.get(CrawlSessionManager.class);
         this.valueCalculator = AppContext.get(PortfolioValueCalculator.class);
         this.portfolioDao = AppContext.get(PortfolioDao.class);
         this.pythonExecutable = ConfigLoader.get("python.executable", "python3");
         this.socksProxy = buildSocksProxy();
-    }
-
-    /**
-     * Register all scheduled tasks with the SchedulerService.
-     * Called once during application initialization.
-     */
-    public void scheduleAll() {
-        // A-shares: 15:30 Mon-Fri
-        SchedulerService.scheduleAtFixedRate("A股同步", this::syncAShares,
-                secondsUntil(15, 30), 86400);
-        // HK: 16:30 Mon-Fri
-        SchedulerService.scheduleAtFixedRate("港股同步", this::syncHKStocks,
-                secondsUntil(16, 30), 86400);
-        // US: 09:00 Tue-Sat
-        SchedulerService.scheduleAtFixedRate("美股同步", this::syncUSStocks,
-                secondsUntil(9, 0), 86400);
-        // Indices: 10:00 daily
-        SchedulerService.scheduleAtFixedRate("指数同步", this::syncIndices,
-                secondsUntil(10, 0), 86400);
-        // Quant Analysis: 02:00 daily
-        SchedulerService.scheduleAtFixedRate("量化分析", this::refreshQuantMetrics,
-                secondsUntil(2, 0), 86400);
-        // Quant Analysis weekly: 03:00 Sunday
-        SchedulerService.scheduleAtFixedRate("量化分析(周)", this::refreshQuantMetricsWeekly,
-                secondsUntil(3, 0), 86400);
-        // Evening refetch: 19:00 Mon-Fri
-        SchedulerService.scheduleAtFixedRate("晚间二次抓取", this::eveningRefetch,
-                secondsUntil(19, 0), 86400);
-        // Backfill portfolios: 19:30 Mon-Fri
-        SchedulerService.scheduleAtFixedRate("净值回填", this::backfillAllPortfolios,
-                secondsUntil(19, 30), 86400);
-        // Daily picks: 19:45 Mon-Fri
-        SchedulerService.scheduleAtFixedRate("今日选股", this::populateDailyPicks,
-                secondsUntil(19, 45), 86400);
-        // Exchange rates: 09:30 daily
-        SchedulerService.scheduleAtFixedRate("汇率刷新", this::refreshExchangeRates,
-                secondsUntil(9, 30), 86400);
-        // News sync: 07:00 daily
-        SchedulerService.scheduleAtFixedRate("新闻同步", this::syncNews,
-                secondsUntil(7, 0), 86400);
-    }
-
-    private static long secondsUntil(int hour, int minute) {
-        java.time.ZonedDateTime now = java.time.ZonedDateTime.now(SHANGHAI);
-        java.time.ZonedDateTime target = now.withHour(hour).withMinute(minute).withSecond(0);
-        if (target.isBefore(now) || target.isEqual(now)) {
-            target = target.plusDays(1);
-        }
-        return java.time.Duration.between(now, target).getSeconds();
     }
 
     private static java.net.Proxy buildSocksProxy() {
@@ -126,25 +81,33 @@ public class CrawlerScheduler {
         return body;
     }
 
-    // ── Scheduled task methods ──────────────────────────────────────────
+    // ── A-shares: 15:30 Mon-Fri (BaoStock) ──────────────────────────
 
     public void syncAShares() {
         if (isWeekend()) return;
         runScript("fetch_stocks.py", "a", "A股");
     }
 
+    // ── HK: 16:30 Mon-Fri (Yahoo Finance) ───────────────────────────
+
     public void syncHKStocks() {
         if (isWeekend()) return;
         runScript("fetch_stocks.py", "hk", "港股");
     }
 
+    // ── US: 09:00 Tue-Sat (Yahoo Finance) ───────────────────────────
+
     public void syncUSStocks() {
         runScript("fetch_stocks.py", "us", "美股");
     }
 
+    // ── Indices: 10:00 daily (Yahoo + Sina) ──────────────────────────
+
     public void syncIndices() {
         runScript("fetch_stocks.py", "idx", "指数");
     }
+
+    // ── Quant Analysis ───────────────────────────────────────────────────
 
     public void refreshQuantMetrics() {
         runQuantScript("metrics");
@@ -154,12 +117,16 @@ public class CrawlerScheduler {
         runQuantScript("metrics");
     }
 
+    // ── 19:00 二次抓取 ──────────────────────────────────────────────
+
     public void eveningRefetch() {
         if (isWeekend()) return;
         log.info("晚间二次抓取 A股 + 港股");
         runScript("fetch_stocks.py", "a", "A股(二次)");
         runScript("fetch_stocks.py", "hk", "港股(二次)");
     }
+
+    // ── 每日收盘后回填所有活跃组合的净值 ─────────────────────────────────
 
     public void backfillAllPortfolios() {
         if (isWeekend()) return;
@@ -174,6 +141,8 @@ public class CrawlerScheduler {
         }
         log.info("回填完成，共处理 " + portfolios.size() + " 个组合");
     }
+
+    // ── 每日收盘后预扫描"今日选股"并写入缓存 ────────────────────────────
 
     public void populateDailyPicks() {
         if (isWeekend()) return;
@@ -200,49 +169,6 @@ public class CrawlerScheduler {
             log.warning("今日选股预扫描出错: " + e.getMessage());
         }
     }
-
-    public void refreshExchangeRates() {
-        BigDecimal usdCny = fetchYahooRate("USDCNY=X");
-        BigDecimal usdHkd = fetchYahooRate("USDHKD=X");
-        if (usdCny == null || usdHkd == null) {
-            log.warning("汇率刷新失败：Yahoo Finance 无响应，保留现有数据");
-            return;
-        }
-        BigDecimal usdPerCny = BigDecimal.ONE.divide(usdCny, 8, RoundingMode.HALF_UP);
-        BigDecimal hkdPerCny = usdHkd.divide(usdCny, 8, RoundingMode.HALF_UP);
-
-        Connection conn = null;
-        try {
-            conn = DatabaseManager.getConnection();
-            conn.setAutoCommit(false);
-            try (Statement stmt = conn.createStatement()) {
-                stmt.execute("DELETE FROM exchange_rates");
-            }
-            try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO exchange_rates (currency, rate) VALUES (?, ?)")) {
-                ps.setString(1, "USD");
-                ps.setBigDecimal(2, usdPerCny);
-                ps.executeUpdate();
-                ps.setString(1, "HKD");
-                ps.setBigDecimal(2, hkdPerCny);
-                ps.executeUpdate();
-            }
-            conn.commit();
-            log.info(String.format("汇率刷新完成 USD=%.6f HKD=%.6f",
-                    usdPerCny.doubleValue(), hkdPerCny.doubleValue()));
-        } catch (Exception e) {
-            try { if (conn != null) conn.rollback(); } catch (Exception ignored) {}
-            log.warning("汇率刷新事务失败: " + e.getMessage());
-        } finally {
-            try { if (conn != null) { conn.setAutoCommit(true); conn.close(); } } catch (Exception ignored) {}
-        }
-    }
-
-    public void syncNews() {
-        runScriptNoArgs("fetch_news.py", "news", "世界新闻");
-    }
-
-    // ── Helper methods ──────────────────────────────────────────────────
 
     private void runQuantScript(String mode) {
         File script = new File(SCRIPT_DIR, "analyze_quant.py");
@@ -274,6 +200,45 @@ public class CrawlerScheduler {
         }
     }
 
+    // ── Exchange Rate Refresh ─────────────────────────────────────────
+
+    public void refreshExchangeRates() {
+        BigDecimal usdCny = fetchYahooRate("USDCNY=X");
+        BigDecimal usdHkd = fetchYahooRate("USDHKD=X");
+        if (usdCny == null || usdHkd == null) {
+            log.warning("汇率刷新失败：Yahoo Finance 无响应，保留现有数据");
+            return;
+        }
+        Connection conn = null;
+        try {
+            conn = DatabaseManager.getConnection();
+            conn.setAutoCommit(false);
+            BigDecimal usdPerCny = BigDecimal.ONE.divide(usdCny, 8, RoundingMode.HALF_UP);
+            BigDecimal hkdPerCny = usdHkd.divide(usdCny, 8, RoundingMode.HALF_UP);
+            try (PreparedStatement delPs = conn.prepareStatement("DELETE FROM exchange_rates")) {
+                delPs.executeUpdate();
+            }
+            try (PreparedStatement insPs = conn.prepareStatement(
+                    "INSERT INTO exchange_rates (currency, rate) VALUES ('USD', ?), ('HKD', ?)")) {
+                insPs.setBigDecimal(1, usdPerCny);
+                insPs.setBigDecimal(2, hkdPerCny);
+                insPs.executeUpdate();
+            }
+            conn.commit();
+            log.info(String.format("汇率刷新完成 USD=%.6f HKD=%.6f",
+                    usdPerCny.doubleValue(), hkdPerCny.doubleValue()));
+        } catch (Exception e) {
+            if (conn != null) {
+                try { conn.rollback(); } catch (Exception ignored) {}
+            }
+            log.warning("汇率刷新失败: " + e.getMessage());
+        } finally {
+            if (conn != null) {
+                try { conn.setAutoCommit(true); conn.close(); } catch (Exception ignored) {}
+            }
+        }
+    }
+
     private BigDecimal fetchYahooRate(String symbol) {
         try {
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol + "?range=1d&interval=5m";
@@ -286,6 +251,12 @@ public class CrawlerScheduler {
             log.warning("fetchYahooRate(" + symbol + ") 失败: " + e.getMessage());
             return null;
         }
+    }
+
+    // ── News Sync ─────────────────────────────────────────────────────
+
+    public void syncNews() {
+        runScriptNoArgs("fetch_news.py", "news", "世界新闻");
     }
 
     private void runScriptNoArgs(String filename, String marketCode, String label) {
@@ -310,8 +281,8 @@ public class CrawlerScheduler {
             pb.directory(script.getParentFile());
             pb.redirectErrorStream(true);
             Process p = pb.start();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(p.getInputStream(), "UTF-8"))) {
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(p.getInputStream(), "UTF-8"))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     logTail.append(line).append("\n");
@@ -338,13 +309,29 @@ public class CrawlerScheduler {
 
         String tail = logTail.toString();
         if (tail.length() > 2000) tail = tail.substring(tail.length() - 2000);
-        updateCrawlHistory(historyId, LocalDateTime.now(), rowsWritten, stocksFailed, status, tail);
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(
+                "UPDATE crawl_history SET ended_at=?, rows_written=?, stocks_failed=?, status=?, log_tail=? WHERE id=?")) {
+            ps.setObject(1, LocalDateTime.now());
+            ps.setInt(2, rowsWritten);
+            ps.setInt(3, stocksFailed);
+            ps.setString(4, status);
+            ps.setString(5, tail);
+            ps.setLong(6, historyId);
+            ps.executeUpdate();
+        } catch (Exception ex) {
+            log.warning(label + " failed to update crawl_history: " + ex.getMessage());
+        }
     }
 
+    // ── Helpers ──────────────────────────────────────────────────────
+
+    /** Insert a crawl_history row and return its auto-generated id. */
     private long insertCrawlHistory(String marketCode, LocalDateTime startedAt) {
-        String sql = "INSERT INTO crawl_history (market, started_at, status) VALUES (?, ?, 'running')";
         try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+             PreparedStatement ps = conn.prepareStatement(
+                "INSERT INTO crawl_history (market, started_at, status) VALUES (?, ?, 'running')",
+                Statement.RETURN_GENERATED_KEYS)) {
             ps.setString(1, marketCode);
             ps.setObject(2, startedAt);
             ps.executeUpdate();
@@ -352,25 +339,9 @@ public class CrawlerScheduler {
                 if (rs.next()) return rs.getLong(1);
             }
         } catch (Exception e) {
-            log.warning("insertCrawlHistory failed: " + e.getMessage());
+            log.warning("Failed to insert crawl_history: " + e.getMessage());
         }
         return 0;
-    }
-
-    private void updateCrawlHistory(long id, LocalDateTime endedAt, int rowsWritten, int stocksFailed, String status, String logTail) {
-        String sql = "UPDATE crawl_history SET ended_at=?, rows_written=?, stocks_failed=?, status=?, log_tail=? WHERE id=?";
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            ps.setObject(1, endedAt);
-            ps.setInt(2, rowsWritten);
-            ps.setInt(3, stocksFailed);
-            ps.setString(4, status);
-            ps.setString(5, logTail);
-            ps.setLong(6, id);
-            ps.executeUpdate();
-        } catch (Exception e) {
-            log.warning("updateCrawlHistory failed: " + e.getMessage());
-        }
     }
 
     private boolean isWeekend() {
@@ -474,7 +445,19 @@ public class CrawlerScheduler {
 
             String tail = logTail.toString();
             if (tail.length() > 6000) tail = tail.substring(tail.length() - 6000);
-            updateCrawlHistory(historyId, LocalDateTime.now(), rowsWritten[0], stocksFailed[0], status[0], tail);
+            try (Connection conn = DatabaseManager.getConnection();
+                 PreparedStatement ps = conn.prepareStatement(
+                    "UPDATE crawl_history SET ended_at=?, rows_written=?, stocks_failed=?, status=?, log_tail=? WHERE id=?")) {
+                ps.setObject(1, LocalDateTime.now());
+                ps.setInt(2, rowsWritten[0]);
+                ps.setInt(3, stocksFailed[0]);
+                ps.setString(4, status[0]);
+                ps.setString(5, tail);
+                ps.setLong(6, historyId);
+                ps.executeUpdate();
+            } catch (Exception ex) {
+                log.warning(label + " failed to update crawl_history: " + ex.getMessage());
+            }
         }
     }
 }

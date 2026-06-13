@@ -1,14 +1,21 @@
 """
-deploy.py — Safe deploy to Alibaba Cloud server.
+deploy.py — Safe deploy to Alibaba Cloud server + GitHub desktop release.
 
 Usage:
-    python deploy.py          # build JAR locally then deploy
-    python deploy.py --no-build   # skip Maven build, use existing JAR
+    python deploy.py               # build JAR locally then deploy to cloud
+    python deploy.py --no-build    # skip Maven build, use existing JAR
+    python deploy.py --release     # also publish a desktop client GitHub release
+    python deploy.py --release-only  # ONLY publish the desktop release (no cloud)
+
+Release version is taken from the latest commit note if it contains one
+(e.g. "V6.2.0 ..."), otherwise the current version is reused. Publishing a
+release with a higher version is what makes installed clients detect the
+auto-update on next launch.
 
 Refuses to restart the service if a market-data crawl is running.
 """
 
-import paramiko, os, sys, subprocess, time, shlex
+import paramiko, os, sys, subprocess, time, shlex, re, json
 
 HOST      = "116.62.179.231"
 USER      = "root"
@@ -32,6 +39,14 @@ SYSTEMD_DROPIN_DIR = f"/etc/systemd/system/{SERVICE}.service.d"
 SYSTEMD_SSL_DROPIN = f"{SYSTEMD_DROPIN_DIR}/ssl.conf"
 
 CRAWL_PROC_PATTERN = "fetch_stocks.py"   # any active crawl shows this
+
+# ── Desktop release (GitHub) ─────────────────────────────────────────
+REPO_ROOT    = os.path.dirname(os.path.abspath(__file__))
+DESKTOP_DIR  = os.path.join(REPO_ROOT, "desktop")
+DESKTOP_PKG  = os.path.join(DESKTOP_DIR, "package.json")
+FRONTEND_PKG = os.path.join(REPO_ROOT, "frontend", "package.json")
+BACKEND_POM  = os.path.join(REPO_ROOT, "backend", "pom.xml")
+VERSION_RE   = re.compile(r"[vV]?(\d+\.\d+\.\d+)")
 
 
 def ssh_connect():
@@ -231,8 +246,140 @@ def restart_engine(client):
     print(f"Engine: {status}")
 
 
+# ── Desktop GitHub release ───────────────────────────────────────────
+
+def latest_commit_subject():
+    """Subject line of the most recent git commit, or '' on failure."""
+    r = subprocess.run(["git", "log", "-1", "--pretty=%s"],
+                       cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8")
+    return r.stdout.strip() if r.returncode == 0 else ""
+
+
+def read_current_version():
+    with open(DESKTOP_PKG, encoding="utf-8") as f:
+        return json.load(f)["version"]
+
+
+def resolve_release_version():
+    """Version from the latest commit note if it contains one (e.g.
+    'V6.2.0 ...'); otherwise the current desktop/package.json version."""
+    subject = latest_commit_subject()
+    m = VERSION_RE.search(subject)
+    if m:
+        version = m.group(1)
+        print(f"Release version from commit note: {version}  ({subject!r})")
+        return version
+    current = read_current_version()
+    print(f"No version in commit note; reusing current version: {current}")
+    return current
+
+
+def _replace_once(path, pattern, repl, label):
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    new_text, n = re.subn(pattern, repl, text, count=1)
+    if n == 0:
+        raise RuntimeError(f"Could not find version field in {label} ({path})")
+    if new_text != text:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(new_text)
+        print(f"  {label}: version set")
+
+
+def set_version(version):
+    """Unify the version across desktop, frontend, and backend manifests so
+    the published client, web bundle, and JAR all report the same number."""
+    print(f"Unifying version to {version} ...")
+    _replace_once(DESKTOP_PKG, r'"version":\s*"[^"]+"',
+                  f'"version": "{version}"', "desktop/package.json")
+    _replace_once(FRONTEND_PKG, r'"version":\s*"[^"]+"',
+                  f'"version": "{version}"', "frontend/package.json")
+    _replace_once(BACKEND_POM,
+                  r'(<artifactId>investory</artifactId>\s*<version>)[^<]+(</version>)',
+                  rf'\g<1>{version}\g<2>', "backend/pom.xml")
+
+
+def github_token():
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        r = subprocess.run("gh auth token", capture_output=True, text=True, shell=True)
+        if r.returncode == 0:
+            token = r.stdout.strip()
+    return token
+
+
+UNPACKED_EXE = r"C:\tmp\investory-dist\win-unpacked\Investory.exe"
+RCEDIT_EXE   = os.path.join(DESKTOP_DIR, "build-tools", "rcedit-x64.exe")
+APP_ICO      = os.path.join(DESKTOP_DIR, "assets", "icon.ico")
+
+
+def _run(cmd, env, label):
+    kw = {"cwd": DESKTOP_DIR, "env": env}
+    if isinstance(cmd, str):
+        kw["shell"] = True
+    r = subprocess.run(cmd, **kw)
+    if r.returncode != 0:
+        print(f"{label} FAILED.")
+        sys.exit(1)
+
+
+def publish_desktop_release(version):
+    """Build the Electron app and publish an (unsigned) NSIS installer +
+    latest.yml to GitHub Releases. Installed clients on an older version pick up
+    the feed on next launch — that is the auto-update 'trigger'.
+
+    Three-phase, because electron-builder can't embed the app-exe icon in this
+    environment: the rcedit it bundles lives inside winCodeSign, whose archive
+    has macOS symlinks that won't extract on Windows without admin/Developer Mode
+    ("客户端没有所需的特权"). So win.signAndEditExecutable is false (no winCodeSign
+    download), and we embed the icon ourselves with a vendored standalone rcedit
+    between packing and installer assembly:
+        1. --dir            pack the app (default Electron exe icon)
+        2. rcedit           set the favicon icon on the packed exe
+        3. --prepackaged    build the NSIS installer from the edited dir + publish
+    """
+    token = github_token()
+    if not token:
+        print("ERROR: no GitHub token. Set GH_TOKEN or run `gh auth login`.")
+        sys.exit(1)
+    env = os.environ.copy()
+    env["GH_TOKEN"] = token
+    env["CSC_IDENTITY_AUTO_DISCOVERY"] = "false"  # never code-sign → no winCodeSign
+
+    print("Building desktop frontend (electron mode) ...")
+    _run("npm run build:frontend", env, "Desktop frontend build")
+
+    print("Phase 1/3 — packing app (electron-builder --dir) ...")
+    _run("npx electron-builder --win --dir", env, "electron-builder --dir")
+
+    print("Phase 2/3 — embedding app icon via rcedit ...")
+    _run([RCEDIT_EXE, UNPACKED_EXE, "--set-icon", APP_ICO], env, "rcedit set-icon")
+
+    print(f"Phase 3/3 — building installer + publishing v{version} ...")
+    unpacked_dir = os.path.dirname(UNPACKED_EXE)
+    _run(f'npx electron-builder --win --prepackaged "{unpacked_dir}" --publish always',
+         env, "electron-builder publish")
+
+    print(f"Desktop release v{version} published. Older clients will detect "
+          f"the update on next launch.")
+
+
 def main():
     no_build = "--no-build" in sys.argv
+    do_release = ("--release" in sys.argv) or ("--release-only" in sys.argv)
+    release_only = "--release-only" in sys.argv
+
+    # ── Resolve & unify version when releasing ──────────────────────────
+    release_version = None
+    if do_release:
+        release_version = resolve_release_version()
+        set_version(release_version)
+
+    # ── Release-only: publish desktop client and stop (no cloud) ────────
+    if release_only:
+        publish_desktop_release(release_version)
+        print("Release-only complete.")
+        return
 
     client = ssh_connect()
 
@@ -260,6 +407,10 @@ def main():
     restart_service(client)
     client.close()
     print("Deploy complete.")
+
+    # ── Desktop GitHub release (after a successful cloud deploy) ─────────
+    if do_release:
+        publish_desktop_release(release_version)
 
 
 if __name__ == "__main__":

@@ -18,18 +18,31 @@ function joinUrl(base: string, path: string) {
   return `${base.replace(/\/$/, '')}/${path.replace(/^\//, '')}`
 }
 
-function appRouteUrl(path: string) {
-  const routerBase = import.meta.env.VITE_BASE || import.meta.env.BASE_URL || '/'
-  const normalizedBase = routerBase === '.' || routerBase === './' ? '/' : routerBase
-  return new URL(joinUrl(normalizedBase, path), window.location.origin).toString()
-}
-
 export function getFrostIdLoginUrl() {
   const url = new URL(joinUrl(BASE, '/oauth/frost-id/login'), window.location.origin)
   if (window.electronAPI?.isDesktop) {
-    url.searchParams.set('return_to', appRouteUrl('/dashboard'))
+    // Desktop: login runs in the system browser; the backend hands the session
+    // back via an investory:// deep link rather than redirecting to a page.
+    url.searchParams.set('client', 'desktop')
   }
   return url.toString()
+}
+
+/**
+ * Desktop only: exchange the one-time token from the investory:// deep link for a
+ * session cookie in the app's own jar. Returns true once the app is logged in.
+ */
+export async function exchangeFrostIdToken(token: string): Promise<boolean> {
+  try {
+    const res = await fetch(BASE + '/oauth/frost-id/exchange?token=' + encodeURIComponent(token), {
+      credentials: 'include',
+    })
+    if (!res.ok) return false
+    const data = (await res.json()) as { ok?: boolean }
+    return data.ok === true
+  } catch {
+    return false
+  }
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {

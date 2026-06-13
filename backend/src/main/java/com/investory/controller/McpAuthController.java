@@ -1,19 +1,21 @@
 package com.investory.controller;
 
-import com.google.gson.Gson;
 import com.investory.dao.McpTokenDao;
 import com.investory.server.AppContext;
+import com.investory.util.JsonUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 
-import java.io.StringReader;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+/**
+ * MCP token 自助管理（网页设置页用）。
+ */
 public class McpAuthController {
 
-    private static final Gson gson = new Gson();
     private final McpTokenDao mcpTokenDao = AppContext.get(McpTokenDao.class);
 
     private Long userId(HttpServletRequest req) {
@@ -31,36 +33,51 @@ public class McpAuthController {
 
     public void handleCreate(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         Long uid = userId(req);
-        resp.setContentType("application/json;charset=UTF-8");
-        if (uid == null) { resp.getWriter().write("{\"error\":\"未登录\"}"); return; }
-
-        StringBuilder sb = new StringBuilder();
-        try (var reader = req.getReader()) { String l; while ((l = reader.readLine()) != null) sb.append(l); }
-        @SuppressWarnings("unchecked") Map<String, Object> body = sb.length() > 0 ? gson.fromJson(sb.toString(), Map.class) : null;
-        String label = body != null && body.get("label") != null ? body.get("label").toString() : "manual";
+        if (uid == null) {
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "未登录")));
+            return;
+        }
+        String jsonBody = new String(req.getReader().readAllBytes());
+        String label = "manual";
+        if (jsonBody != null && !jsonBody.isBlank()) {
+            try {
+                var gson = new com.google.gson.Gson();
+                @SuppressWarnings("unchecked")
+                Map<String, Object> body = gson.fromJson(jsonBody, Map.class);
+                if (body.get("label") != null) label = body.get("label").toString();
+            } catch (Exception ignored) {}
+        }
         String token = mcpTokenDao.issueToken(uid, portfolioId(req), label);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("token", token);
         m.put("note", "此 token 仅显示一次，请立即复制保存。");
-        resp.getWriter().write(gson.toJson(m));
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(m));
     }
 
     public void handleList(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         Long uid = userId(req);
+        if (uid == null) {
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "未登录")));
+            return;
+        }
+        List<Map<String, Object>> rows = mcpTokenDao.listTokens(uid);
         resp.setContentType("application/json;charset=UTF-8");
-        if (uid == null) { resp.getWriter().write("{\"error\":\"未登录\"}"); return; }
-        var rows = mcpTokenDao.listTokens(uid);
-        Map<String, Object> result = new LinkedHashMap<>();
-        result.put("tokens", rows); result.put("count", rows.size());
-        resp.getWriter().write(gson.toJson(result));
+        resp.getWriter().write(JsonUtil.toJson(Map.of("tokens", rows, "count", rows.size())));
     }
 
     public void handleRevoke(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         Long uid = userId(req);
-        long id = Long.parseLong((String) req.getAttribute("id"));
-        resp.setContentType("application/json;charset=UTF-8");
-        if (uid == null) { resp.getWriter().write("{\"error\":\"未登录\"}"); return; }
+        if (uid == null) {
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "未登录")));
+            return;
+        }
+        long id = Long.parseLong(req.getParameter("id"));
         boolean ok = mcpTokenDao.revokeToken(id, uid);
-        resp.getWriter().write(ok ? "{\"status\":\"ok\"}" : "{\"status\":\"not_found\"}");
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", ok ? "ok" : "not_found")));
     }
 }

@@ -223,11 +223,11 @@ export default function PnlCalendar() {
                 return (
                   <div key={i}
                     onClick={() => !noData ? setSelected({ kind: 'month', year, month: i + 1 }) : undefined}
-                    className={`h-20 sm:h-24 flex flex-col items-center justify-center rounded-xl text-sm font-medium ${!noData ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-transform' : ''}`}
+                    className={`h-20 sm:h-24 px-1 flex flex-col items-center justify-center overflow-hidden rounded-xl text-sm font-medium ${!noData ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-transform' : ''}`}
                     style={{ backgroundColor: s.bg }}>
                     <span className="text-xs text-slate-400">{MONTHS[i]}</span>
                     {!noData && (
-                      <span className={`text-lg font-bold mt-1 ${s.text}`}>
+                      <span className={`text-sm sm:text-lg font-bold mt-1 max-w-full truncate tabular-nums ${s.text}`}>
                         {pnlDisplay === 'amount' ? `${sign(val)}${fmtNum(val)}` : `${sign(val)}${Math.abs(val).toFixed(1)}%`}
                       </span>
                     )}
@@ -252,11 +252,11 @@ export default function PnlCalendar() {
                 return (
                   <div key={i}
                     onClick={() => hasData ? setSelected({ kind: 'day', date: ds }) : undefined}
-                    className={`h-14 sm:h-20 flex flex-col items-center justify-center rounded-xl text-xs font-medium ${hasData ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-transform' : ''}`}
+                    className={`h-14 sm:h-20 px-0.5 flex flex-col items-center justify-center overflow-hidden rounded-xl text-xs font-medium ${hasData ? 'cursor-pointer hover:opacity-80 active:scale-95 transition-transform' : ''}`}
                     style={{ backgroundColor: s.bg }}>
-                    <span className={`text-base font-bold ${s.text}`}>{dayOfMonth}</span>
+                    <span className={`text-sm sm:text-base font-bold ${s.text}`}>{dayOfMonth}</span>
                     {val !== 0 && (
-                      <span className={`text-sm font-semibold mt-0.5 ${s.text}`}>
+                      <span className={`text-[10px] sm:text-sm font-semibold mt-0.5 max-w-full truncate tabular-nums ${s.text}`}>
                         {pnlDisplay === 'amount'
                           ? `${sign(val)}${fmtNum(val)}`
                           : `${val > 0 ? '+' : ''}${Math.abs(val) < 10 ? val.toFixed(1) : Math.round(val)}%`}

@@ -1,5 +1,6 @@
 package com.investory.dao;
 
+import java.sql.*;
 import java.util.*;
 
 /**
@@ -14,18 +15,6 @@ import java.util.*;
  * <p>权限边界：所有写操作均以 {@code user_id} 作为额外过滤条件，防止跨用户操作。</p>
  */
 public class StrategyDao extends BaseDao {
-
-    /**
-     * 确保 {@code backtest_strategies} 表存在 {@code config_json} 列。
-     *
-     * <p>使用 {@code ALTER TABLE ADD COLUMN} 进行幂等式表结构迁移。
-     * 若列已存在，MySQL 会抛出异常，此处通过 {@code catch (Exception ignored)} 静默忽略。</p>
-     */
-    public void ensureConfigColumn() {
-        try {
-            update("ALTER TABLE backtest_strategies ADD COLUMN config_json TEXT");
-        } catch (Exception ignored) {}
-    }
 
     /**
      * 插入一条新的回测策略记录，并返回数据库自动生成的主键 ID。

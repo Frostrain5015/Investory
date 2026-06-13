@@ -164,9 +164,9 @@ public class McpTokenDao extends BaseDao {
 
     /** 返回客户端的换行分隔 redirect_uris，不存在返回 null。 */
     public String clientRedirectUris(String clientId) {
-        List<String> rows = queryForList(
-                "SELECT redirect_uris FROM mcp_oauth_clients WHERE client_id = ?", String.class, clientId);
-        return rows.isEmpty() ? null : rows.get(0);
+        List<Map<String, Object>> rows = queryForList(
+                "SELECT redirect_uris FROM mcp_oauth_clients WHERE client_id = ?", clientId);
+        return rows.isEmpty() ? null : (String) rows.get(0).get("redirect_uris");
     }
 
     // ── OAuth：授权码（PKCE）──────────────────────────────────────────────

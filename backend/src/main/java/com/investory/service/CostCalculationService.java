@@ -6,6 +6,7 @@ import com.investory.model.Transaction;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.List;
+
 public class CostCalculationService {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO;

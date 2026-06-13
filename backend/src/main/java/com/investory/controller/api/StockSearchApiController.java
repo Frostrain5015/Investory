@@ -18,8 +18,8 @@ public class StockSearchApiController {
 
     public void handleSearch(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         String q = req.getParameter("q");
-        resp.setContentType("application/json;charset=UTF-8");
         if (q == null || q.isBlank()) {
+            resp.setContentType("application/json;charset=UTF-8");
             resp.getWriter().write("[]");
             return;
         }
@@ -36,6 +36,7 @@ public class StockSearchApiController {
             m.put("price",    price != null ? price : BigDecimal.ZERO);
             result.add(m);
         }
+        resp.setContentType("application/json;charset=UTF-8");
         resp.getWriter().write(JsonUtil.toJson(result));
     }
 }

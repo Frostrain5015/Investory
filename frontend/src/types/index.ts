@@ -228,6 +228,35 @@ export interface HoldingsMetricsResponse {
   metrics: Record<string, StockMetrics>
 }
 
+// StockSage Alpha 组合分析结果（Python 桥接，snake_case 字段）
+export interface PortfolioAnalysisHolding {
+  symbol?: string
+  code?: string
+  name?: string
+  market?: string
+  weight?: number
+  total_score?: number
+  buy_score?: number
+  error?: string
+}
+
+export interface PortfolioGroupExposure {
+  buy_score?: number
+  [key: string]: number | undefined
+}
+
+export interface PortfolioAnalysisResult {
+  portfolio_score?: number
+  holdings_scored?: number
+  holdings_total?: number
+  top_holdings?: PortfolioAnalysisHolding[]
+  bottom_holdings?: PortfolioAnalysisHolding[]
+  all_holdings?: PortfolioAnalysisHolding[]
+  group_exposure?: Record<string, PortfolioGroupExposure>
+  error?: string
+  _error?: string
+}
+
 export interface SseEvent { event: string; msg?: string; current?: number; total?: number; pct?: number; name?: string; market?: string; resultId?: number }
 
 // ── Backtest types ───────────────────────────────────────────────────────
@@ -239,6 +268,14 @@ export interface BacktestConfig {
   commissionPct: number
   slippagePct: number
   minCommission?: number
+}
+
+export interface SavedStrategy {
+  id: number
+  name: string
+  strategy_type: string
+  strategy_json: string
+  updated_at?: string
 }
 
 export interface SimpleRule {

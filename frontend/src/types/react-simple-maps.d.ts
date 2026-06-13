@@ -1,5 +1,13 @@
 declare module 'react-simple-maps' {
-  import type { ComponentType, ReactNode, SVGProps } from 'react'
+  import type { ComponentType, ReactNode } from 'react'
+
+  /** 单个 GeoJSON 地理要素（react-simple-maps 解析地图后传给渲染回调）。 */
+  export interface GeoFeature {
+    rsmKey: string
+    properties: Record<string, unknown>
+    geometry: { type: string; coordinates: unknown }
+    [key: string]: unknown
+  }
 
   export interface ComposableMapProps {
     projection?: string
@@ -11,16 +19,16 @@ declare module 'react-simple-maps' {
 
   export interface GeographiesProps {
     geography: string
-    children: (data: { geographies: any[] }) => ReactNode
+    children: (data: { geographies: GeoFeature[] }) => ReactNode
   }
   export const Geographies: ComponentType<GeographiesProps>
 
   export interface GeographyProps {
-    geography: any
+    geography: GeoFeature
     fill?: string
     stroke?: string
     strokeWidth?: number
-    style?: Record<string, any>
+    style?: Record<string, string | number>
     key?: string | number
   }
   export const Geography: ComponentType<GeographyProps>

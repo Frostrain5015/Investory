@@ -2,6 +2,7 @@ package com.investory.service;
 
 import com.investory.dao.DailyPortfolioValueDao;
 import com.investory.model.DailyValue;
+import com.investory.model.HoldingSnapshot;
 import com.investory.server.AppContext;
 import com.investory.server.DatabaseManager;
 
@@ -10,7 +11,6 @@ import java.math.RoundingMode;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.Date;
 import java.time.LocalDate;
 import java.util.*;
 
@@ -19,11 +19,7 @@ public class PortfolioAnalysisService {
     private static final BigDecimal ZERO = BigDecimal.ZERO;
     private static final BigDecimal HUNDRED = new BigDecimal("100");
 
-    private final DailyPortfolioValueDao dailyPortfolioValueDao;
-
-    public PortfolioAnalysisService() {
-        this.dailyPortfolioValueDao = AppContext.get(DailyPortfolioValueDao.class);
-    }
+    private final DailyPortfolioValueDao dailyPortfolioValueDao = AppContext.get(DailyPortfolioValueDao.class);
 
     public BigDecimal totalMarketValue(List<HoldingSnapshot> snapshots) {
         BigDecimal total = ZERO;
@@ -86,52 +82,59 @@ public class PortfolioAnalysisService {
         Map<Long, PositionState> positions = new HashMap<>();
         BigDecimal realized = ZERO;
 
-        String txSql = """
-            SELECT t.stock_id, t.type, t.shares, t.price, t.fee,
-                   COALESCE(s.currency, 'CNY') AS currency
-            FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
-            WHERE t.portfolio_id = ? AND t.type IN ('BUY', 'SELL')
-            ORDER BY t.stock_id, t.trade_date, t.id
-            """;
-        List<Map<String, Object>> rows = query(txSql, portfolioId);
-        for (Map<String, Object> row : rows) {
-            Object stockIdValue = row.get("stock_id");
-            if (!(stockIdValue instanceof Number stockNumber)) continue;
-            long stockId = stockNumber.longValue();
-            PositionState state = positions.computeIfAbsent(stockId, id -> new PositionState());
-            String currency = text(row.get("currency"), "CNY");
-            BigDecimal shares = decimal(row.get("shares"));
-            BigDecimal price = decimal(row.get("price"));
-            BigDecimal fee = decimal(row.get("fee"));
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                SELECT t.stock_id, t.type, t.shares, t.price, t.fee,
+                       COALESCE(s.currency, 'CNY') AS currency
+                FROM transactions t LEFT JOIN stocks s ON t.stock_id = s.id
+                WHERE t.portfolio_id = ? AND t.type IN ('BUY', 'SELL')
+                ORDER BY t.stock_id, t.trade_date, t.id
+                """)) {
+            ps.setLong(1, portfolioId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    long stockId = rs.getLong("stock_id");
+                    PositionState state = positions.computeIfAbsent(stockId, id -> new PositionState());
+                    String currency = text(rs.getString("currency"), "CNY");
+                    BigDecimal shares = decimal(rs.getObject("shares"));
+                    BigDecimal price = decimal(rs.getObject("price"));
+                    BigDecimal fee = decimal(rs.getObject("fee"));
 
-            if ("BUY".equals(row.get("type"))) {
-                BigDecimal cost = shares.multiply(price).add(fee);
-                state.shares = state.shares.add(shares);
-                state.costBasis = state.costBasis.add(cost);
-                state.currency = currency;
-            } else if ("SELL".equals(row.get("type"))) {
-                BigDecimal proceeds = shares.multiply(price).subtract(fee);
-                BigDecimal soldCost = state.costForSale(shares);
-                realized = realized.add(proceeds.subtract(soldCost).multiply(rateFor(currency, rates)));
-                state.shares = state.shares.subtract(shares);
-                state.costBasis = state.costBasis.subtract(soldCost);
-                state.currency = currency;
-                if (state.shares.compareTo(ZERO) <= 0) {
-                    state.shares = ZERO;
-                    state.costBasis = ZERO;
+                    if ("BUY".equals(rs.getString("type"))) {
+                        BigDecimal cost = shares.multiply(price).add(fee);
+                        state.shares = state.shares.add(shares);
+                        state.costBasis = state.costBasis.add(cost);
+                        state.currency = currency;
+                    } else if ("SELL".equals(rs.getString("type"))) {
+                        BigDecimal proceeds = shares.multiply(price).subtract(fee);
+                        BigDecimal soldCost = state.costForSale(shares);
+                        realized = realized.add(proceeds.subtract(soldCost).multiply(rateFor(currency, rates)));
+                        state.shares = state.shares.subtract(shares);
+                        state.costBasis = state.costBasis.subtract(soldCost);
+                        state.currency = currency;
+                        if (state.shares.compareTo(ZERO) <= 0) {
+                            state.shares = ZERO;
+                            state.costBasis = ZERO;
+                        }
+                    }
                 }
             }
-        }
 
-        String divSql = """
-            SELECT d.total_amount, COALESCE(s.currency, 'CNY') AS currency
-            FROM dividends d LEFT JOIN stocks s ON d.stock_id = s.id
-            WHERE d.portfolio_id = ?
-            """;
-        List<Map<String, Object>> dividends = query(divSql, portfolioId);
-        for (Map<String, Object> row : dividends) {
-            String currency = text(row.get("currency"), "CNY");
-            realized = realized.add(decimal(row.get("total_amount")).multiply(rateFor(currency, rates)));
+            try (PreparedStatement ps2 = conn.prepareStatement("""
+                SELECT d.total_amount, COALESCE(s.currency, 'CNY') AS currency
+                FROM dividends d LEFT JOIN stocks s ON d.stock_id = s.id
+                WHERE d.portfolio_id = ?
+                """)) {
+                ps2.setLong(1, portfolioId);
+                try (ResultSet rs = ps2.executeQuery()) {
+                    while (rs.next()) {
+                        String currency = text(rs.getString("currency"), "CNY");
+                        realized = realized.add(decimal(rs.getObject("total_amount")).multiply(rateFor(currency, rates)));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to calculate realized PnL", e);
         }
 
         return realized.setScale(2, RoundingMode.HALF_UP);
@@ -141,61 +144,70 @@ public class PortfolioAnalysisService {
         Map<String, BigDecimal> rates = loadRates();
         Map<Long, ClosedPositionState> states = new LinkedHashMap<>();
 
-        String txSql = """
-            SELECT t.stock_id, t.type, t.shares, t.price, t.fee,
-                   s.symbol, s.name, s.market, COALESCE(s.currency, 'CNY') AS currency
-            FROM transactions t JOIN stocks s ON t.stock_id = s.id
-            WHERE t.portfolio_id = ? AND t.type IN ('BUY', 'SELL')
-            ORDER BY t.stock_id, t.trade_date, t.id
-            """;
-        List<Map<String, Object>> txRows = query(txSql, portfolioId);
-        for (Map<String, Object> row : txRows) {
-            long stockId = ((Number) row.get("stock_id")).longValue();
-            ClosedPositionState state = states.computeIfAbsent(stockId, id -> new ClosedPositionState());
-            state.stockId = stockId;
-            state.symbol = text(row.get("symbol"), "");
-            state.name = text(row.get("name"), "");
-            state.market = text(row.get("market"), "");
-            state.currency = text(row.get("currency"), "CNY");
-            BigDecimal rate = rateFor(state.currency, rates);
-            BigDecimal shares = decimal(row.get("shares"));
-            BigDecimal price = decimal(row.get("price"));
-            BigDecimal fee = decimal(row.get("fee"));
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement("""
+                SELECT t.stock_id, t.type, t.shares, t.price, t.fee,
+                       s.symbol, s.name, s.market, COALESCE(s.currency, 'CNY') AS currency
+                FROM transactions t JOIN stocks s ON t.stock_id = s.id
+                WHERE t.portfolio_id = ? AND t.type IN ('BUY', 'SELL')
+                ORDER BY t.stock_id, t.trade_date, t.id
+                """)) {
+            ps.setLong(1, portfolioId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    long stockId = rs.getLong("stock_id");
+                    ClosedPositionState state = states.computeIfAbsent(stockId, id -> new ClosedPositionState());
+                    state.stockId = stockId;
+                    state.symbol = text(rs.getString("symbol"), "");
+                    state.name = text(rs.getString("name"), "");
+                    state.market = text(rs.getString("market"), "");
+                    state.currency = text(rs.getString("currency"), "CNY");
+                    BigDecimal rate = rateFor(state.currency, rates);
+                    BigDecimal shares = decimal(rs.getObject("shares"));
+                    BigDecimal price = decimal(rs.getObject("price"));
+                    BigDecimal fee = decimal(rs.getObject("fee"));
 
-            if ("BUY".equals(row.get("type"))) {
-                BigDecimal cost = shares.multiply(price).add(fee);
-                state.shares = state.shares.add(shares);
-                state.costBasis = state.costBasis.add(cost);
-                state.totalBought = state.totalBought.add(shares);
-                state.buyCost = state.buyCost.add(cost.multiply(rate));
-            } else if ("SELL".equals(row.get("type"))) {
-                BigDecimal proceeds = shares.multiply(price).subtract(fee);
-                BigDecimal soldCost = state.costForSale(shares);
-                state.shares = state.shares.subtract(shares);
-                state.costBasis = state.costBasis.subtract(soldCost);
-                state.totalSold = state.totalSold.add(shares);
-                state.sellProceeds = state.sellProceeds.add(proceeds.multiply(rate));
-                state.realizedPnl = state.realizedPnl.add(proceeds.subtract(soldCost).multiply(rate));
-                if (state.shares.compareTo(ZERO) <= 0) {
-                    state.shares = ZERO;
-                    state.costBasis = ZERO;
+                    if ("BUY".equals(rs.getString("type"))) {
+                        BigDecimal cost = shares.multiply(price).add(fee);
+                        state.shares = state.shares.add(shares);
+                        state.costBasis = state.costBasis.add(cost);
+                        state.totalBought = state.totalBought.add(shares);
+                        state.buyCost = state.buyCost.add(cost.multiply(rate));
+                    } else if ("SELL".equals(rs.getString("type"))) {
+                        BigDecimal proceeds = shares.multiply(price).subtract(fee);
+                        BigDecimal soldCost = state.costForSale(shares);
+                        state.shares = state.shares.subtract(shares);
+                        state.costBasis = state.costBasis.subtract(soldCost);
+                        state.totalSold = state.totalSold.add(shares);
+                        state.sellProceeds = state.sellProceeds.add(proceeds.multiply(rate));
+                        state.realizedPnl = state.realizedPnl.add(proceeds.subtract(soldCost).multiply(rate));
+                        if (state.shares.compareTo(ZERO) <= 0) {
+                            state.shares = ZERO;
+                            state.costBasis = ZERO;
+                        }
+                    }
                 }
             }
-        }
 
-        String divSql = """
-            SELECT d.stock_id, d.total_amount, COALESCE(s.currency, 'CNY') AS currency
-            FROM dividends d JOIN stocks s ON d.stock_id = s.id
-            WHERE d.portfolio_id = ?
-            """;
-        List<Map<String, Object>> divRows = query(divSql, portfolioId);
-        for (Map<String, Object> row : divRows) {
-            long stockId = ((Number) row.get("stock_id")).longValue();
-            ClosedPositionState state = states.get(stockId);
-            if (state == null) continue;
-            BigDecimal amount = decimal(row.get("total_amount")).multiply(rateFor(text(row.get("currency"), "CNY"), rates));
-            state.dividends = state.dividends.add(amount);
-            state.realizedPnl = state.realizedPnl.add(amount);
+            try (PreparedStatement ps2 = conn.prepareStatement("""
+                SELECT d.stock_id, d.total_amount, COALESCE(s.currency, 'CNY') AS currency
+                FROM dividends d JOIN stocks s ON d.stock_id = s.id
+                WHERE d.portfolio_id = ?
+                """)) {
+                ps2.setLong(1, portfolioId);
+                try (ResultSet rs = ps2.executeQuery()) {
+                    while (rs.next()) {
+                        long stockId = rs.getLong("stock_id");
+                        ClosedPositionState state = states.get(stockId);
+                        if (state == null) continue;
+                        BigDecimal amount = decimal(rs.getObject("total_amount")).multiply(rateFor(text(rs.getString("currency"), "CNY"), rates));
+                        state.dividends = state.dividends.add(amount);
+                        state.realizedPnl = state.realizedPnl.add(amount);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to get closed positions", e);
         }
 
         List<Map<String, Object>> result = new ArrayList<>();
@@ -222,14 +234,16 @@ public class PortfolioAnalysisService {
     private Map<String, BigDecimal> loadRates() {
         Map<String, BigDecimal> rates = new HashMap<>();
         rates.put("CNY", BigDecimal.ONE);
-        try {
-            List<Map<String, Object>> rows = query("SELECT currency, rate FROM exchange_rates");
-            for (Map<String, Object> row : rows) {
-                String currency = text(row.get("currency"), "CNY");
-                BigDecimal rate = decimal(row.get("rate"));
+        try (Connection conn = DatabaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT currency, rate FROM exchange_rates");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                String currency = text(rs.getString("currency"), "CNY");
+                BigDecimal rate = decimal(rs.getObject("rate"));
                 if (rate.compareTo(ZERO) > 0) rates.put(currency, BigDecimal.ONE.divide(rate, 8, RoundingMode.HALF_UP));
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
         return rates;
     }
 
@@ -252,40 +266,6 @@ public class PortfolioAnalysisService {
         if (value == null) return fallback;
         String text = value.toString();
         return text.isBlank() ? fallback : text;
-    }
-
-    // ── JDBC helper ─────────────────────────────────────────────────────
-
-    private List<Map<String, Object>> query(String sql, Object... params) {
-        List<Map<String, Object>> result = new ArrayList<>();
-        try (Connection conn = DatabaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
-            for (int i = 0; i < params.length; i++) {
-                if (params[i] instanceof LocalDate) {
-                    ps.setDate(i + 1, Date.valueOf((LocalDate) params[i]));
-                } else {
-                    ps.setObject(i + 1, params[i]);
-                }
-            }
-            try (ResultSet rs = ps.executeQuery()) {
-                int colCount = rs.getMetaData().getColumnCount();
-                while (rs.next()) {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    for (int i = 1; i <= colCount; i++) {
-                        String col = rs.getMetaData().getColumnLabel(i);
-                        Object val = rs.getObject(i);
-                        if (val instanceof java.sql.Date) {
-                            val = ((java.sql.Date) val).toLocalDate();
-                        }
-                        row.put(col, val);
-                    }
-                    result.add(row);
-                }
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("Query failed: " + sql, e);
-        }
-        return result;
     }
 
     private static final class PositionState {

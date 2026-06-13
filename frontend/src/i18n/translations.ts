@@ -1352,7 +1352,7 @@ const en = {
 } as const
 
 type Widen<T> = T extends string ? string
-  : T extends readonly any[] ? Widen<T[number]>[]
+  : T extends readonly unknown[] ? Widen<T[number]>[]
   : { readonly [K in keyof T]: Widen<T[K]> }
 export type Translation = Widen<typeof zh>
 const hk = {

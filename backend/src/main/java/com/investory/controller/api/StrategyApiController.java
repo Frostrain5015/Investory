@@ -7,7 +7,6 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
 
-import java.io.StringReader;
 import java.util.*;
 
 public class StrategyApiController {
@@ -23,19 +22,17 @@ public class StrategyApiController {
 
     public void handleSave(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long userId = getUserId(req);
-        resp.setContentType("application/json;charset=UTF-8");
         if (userId == 0) {
-            resp.getWriter().write("{\"error\":\"未登录\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "未登录")));
             return;
         }
 
-        StringBuilder sb = new StringBuilder();
-        try (var reader = req.getReader()) {
-            String line;
-            while ((line = reader.readLine()) != null) sb.append(line);
-        }
+        // Read JSON body
+        String jsonBody = new String(req.getReader().readAllBytes());
+        var gson = new com.google.gson.Gson();
         @SuppressWarnings("unchecked")
-        Map<String, Object> body = JsonUtil.fromJson(sb.toString(), Map.class);
+        Map<String, Object> body = gson.fromJson(jsonBody, Map.class);
 
         String name = (String) body.getOrDefault("name", "未命名策略");
         String strategyType = (String) body.get("strategyType");
@@ -43,7 +40,8 @@ public class StrategyApiController {
         Map<String, Object> strategy = (Map<String, Object>) body.get("strategy");
 
         if (strategyType == null || strategy == null) {
-            resp.getWriter().write("{\"error\":\"缺少策略类型或内容\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "缺少策略类型或内容")));
             return;
         }
 
@@ -51,62 +49,72 @@ public class StrategyApiController {
             String configJson = null;
             Object cfg = body.get("strategy_config");
             if (cfg instanceof Map) {
-                configJson = JsonUtil.toJson(cfg);
+                configJson = new com.google.gson.Gson().toJson(cfg);
             }
-            String json = JsonUtil.toJson(strategy);
+            String json = new com.google.gson.Gson().toJson(strategy);
+            Map<String, Object> result;
             if (body.containsKey("id") && body.get("id") instanceof Number) {
                 long id = ((Number) body.get("id")).longValue();
                 strategyDao.update(id, userId, name, json, configJson);
-                resp.getWriter().write("{\"status\":\"ok\",\"id\":" + id + "}");
+                result = Map.of("status", "ok", "id", id);
             } else {
                 long id = strategyDao.insert(userId, name, strategyType, json, configJson);
-                resp.getWriter().write("{\"status\":\"ok\",\"id\":" + id + "}");
+                result = Map.of("status", "ok", "id", id);
             }
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(result));
         } catch (Exception e) {
-            resp.getWriter().write("{\"error\":\"" + e.getMessage() + "\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", e.getMessage())));
         }
     }
 
     public void handleList(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long userId = getUserId(req);
-        resp.setContentType("application/json;charset=UTF-8");
         if (userId == 0) {
+            resp.setContentType("application/json;charset=UTF-8");
             resp.getWriter().write("[]");
             return;
         }
-        resp.getWriter().write(JsonUtil.toJson(strategyDao.findByUser(userId)));
+        List<Map<String, Object>> result = strategyDao.findByUser(userId);
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(result));
     }
 
     public void handleGet(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long userId = getUserId(req);
-        long id = Long.parseLong((String) req.getAttribute("id"));
-        resp.setContentType("application/json;charset=UTF-8");
         if (userId == 0) {
-            resp.getWriter().write("{\"error\":\"unauthorized\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "unauthorized")));
             return;
         }
+        long id = Long.parseLong((String) req.getAttribute("id"));
         Map<String, Object> row = strategyDao.findById(id);
         if (row == null) {
-            resp.getWriter().write("{\"error\":\"not found\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "not found")));
             return;
         }
         Long ownerId = row.get("user_id") instanceof Number ? ((Number) row.get("user_id")).longValue() : null;
         if (ownerId == null || ownerId != userId) {
-            resp.getWriter().write("{\"error\":\"not found\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "not found")));
             return;
         }
+        resp.setContentType("application/json;charset=UTF-8");
         resp.getWriter().write(JsonUtil.toJson(row));
     }
 
     public void handleDelete(HttpServletRequest req, HttpServletResponse resp) throws Exception {
         long userId = getUserId(req);
-        long id = Long.parseLong((String) req.getAttribute("id"));
-        resp.setContentType("application/json;charset=UTF-8");
         if (userId == 0) {
-            resp.getWriter().write("{\"error\":\"unauthorized\"}");
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write(JsonUtil.toJson(Map.of("error", "unauthorized")));
             return;
         }
+        long id = Long.parseLong((String) req.getAttribute("id"));
         int deleted = strategyDao.delete(id, userId);
-        resp.getWriter().write(deleted > 0 ? "{\"status\":\"ok\"}" : "{\"status\":\"not_found\"}");
+        resp.setContentType("application/json;charset=UTF-8");
+        resp.getWriter().write(JsonUtil.toJson(Map.of("status", deleted > 0 ? "ok" : "not_found")));
     }
 }

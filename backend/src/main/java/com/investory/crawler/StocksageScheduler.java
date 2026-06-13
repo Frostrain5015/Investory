@@ -3,7 +3,6 @@ package com.investory.crawler;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.investory.dao.StocksageCacheDao;
 import com.investory.server.AppContext;
-import com.investory.server.SchedulerService;
 import com.investory.util.StocksageAlphaExecutor;
 
 import java.time.*;
@@ -13,6 +12,11 @@ import java.util.logging.Logger;
 
 /**
  * StockSage Alpha 定时任务调度器。
+ *
+ * <p>每日收盘后自动运行多因子扫描并缓存结果，
+ * 盘中定期检测市场环境变化。
+ *
+ * <p>所有时间均为 Asia/Shanghai 时区。
  */
 public class StocksageScheduler {
 
@@ -28,30 +32,12 @@ public class StocksageScheduler {
         this.cacheDao = AppContext.get(StocksageCacheDao.class);
     }
 
+    // ── 盘后预热缓存 ─────────────────────────────────────────────────────
+
     /**
-     * Register all scheduled tasks with the SchedulerService.
+     * 每个交易日 15:30 预热 akshare 缓存（收盘后数据已更新）。
+     * 预热 CSI300 前30只股票 + 市场环境数据，后续选股/风控分析秒级响应。
      */
-    public void scheduleAll() {
-        SchedulerService.scheduleAtFixedRate("StockSage缓存预热", this::scheduledPrefetch,
-                secondsUntil(15, 30), 86400);
-        SchedulerService.scheduleAtFixedRate("StockSage主策略扫描", this::scheduledMainScan,
-                secondsUntil(18, 0), 86400);
-        SchedulerService.scheduleAtFixedRate("StockSage盘前环境检测", this::scheduledRegimeCheckMorning,
-                secondsUntil(9, 0), 86400);
-        // Intraday regime check every 30 minutes (9:30-15:00)
-        SchedulerService.scheduleAtFixedRate("StockSage盘中环境检测", this::scheduledRegimeCheckIntraday,
-                secondsUntil(9, 30), 1800);
-    }
-
-    private static long secondsUntil(int hour, int minute) {
-        java.time.ZonedDateTime now = java.time.ZonedDateTime.now(SHANGHAI);
-        java.time.ZonedDateTime target = now.withHour(hour).withMinute(minute).withSecond(0);
-        if (target.isBefore(now) || target.isEqual(now)) {
-            target = target.plusDays(1);
-        }
-        return java.time.Duration.between(now, target).getSeconds();
-    }
-
     public void scheduledPrefetch() {
         log.info("[StockSage] 开始预热缓存");
         try {
@@ -62,6 +48,12 @@ public class StocksageScheduler {
         }
     }
 
+    // ── 收盘后主策略扫描 ─────────────────────────────────────────────────
+
+    /**
+     * 每个交易日 18:00 运行主策略全市场扫描。
+     * A 股收盘 15:00，18:00 时收盘数据已齐备。
+     */
     public void scheduledMainScan() {
         log.info("[StockSage] 开始收盘后主策略扫描");
         try {
@@ -103,10 +95,18 @@ public class StocksageScheduler {
         }
     }
 
+    // ── 盘中环境检测 ────────────────────────────────────────────────────
+
+    /**
+     * 每个交易日 9:00 开盘前检测市场环境。
+     */
     public void scheduledRegimeCheckMorning() {
         runRegimeCheck();
     }
 
+    /**
+     * 盘中每 30 分钟检测一次市场环境变化（9:30-15:00）。
+     */
     public void scheduledRegimeCheckIntraday() {
         runRegimeCheck();
     }
@@ -131,6 +131,8 @@ public class StocksageScheduler {
             log.warning("[StockSage] 环境检测失败: " + e.getMessage());
         }
     }
+
+    // ── 辅助 ─────────────────────────────────────────────────────────────
 
     private String joinReasons(Object bullish) {
         if (bullish instanceof List) {

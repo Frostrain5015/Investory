@@ -73,6 +73,12 @@ export default function Hero() {
             >
               <a
                 href={frostIdLoginUrl}
+                onClick={(e) => {
+                  if (window.electronAPI?.isDesktop) {
+                    e.preventDefault()
+                    window.electronAPI.openExternal(frostIdLoginUrl)
+                  }
+                }}
                 className="flex items-center justify-center gap-2.5 h-11 px-8 rounded-xl text-sm font-medium transition-all duration-200 shadow-lg"
                 style={{
                   background: 'rgba(113, 118, 170, 0.15)',
