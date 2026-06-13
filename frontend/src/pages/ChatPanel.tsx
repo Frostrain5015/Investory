@@ -1211,7 +1211,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         style={{
           width: shellW, height: shellH, borderRadius: shellR,
           background: shellBgVal,
-          transition: `width ${sizeDur} ${SIZE_EASE} ${sizeDelay}, height ${sizeDur} ${SIZE_EASE} ${sizeDelay}, border-radius ${sizeDur} ${SIZE_EASE} ${sizeDelay}, background 220ms ease ${sizeDelay}`,
+          transition: `width ${sizeDur} ${SIZE_EASE} ${sizeDelay}, height ${sizeDur} ${SIZE_EASE} ${sizeDelay}, border-radius ${sizeDur} ${SIZE_EASE} ${sizeDelay}, background ${sizeDur} ease ${sizeDelay}`,
           willChange: 'width, height, border-radius',
         }}
         className={`relative ring-1 shadow-2xl overflow-hidden flex flex-col pb-safe ${
