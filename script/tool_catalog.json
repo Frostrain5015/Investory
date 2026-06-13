@@ -1,0 +1,152 @@
+[
+  {
+    "name": "get_portfolio",
+    "description": "【数据铁律】获取当前真实持仓组合：名称、代码、市值、盈亏、权重。用户问持仓/组合相关问题时必须先调用，禁止凭记忆作答。",
+    "category": "query"
+  },
+  {
+    "name": "get_stock_report",
+    "description": "【重型审计工具】生成单只A股的可审计 Markdown 分析报告，并把完整报告作为对话任务产物存库。用户明确要求「深度分析/审计报告/专业报告/完整分析/证据链/风险拆解/为什么能买或不能买」，或问「为什么跌这么狠/暴跌原因/上涨异动/出什么问题/还能不能持有」这类个股诊断时可以调用。symbol 可直接传中文名、常见代码或DB格式，工具会解析，禁止为了格式解析先 search_stocks 或手工拼 0./1. 前缀。简单问题不要调用：查股价、涨跌、PE/PB、名称匹配、简短解释、泛泛问一句「今天怎么样」时，优先用 get_stock_price、web_search 或直接解释。回答必须基于报告 Markdown 和证据链，不得用总分替代结论。仅支持A股；港股/美股/指数改用行情+新闻+通用分析。",
+    "category": "analysis"
+  },
+  {
+    "name": "get_portfolio_report",
+    "description": "【重型审计工具】生成当前持仓组合的可审计 Markdown 报告。只在用户要求组合体检、持仓健康、风险拆解、完整组合审计、调仓前系统评估时调用。简单询问持仓列表、盈亏、某只仓位权重时只调用 get_portfolio，不要启动本工具。",
+    "category": "analysis"
+  },
+  {
+    "name": "get_market_regime",
+    "description": "【数据铁律】获取当前A股市场环境（BULL/NORMAL/CAUTION/BEAR/CRISIS）及风险敞口建议。回答大盘、市场状态、加仓/追高问题时调用。",
+    "category": "query"
+  },
+  {
+    "name": "get_daily_picks_report",
+    "description": "【重型审计工具】生成今日候选股的可审计 Markdown 选股报告。只在用户明确询问今日候选、选股池、推荐列表且希望看到理由/风险时调用。不能直接替用户下交易结论，必须说明这是候选分析。简单问市场热点或新闻时不要调用。",
+    "category": "analysis"
+  },
+  {
+    "name": "pick_stocks",
+    "description": "【选股工具】根据用户投资偏好智能选股。接受自然语言描述（如\"高股息低波动银行股\"、\"成长性好的科技股\"、\"价值投资\"），将意图转化为因子权重和筛选条件，在指定范围内评分筛选，返回带理由的候选列表。仅在用户要求选股、推荐股票、筛选条件选股时调用；简单查个股用 get_stock_price 或 get_stock_report。",
+    "category": "analysis"
+  },
+  {
+    "name": "get_backtests",
+    "description": "【数据铁律】获取最近的历史回测记录和结果指标。",
+    "category": "query"
+  },
+  {
+    "name": "get_strategies",
+    "description": "【数据铁律】获取策略列表或单个策略详情。省略 id 参数返回全部策略列表；传 id 返回该策略的完整规则详情（入场、离场、参数、逻辑组合）。",
+    "category": "query"
+  },
+  {
+    "name": "generate_strategy",
+    "description": "【策略铁律】生成量化策略的唯一途径。用户要求写策略/构建策略/设计策略时必须调用，第一轮只调用本工具，不输出正文。description 写策略名称、入场、出场、止损、仓位和风控；code 必须包含 def decide(ctx)，仅用 numpy/math，避免 pandas/聚宽/米筐。",
+    "category": "analysis"
+  },
+  {
+    "name": "run_backtest",
+    "description": "【策略铁律】运行一次量化策略回测。策略必须先用 generate_strategy 保存（用户确认卡片），然后传入已保存的 strategy_id。回测标的：显式 stocks 优先，否则默认回测当前组合持仓。结果完整入库并通过载体卡片返回。",
+    "category": "analysis"
+  },
+  {
+    "name": "search_stocks",
+    "description": "【数据铁律】根据股票名称或代码搜索真实股票数据，返回 stockId、symbol、name、market。只在名称模糊、需要 stockId（如加入自选）或工具提示未找到时调用；用户已给明确中文名/代码时，行情、报告、基本面工具可直接接收原词。若返回多只同名不同市场股票，必须调用 ask_user 让用户选择。",
+    "category": "query"
+  },
+  {
+    "name": "get_stock_price",
+    "description": "【数据铁律】查询单只股票行情。symbol 可直接传中文名、常见代码或DB格式，工具会解析。省略 days 或 days=1 返回最新价和涨跌；days>1 返回历史K线（OHLCV）。简单行情问题优先用这个，不要启动 StockSage 报告。",
+    "category": "query"
+  },
+  {
+    "name": "get_pnl_history",
+    "description": "【数据铁律】获取组合每日净值走势和盈亏。",
+    "category": "query"
+  },
+  {
+    "name": "get_transactions",
+    "description": "【数据铁律】获取近期交易记录。",
+    "category": "query"
+  },
+  {
+    "name": "compute_correlation",
+    "description": "【数据铁律】计算持仓股票之间的价格相关性矩阵。",
+    "category": "analysis"
+  },
+  {
+    "name": "compute_sector_breakdown",
+    "description": "【数据铁律】分析持仓行业、市值和市场分布。",
+    "category": "analysis"
+  },
+  {
+    "name": "benchmark_compare",
+    "description": "【数据铁律】对比组合与基准指数表现差异。",
+    "category": "analysis"
+  },
+  {
+    "name": "analyze_backtest",
+    "description": "获取回测结果并从收益、风险、稳定性和改进方向给出客观评价。",
+    "category": "analysis"
+  },
+  {
+    "name": "suggest_strategy_optimizations",
+    "description": "基于回测结果和策略，提出3-5个参数变体优化建议。",
+    "category": "analysis"
+  },
+  {
+    "name": "ask_user",
+    "description": "【消息铁律】需要用户选择时必须调用。search_stocks 返回多市场同名股票、多个回测结果、需要确认选项时使用；调用后 UI 会生成交互按钮，禁止用文字替代选项。",
+    "category": "query"
+  },
+  {
+    "name": "manage_memory",
+    "description": "管理用户长期记忆。action='remember' → 记住偏好/事实/规则，传 fact 字段。action='forget' → 删除匹配关键词的记忆，传 keyword 字段。",
+    "category": "mutation"
+  },
+  {
+    "name": "consult_kb",
+    "description": "【知识库】用于补足框架、指标定义、策略接口或报告评分标准。命中明确工作流时先按工作流并行取证；只有拿不准方法、指标区间、报告解读或策略格式时才调用，不要把查知识库当作每次分析的固定第一步。",
+    "category": "analysis"
+  },
+  {
+    "name": "web_search",
+    "description": "联网搜索。凡涉及新闻、时事、最新动态、具体事件日期和数据库无法回答的信息，必须先调用本工具再回复。",
+    "category": "analysis"
+  },
+  {
+    "name": "optimize_portfolio",
+    "description": "均值-方差组合优化。给出当前持仓建议权重再分配，以及与当前权重的对比。用户要求调仓建议时调用。",
+    "category": "analysis"
+  },
+  {
+    "name": "get_world_market",
+    "description": "【数据铁律】获取全球主要股市指数、商品、汇率行情，以及今日全球财经/地缘要闻。问大盘、国际市场、最新新闻时调用。",
+    "category": "query"
+  },
+  {
+    "name": "get_watchlist",
+    "description": "【数据铁律】获取用户股票自选列表，含最新价格和近一周涨跌。",
+    "category": "query"
+  },
+  {
+    "name": "confirm_watchlist",
+    "description": "【必须调用】管理自选列表并弹出确认按钮。action='add' → 加入自选，传 stockId/name（先用 search_stocks 或 get_global_indices 查 stockId）。action='remove' → 移除自选，传 ids 数组（先用 get_watchlist 获取列表）。调用成功后不输出正文，等待 UI 确认。",
+    "category": "mutation"
+  },
+  {
+    "name": "confirm_create_transaction",
+    "description": "【必须调用】创建交易记录并弹出确认按钮。单笔：直接传 stockId/type/shares/price 等字段。批量：传 transactions 数组，每项含同样字段。调用成功后不输出正文，等待 UI 确认。",
+    "category": "mutation"
+  },
+  {
+    "name": "confirm_update_transaction",
+    "description": "【必须调用】编辑交易记录并弹出确认按钮。单笔：直接传 id 及需修改字段。批量：传 updates 数组，每项含 id 及需修改字段。调用成功后不输出正文，等待 UI 确认。",
+    "category": "mutation"
+  },
+  {
+    "name": "confirm_delete_transaction",
+    "description": "【必须调用】删除交易记录并弹出确认按钮。传 ids 数组（含要删除的交易ID）。调用成功后不输出正文，等待 UI 确认。",
+    "category": "mutation"
+  }
+]

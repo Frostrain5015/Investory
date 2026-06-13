@@ -1,0 +1,48 @@
+server.port=8443
+server.servlet.context-path=/investory
+
+# HTTPS
+server.ssl.key-store=${SSL_KEY_STORE:classpath:keystore.p12}
+server.ssl.key-store-password=${SSL_KEY_PASSWORD:investory}
+server.ssl.key-store-type=PKCS12
+server.ssl.key-alias=investory
+
+# Allow cross-origin cookie sending (Electron desktop client)
+server.servlet.session.cookie.same-site=none
+server.servlet.session.cookie.secure=true
+
+# MySQL: SSL enabled; set USE_SSL=false for local non-SSL dev
+spring.datasource.url=jdbc:mysql://${DB_HOST:localhost}:${DB_PORT:3306}/investory?useSSL=${USE_SSL:true}&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8&allowPublicKeyRetrieval=true&requireSSL=${USE_SSL:true}
+spring.datasource.username=${DB_USER:root}
+spring.datasource.password=${DB_PASSWORD}
+
+# Python 可执行文件名：Windows 通常为 python，Linux 为 python3
+# 可通过环境变量 PYTHON_EXEC 覆盖
+python.executable=${PYTHON_EXEC:python}
+spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
+spring.datasource.hikari.maximum-pool-size=10
+spring.datasource.hikari.minimum-idle=2
+spring.datasource.hikari.connection-timeout=30000
+spring.datasource.hikari.idle-timeout=600000
+spring.datasource.hikari.max-lifetime=1800000
+spring.datasource.hikari.pool-name=InvestoryPool
+
+# Flyway: database has existing schema, baseline instead of migrating from scratch
+spring.flyway.baseline-on-migrate=true
+spring.flyway.baseline-version=1
+
+spring.thymeleaf.cache=false
+spring.thymeleaf.encoding=UTF-8
+
+# Default AI provider key (DeepSeek). Override via env var if needed.
+ai.default.key=${AI_DEFAULT_KEY:}
+ai.title.enabled=${AI_TITLE_ENABLED:false}
+
+# Frost ID OAuth 2.1 configuration (secrets via env vars, no hardcoded defaults)
+frostid.oauth.client-id=${FROSTID_CLIENT_ID:}
+frostid.oauth.client-secret=${FROSTID_CLIENT_SECRET:}
+frostid.oauth.authorize-url=${FROSTID_AUTHORIZE_URL:https://116.62.179.231:4443/oauth/authorize}
+frostid.oauth.token-url=${FROSTID_TOKEN_URL:http://127.0.0.1:4000/oauth/token}
+frostid.oauth.userinfo-url=${FROSTID_USERINFO_URL:http://127.0.0.1:4000/oauth/userinfo}
+frostid.oauth.redirect-url=${FROSTID_REDIRECT_URL:https://116.62.179.231:8443/investory/oauth/frost-id/callback}
+frostid.oauth.scope=openid profile email

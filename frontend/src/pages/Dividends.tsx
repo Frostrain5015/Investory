@@ -1,0 +1,112 @@
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Card, CardContent } from '@/components/ui/card'
+import { shortSymbol } from '@/lib/format'
+import { useConfirm } from '@/hooks/use-confirm'
+import { Plus } from 'lucide-react'
+import { BASE } from '@/services/api'
+import { useT } from '@/i18n/I18nContext'
+
+interface Div { id: number; stockName?: string; stockSymbol?: string; amountPerShare: number; sharesHeld: number; totalAmount: number; recordDate: string }
+
+export default function Dividends() {
+  const confirm = useConfirm()
+  const { t, lang } = useT()
+  const [dividends, setDividends] = useState<Div[]>([])
+  const [loading, setLoading] = useState(true)
+
+  function load() {
+    fetch(`${BASE}/api/dividends`, { credentials: 'include' })
+      .then(r => r.json()).then(d => setDividends(d.dividends || []))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => { load() }, [])
+
+  async function handleDelete(id: number) {
+    const msg = lang === 'zh' ? '确认删除？' : 'Confirm delete?'
+    if (!(await confirm(msg))) return
+    await fetch(`${BASE}/api/dividends/${id}`, { method: 'DELETE', credentials: 'include' })
+    load()
+  }
+
+  if (loading) {
+    return <div className="flex flex-col items-center justify-center gap-3 h-96"><div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-sm text-slate-400">{t.common.loading}</span></div>
+  }
+
+  return (
+    <div className="p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight">{lang === 'zh' ? '分红记录' : 'Dividend Records'}</h2>
+        <Link to="/transactions/add?type=DIV"
+          className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
+          <Plus className="w-3.5 h-3.5" />{lang === 'zh' ? '添加分红' : 'Add Dividend'}
+        </Link>
+      </div>
+      <Card>
+        <CardContent className="p-0">
+          {dividends.length === 0 ? (
+            <div className="py-12 text-center text-slate-500 text-sm">{lang === 'zh' ? '暂无分红记录' : 'No dividend records'}</div>
+          ) : (
+            <>
+              <div className="hidden lg:block overflow-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-100">
+                      <th className="text-left text-xs font-medium text-slate-500 px-6 py-3">{lang === 'zh' ? '记录日' : 'Record Date'}</th>
+                      <th className="text-left text-xs font-medium text-slate-500 px-3 py-3">{t.transactions.stock}</th>
+                      <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{lang === 'zh' ? '每股' : 'Per Share'}</th>
+                      <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{lang === 'zh' ? '持股' : 'Shares Held'}</th>
+                      <th className="text-right text-xs font-medium text-slate-500 px-3 py-3">{t.common.total}</th>
+                      <th className="text-right text-xs font-medium text-slate-500 px-6 py-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dividends.map(d => (
+                      <tr key={d.id} className="border-b border-slate-50 hover:bg-slate-50/50 transition-colors">
+                        <td className="px-6 py-3 text-slate-600">{d.recordDate}</td>
+                        <td className="px-3 py-3">
+                          <span className="font-medium">{d.stockName}</span>
+                          <span className="text-xs text-slate-400 ml-1">{shortSymbol(d.stockSymbol || '')}</span>
+                        </td>
+                        <td className="px-3 py-3 text-right tabular-nums">{d.amountPerShare}</td>
+                        <td className="px-3 py-3 text-right tabular-nums">{d.sharesHeld}</td>
+                        <td className="px-3 py-3 text-right text-emerald-600 font-semibold tabular-nums">{d.totalAmount}</td>
+                        <td className="px-6 py-3 text-right">
+                          <button onClick={() => handleDelete(d.id)} className="text-xs text-slate-400 hover:text-red-500 transition-colors">{t.common.delete}</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {/* Mobile cards */}
+              <div className="lg:hidden divide-y divide-slate-50">
+                {dividends.map(d => (
+                  <div key={d.id} className="px-4 py-3">
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-slate-900">{d.stockName}</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{shortSymbol(d.stockSymbol || '')}</span>
+                      </div>
+                      <span className="text-xs text-slate-400">{d.recordDate}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-slate-500">
+                        <span className="tabular-nums">{d.amountPerShare}</span> x <span className="tabular-nums">{d.sharesHeld}</span>
+                      </span>
+                      <span className="tabular-nums font-semibold text-emerald-600">{d.totalAmount}</span>
+                    </div>
+                    <div className="mt-1.5 flex justify-end">
+                      <button onClick={() => handleDelete(d.id)} className="text-xs text-slate-400 hover:text-red-500 transition-colors">{t.common.delete}</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}

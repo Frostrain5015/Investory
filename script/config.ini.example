@@ -1,0 +1,25 @@
+# Investory 数据抓取配置文件
+# 复制此文件为 config.ini 并填写实际值
+# 优先级: 命令行参数 > 环境变量 > config.ini > 默认值
+
+[database]
+host     = localhost
+port     = 3306
+name     = investory
+user     = root
+password = your_password_here
+
+[proxy]
+# 美股 Yahoo Finance 需要代理（大陆服务器）
+# 留空则尝试直连（国内机器通常失败）
+# 示例: socks5h://127.0.0.1:7890
+#       http://127.0.0.1:7890
+url =
+
+[fetch]
+# 抓取最近 N 个日历日的数据（覆盖周末节假日）
+days_back = 7
+# 各市场请求间隔（秒），防限速
+delay_a  = 0.15
+delay_hk = 0.05
+delay_us = 0.3

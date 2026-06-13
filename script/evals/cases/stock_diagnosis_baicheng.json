@@ -1,0 +1,22 @@
+{
+  "id": "stock_diagnosis_baicheng",
+  "profiles": ["smoke", "full"],
+  "description": "个股诊断：中文名清晰，应直接并行取证，不先 search_stocks，不仪式化 consult_kb。",
+  "input": "百诚医药为什么跌这么狠，还能拿吗",
+  "portfolio_id": 1,
+  "user_id": 1,
+  "web_search": false,
+  "expect": {
+    "skill": "stock-diagnosis",
+    "dag_workflow": "stock_diagnosis",
+    "symbol": "百诚医药",
+    "first_round_tools": ["get_stock_price", "get_market_regime", "get_stock_report"],
+    "parallel": true,
+    "symbol_clear": true,
+    "forbid_first_round": ["search_stocks", "consult_kb"],
+    "available_includes": ["get_stock_report", "web_search"],
+    "grounded": true,
+    "portfolio_must_not_dominate": true,
+    "max_sentences": 6
+  }
+}

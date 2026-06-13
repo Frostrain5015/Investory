@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh-CN" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>授权 Investory MCP 访问</title>
+    <style>
+        :root { color-scheme: light dark; }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            background: #0f1115; color: #e6e8ec;
+        }
+        .card {
+            width: 100%; max-width: 420px; margin: 24px;
+            background: #181b21; border: 1px solid #262b33; border-radius: 16px;
+            padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,.4);
+        }
+        .logo { font-size: 13px; letter-spacing: .18em; color: #7c8694; text-transform: uppercase; margin-bottom: 8px; }
+        h1 { font-size: 20px; margin: 0 0 18px; font-weight: 600; }
+        p { color: #aab2bd; line-height: 1.6; font-size: 14px; }
+        .user { background: #11141a; border: 1px solid #262b33; border-radius: 10px; padding: 12px 14px; margin: 18px 0; font-size: 14px; }
+        .user b { color: #e6e8ec; }
+        .scopes { margin: 16px 0; padding-left: 18px; }
+        .scopes li { color: #aab2bd; font-size: 13px; margin: 6px 0; }
+        .actions { display: flex; gap: 12px; margin-top: 24px; }
+        button, .btn {
+            flex: 1; padding: 12px 16px; border-radius: 10px; font-size: 14px; font-weight: 600;
+            cursor: pointer; border: 1px solid transparent; text-align: center; text-decoration: none;
+        }
+        .primary { background: #3b82f6; color: #fff; }
+        .primary:hover { background: #2f6fd6; }
+        .ghost { background: transparent; color: #aab2bd; border-color: #2d333c; }
+        .ghost:hover { color: #e6e8ec; border-color: #3a414c; }
+        .login-hint { text-align: center; }
+        .login-hint a { color: #3b82f6; text-decoration: none; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <div class="logo">Investory · MCP</div>
+
+    <!-- 已登录：显示授权确认 -->
+    <div th:if="${loggedIn}">
+        <h1>授权 MCP 客户端访问</h1>
+        <p>一个本地 AI 客户端正在请求以你的身份访问 Investory。授权后它可以：</p>
+        <ul class="scopes">
+            <li>读取你的组合、持仓、交易、盈亏与因子分析</li>
+            <li>在你逐条确认后，代你创建/修改交易、管理自选</li>
+        </ul>
+        <div class="user">当前登录：<b th:text="${username}">user</b></div>
+        <form th:action="@{/mcp/authorize/approve}" method="post">
+            <input type="hidden" name="port" th:value="${port}"/>
+            <input type="hidden" name="state" th:value="${state}"/>
+            <div class="actions">
+                <a class="btn ghost" th:href="@{/}">取消</a>
+                <button class="primary" type="submit">允许访问</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- 未登录：引导先登录 -->
+    <div th:unless="${loggedIn}" class="login-hint">
+        <h1>请先登录 Investory</h1>
+        <p>你需要先登录 Investory 账号，再返回此页面授权 MCP 客户端。</p>
+        <p style="margin-top:20px;"><a th:href="@{/}">前往登录 →</a></p>
+        <p style="color:#7c8694;font-size:12px;margin-top:16px;">登录后请重新运行本地客户端的绑定命令。</p>
+    </div>
+</div>
+</body>
+</html>

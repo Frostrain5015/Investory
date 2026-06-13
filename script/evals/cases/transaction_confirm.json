@@ -1,0 +1,20 @@
+{
+  "id": "transaction_confirm",
+  "profiles": ["smoke", "full"],
+  "description": "交易记录：写工作流不应被 DAG 预取；只暴露 confirm_* 工具，不仪式化 consult_kb。",
+  "input": "帮我记录今天买入比亚迪100股，成交价350",
+  "portfolio_id": 1,
+  "user_id": 1,
+  "web_search": false,
+  "expect": {
+    "skill": "transaction-recording",
+    "dag_workflow": null,
+    "no_dag_prefetch": true,
+    "parallel": false,
+    "symbol_clear": false,
+    "forbid_first_round": ["consult_kb"],
+    "available_includes": ["confirm_create_transaction"],
+    "available_excludes": ["generate_strategy"],
+    "grounded": false
+  }
+}

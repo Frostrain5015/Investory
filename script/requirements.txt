@@ -1,0 +1,9 @@
+pymysql>=1.1,<2
+numpy>=1.26,<2
+baostock>=0.9,<1
+yfinance>=0.2,<1
+openai>=1.0,<2
+anthropic>=0.40,<1
+httpx>=0.25,<1
+duckduckgo-search>=4.0,<6
+python-dateutil>=2.8,<3
