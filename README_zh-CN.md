@@ -1,309 +1,224 @@
 **[English](./README.md) | [中文](./README_zh-CN.md)**
 
-# Investory
+<div align="center">
 
-功能完备的个人投资组合跟踪器，集成量化分析、策略回测与 AI 智能投资助手。
+# 📈 Investory
 
-支持 A 股（上证/深证）、港股和美股，提供多币种盈亏跟踪。
+**全栈个人投资平台 —— 投资组合跟踪、量化分析、策略回测，以及一个任意 MCP 智能体都能驱动的 AI 投资助手。**
 
----
+支持 A 股（上证 / 深证）、港股、美股，多币种盈亏跟踪。
 
-## 在线体验
+`v6.3.0` · Java 17 · Spring Boot 3.3.5 · React 19 · Electron 33 · 约 5.8 万行代码
 
-本项目已部署至云服务器，可直接访问：
+🌐 **在线体验：[investory.frostrain.tech](https://investory.frostrain.tech)**
 
-**https://116.62.179.231:8443/investory/**
-
-> **提示**：服务器使用自签名 SSL 证书，浏览器可能会显示安全警告 — 点击"高级" → "继续前往"即可。
+</div>
 
 ---
 
-## 核心特性
+## ✨ 项目亮点
 
-### 投资组合管理
-- 每用户多个独立投资组合
-- 买入 / 卖出 / 转入 / 转出交易记录
-- 分红记录（支持每股金额追踪）
-- 现金余额按币种分类（人民币 / 港币 / 美元）
-- 已平仓历史记录
+- **🤖 MCP 服务端** —— 在 `/mcp` 暴露 **46 个工具**，让 Claude / Cursor / Cline 等任意 MCP 客户端读取仪表盘、运行回测、下单（带二次确认）。零逻辑重写：每个工具携带注入的用户身份回放现有 REST 接口。
+- **🧠 AI 助手「观澜」** —— 流式对话 + 工具调用 + 深度思考模式，配套形态变形动效；可在对话中分析组合、生成策略。
+- **📊 量化引擎（StockSage Alpha）** —— 因子打分、市场状态识别、组合风格 / 风险分析，以及策略回测器（SMA/EMA/RSI/MACD/布林/KDJ 规则或自定义 Python），支持步进式（walk-forward）验证与参数优化。
+- **🌍 多市场多币种** —— A 股 / 港股 / 美股；CNY / HKD / USD，每日汇率刷新与分币种现金跟踪。
+- **💻 跨平台** —— 响应式 Web（已覆盖 320px 手机到 21:9 超宽屏测试）+ 原生 Electron 桌面客户端，支持自动更新。
+
+---
+
+## 🎯 功能
+
+### 投资组合与交易
+- 单用户多组合相互独立
+- 买入 / 卖出 / 转入 / 转出交易，分红记录
+- 平均成本与分红摊薄成本（BigDecimal 精确计算，卖出按 FIFO 回放成本）
+- 分币种现金余额 · 已平仓历史
 
 ### 仪表盘
-- 总资产曲线，支持时间范围选择（1月 / 6月 / 1年 / 全部 / 自定义）
-- 今日盈亏和累计盈亏摘要卡片
-- 仓位分布 — 饼图和词云切换
-- 持仓盈亏排名 — 累计或单日
+- 总资产曲线（1月 / 6月 / 1年 / 全部 / 自定义）
+- 今日盈亏与累计盈亏卡片 · 已实现 / 未实现拆分
+- 仓位分布图（饼图 ⇄ 词云）· 持仓盈亏排行
 
-### 持仓与自选股
-- 拖拽排序自选股列表
-- 每只股票 30 天价格迷你图
-- 可选量化指标列：Beta、波动率、历史百分位
-- 直观区分持仓股票和仅关注股票
+### 持仓与自选
+- 自选股拖拽排序 · 30 日价格迷你走势线
+- 可选量化列：Beta、波动率、历史分位
 
-### 市场概览
-- 交互式世界地图，按国家显示指数涨跌
-- 实时指数：上证指数、恒生指数、标普 500 等
-- 实时汇率（人民币 / 港币 / 美元）
-- 地理位置新闻标记（财经 / 地缘政治），可点击查看详情
+### 全球市场
+- 交互式世界地图，按各国指数涨跌着色
+- 实时全球指数 · 实时汇率 · 按地理位置标注的财经 / 地缘新闻
 
 ### 盈亏日历
-- 年度热力图（12 个月）和月度日级日历
-- 颜色深浅映射盈亏金额或收益率
-- 点击任意单元格查看详情：个股贡献和当日交易
+- 年度热力网格（12 个月）+ 月度日历
+- 颜色深浅映射盈亏金额或收益率 · 点击任意单元格查看个股归因
 
-### 量化分析
-- **风险标签页**：组合风格诊断（成长 / 价值 / 防御）、加权 Beta、资产配置图、优化建议
-- **回测标签页**：
-  - 简单规则构建器 — SMA、EMA、RSI、MACD、布林带、成交量、KDJ、止损、止盈条件
-  - 高级 Python 策略编辑器，支持自定义逻辑
-  - 回测执行过程实时进度流（SSE）
-  - 权益曲线带买卖标记，夏普比率、最大回撤、胜率、盈亏比
+### 量化分析与回测
+- **风控**：组合风格诊断（成长 / 价值 / 防御）、加权 Beta、优化建议
+- **回测**：可视化规则构建器或自定义 Python · SSE 实时进度 · 带买卖标记的净值曲线、夏普比率、最大回撤、胜率、盈亏比 · 步进式验证与网格优化
 
-### AI 助手 — 观澜
-- 浮动聊天面板，支持多轮对话
-- SSE 流式逐字输出响应
-- 深度思考模式用于复杂分析
-- 工具调用：对话中可触发组合分析和回测
-- 直接将 AI 生成的策略保存到回测库
-- 可配置供应商：阿里云百炼、OpenAI、DeepSeek、Moonshot、智谱 GLM、Anthropic Claude 或任何 OpenAI 兼容端点
+### AI 助手「观澜」
+- 悬浮对话窗，逐字流式输出（SSE），深度思考模式
+- 对话中调用工具；可将生成的策略直接保存到回测库
+- 可插拔模型供应商：DeepSeek、OpenAI、Anthropic Claude、Moonshot、智谱 GLM、阿里云百炼，或任意 OpenAI 兼容端点
 
-### 设置
-- 浅色 / 深色 / 跟随系统主题
-- 配色方案：红涨绿跌（A 股惯例）或绿涨红跌（国际惯例）
-- 基础货币选择
-- 头像上传
-- 密码修改和账户删除
+### MCP 服务端
+- Streamable HTTP 的 MCP 端点 `/mcp`，含 **46 个工具**
+- OAuth 2.1 + PKCE 令牌流 · 令牌 SHA-256 哈希存储 · 写操作两步确认
+- 在 **设置 → MCP 接入** 中自助管理令牌
 
-### 管理面板
-- 数据库实时状态：表大小、股票数量、各市场价格行数
-- 数据抓取控制：按市场启动 / 暂停 / 恢复 / 停止
-- 抓取历史审计日志
-- 用户管理：列表、删除、模拟登录
+### 设置与后台
+- 浅色 / 深色 / 跟随系统 · 红涨绿跌（A 股习惯）或国际配色 · 基准货币
+- 后台：实时数据库状态、按市场控制爬虫（启动 / 暂停 / 恢复 / 停止）、抓取审计日志、用户管理
 
 ---
 
-## 技术栈
+## 🔐 认证与会话
 
-### 后端
-
-| | |
-|---|---|
-| 语言 | Java 17 |
-| 框架 | Spring Boot 3.3.5 |
-| 数据库 | MySQL（JdbcTemplate — 无 ORM） |
-| JSON | Gson 2.10.1 |
-| 密码加密 | jBCrypt 0.4 |
-| 拼音搜索 | Pinyin4j 2.5.1 |
-| 构建工具 | Maven 3.x |
-
-### 前端
-
-| | |
-|---|---|
-| 框架 | React 19 |
-| 语言 | TypeScript |
-| 构建工具 | Vite 8 |
-| 路由 | React Router 7 |
-| 样式 | Tailwind CSS 4 |
-| 组件库 | Radix UI |
-| 图表 | Recharts 3 · ECharts 6 |
-| 动画 | Framer Motion 12 |
-| 图标 | Lucide React |
-
-### 桌面端
-
-| | |
-|---|---|
-| 框架 | Electron 33 |
-| 自动更新 | electron-updater |
-| 构建工具 | electron-builder |
-
-### Python 脚本
-
-| | |
-|---|---|
-| 运行环境 | Python 3.8+ |
-| 数据源 | 雅虎财经、新浪财经、东方财富 |
-| AI Agent | 自定义 Agent 框架（支持工具调用） |
-| 回测引擎 | 自定义回测引擎 |
+- **Frost ID OAuth 2.1** 单点登录（浏览器流程，桌面端通过 `investory://` 深链交接令牌）
+- 密码使用 **BCrypt** 哈希；**Spring Session JDBC** 将会话持久化到 MySQL，后端重启不再导致用户掉线
 
 ---
 
-## 项目结构
+## 🧱 技术栈
+
+| 层 | 技术 |
+|---|---|
+| **后端** | Java 17 · Spring Boot 3.3.5 · MySQL（JdbcTemplate，无 ORM）· Flyway · Spring Session JDBC · BCrypt · Gson |
+| **前端** | React 19 · TypeScript · Vite 8 · React Router 7 · Tailwind CSS 4 · Recharts 3 · ECharts 6 · Framer Motion 12 |
+| **桌面端** | Electron 33 · electron-builder · electron-updater（经 GitHub Releases 自动更新） |
+| **量化 / 数据** | Python 3.8+ · StockSage Alpha 引擎 · Yahoo / 新浪 / 东方财富数据源 · 自研 AI agent 与回测引擎 |
+| **集成** | MCP（模型上下文协议）服务端，46 个工具，Streamable HTTP + OAuth 2.1/PKCE |
+
+---
+
+## 📏 代码规模
+
+| 模块 | 文件数 | 行数 |
+|---|--:|--:|
+| 后端 — Java（主代码） | 76 | 14,453 |
+| 后端 — Java（测试） | 4 | 517 |
+| 前端 — TS/TSX | 62 | 13,657 |
+| 前端 — CSS | 1 | 216 |
+| Python — StockSage Alpha 引擎 | 29 | 19,516 |
+| Python — 数据 / AI 脚本 | 17 | 8,683 |
+| Python — 部署 / 压测 | 2 | 711 |
+| Electron 桌面端（JS） | 7 | 550 |
+| SQL 迁移 | 9 | 245 |
+| Thymeleaf 模板 | 1 | 72 |
+| **合计** | **208** | **约 58,620** |
+
+按语言：**Java 约 1.49 万 · TypeScript 约 1.37 万 · Python 约 2.89 万**。
+
+---
+
+## 📂 项目结构
 
 ```
 investory/
-├── backend/                          # Spring Boot（Maven）
-│   ├── pom.xml                       # 父模块：spring-boot-starter-parent 3.3.5，Java 17
+├── backend/                          # Spring Boot（Maven）—— 经 Nginx 在域名根路径提供服务
+│   ├── pom.xml                       # spring-boot-starter-parent 3.3.5, Java 17
 │   ├── src/main/java/com/investory/
-│   │   ├── InvestoryApplication.java # 主类，@SpringBootApplication
-│   │   ├── controller/               # 页面控制器 + api/ REST 控制器
-│   │   ├── dao/                      # @Repository + JdbcTemplate（通过 BaseDao）
-│   │   ├── service/                  # @Service
-│   │   ├── model/                    # POJO
-│   │   ├── crawler/                  # @Component，@Scheduled
-│   │   └── config/                   # WebConfig（拦截器、静态资源）
+│   │   ├── controller/  (+ api/、McpController、OAuthController)
+│   │   ├── dao/         # @Repository + JdbcTemplate（BaseDao）
+│   │   ├── service/     # 认证、成本计算、盈亏台账、MCP 工具注册表
+│   │   ├── crawler/     # @Scheduled 行情同步与汇率刷新
+│   │   ├── web/         # LoginInterceptor、CORS、全局异常处理
+│   │   └── config/
 │   └── src/main/resources/
-│       ├── application.properties    # 数据源，server.servlet.context-path=/investory
-│       ├── templates/                # Thymeleaf HTML
-│       └── static/                   # 前端构建输出（Vite 写入此处）
-├── frontend/
-│   ├── package.json                  # 脚本：dev, build (tsc -b && vite build)
-│   ├── vite.config.ts                # 代理 /investory → localhost:8443，base: /investory/
-│   └── src/
-│       ├── pages/                    # Dashboard, Holdings, Transactions, PnlCalendar, StockDetail, Portfolio, Settings
-│       ├── components/               # Layout, CloudChart, ui/*
-│       ├── hooks/                    # useAuth, useSettings
-│       ├── services/api.ts           # API 客户端（前缀 /investory）
-│       └── types/index.ts            # TypeScript 接口定义
-├── desktop/
-│   ├── main.js                       # Electron 主进程
-│   ├── preload.js                    # 预加载脚本（上下文隔离）
-│   ├── package.json                  # electron-builder 配置
-│   └── assets/                       # 应用图标和安装程序图片
-└── script/
-    ├── ai_agent.py                   # AI 投资助手（观澜）
-    ├── backtest_engine.py            # 策略回测引擎
-    ├── fetch_stocks.py               # 市场数据抓取（A 股、港股、美股）
-    ├── fetch_news.py                 # 财经新闻聚合
-    ├── analyze_quant.py              # 量化分析
-    ├── portfolio_style_analyzer.py   # 组合风格诊断
-    ├── optimizer.py                  # 组合优化
-    ├── config.ini                    # 配置文件（从 config.ini.example 复制）
-    └── agent_skills/                 # AI Agent 工具定义
+│       ├── application.properties
+│       ├── db/migration/             # Flyway V1..V7
+│       ├── python/stocksage_alpha/   # 常驻量化引擎
+│       └── static/                   # 构建后的前端（Vite 输出）
+├── frontend/                         # React + TS + Vite
+│   └── src/{pages,components,hooks,services,i18n,types}
+├── desktop/                          # Electron（main.js、preload.js、electron-builder）
+├── script/                           # 数据爬虫、AI agent、回测引擎、agent_skills/
+└── deploy.py                         # 安全部署 + 桌面端 GitHub 发布
 ```
 
 ---
 
-## 快速开始
+## 🚀 快速开始
 
-### 环境依赖
+### 环境要求
+Java 17 · Maven 3.9+ · Node.js 20+ · Python 3.8+ · MySQL 8
 
-- Java 17
-- Maven 3.9+
-- Node.js 20+ / npm
-- Python 3.8+
-- MySQL 8
-
-### 数据库
-
-创建数据库并更新 `backend/src/main/resources/application.properties` 中的凭据：
-
+### 1. 数据库
 ```sql
-CREATE DATABASE investory_db CHARACTER SET utf8mb4;
+CREATE DATABASE investory CHARACTER SET utf8mb4;
 ```
+通过环境变量（`DB_USER`、`DB_PASSWORD` 等）配置凭据 —— 见 `application.properties`。启动时 Flyway 自动执行迁移。
 
-### 后端（Spring Boot）
-
-Maven 构建会自动编译前端（`tsc -b && vite build`），将输出复制到 `backend/src/main/resources/static/`，然后编译 Java。
-
-**完整构建 + 运行：**
-
+### 2. 后端（构建时自动编译前端）
+Maven 构建会运行 `tsc -b && vite build` 并把产物复制到 `static/` 后再打包。
 ```bash
 export JAVA_HOME=/path/to/jdk-17
-mvn -f backend/pom.xml spring-boot:run -DskipTests
-```
-
-**构建生产 JAR：**
-
-```bash
+mvn -f backend/pom.xml spring-boot:run -DskipTests          # 开发
+# 或
 mvn -f backend/pom.xml package -DskipTests
-java -jar backend/target/investory.jar
+java -jar backend/target/investory.jar                      # 生产 JAR
 ```
 
-应用访问地址：`https://localhost:8443/investory/`
-
-### 前端（Vite）
-
-**开发模式（热更新）：**
-
+### 3. 前端开发服务器（热重载）
 ```bash
-cd frontend
-npm install
-npm run dev
-# → http://localhost:5173/investory/
-# API 请求代理到 localhost:8443
+cd frontend && npm install && npm run dev   # http://localhost:5173，/api 代理到后端
 ```
 
-**仅构建：**
-
+### 4. Python 脚本
 ```bash
-cd frontend
-npm run build
-# 输出到 ../backend/src/main/resources/static/
+cd script && pip install -r requirements.txt
+cp config.ini.example config.ini            # 配置 MySQL + 代理
+python fetch_stocks.py --market a|hk|us      # 抓取行情数据
 ```
 
-### Python 脚本
-
-安装依赖：
-
+### 5. 桌面客户端
 ```bash
-cd script
-pip install -r requirements.txt
-```
-
-配置数据库和代理：
-
-```bash
-cp config.ini.example config.ini
-# 编辑 config.ini，填写 MySQL 凭据和代理设置
-```
-
-运行市场数据抓取：
-
-```bash
-python fetch_stocks.py --market a      # A 股
-python fetch_stocks.py --market hk     # 港股
-python fetch_stocks.py --market us     # 美股
-```
-
-运行 AI 助手：
-
-```bash
-python ai_agent.py
-```
-
-### 桌面端（Electron）
-
-**开发模式：**
-
-```bash
-cd desktop
-npm install
-npm run build:frontend    # 为 Electron 构建前端
-npm start                 # 启动 Electron 应用
-```
-
-**构建安装程序：**
-
-```bash
-cd desktop
-npm run build:exe         # 构建 NSIS 安装程序（.exe）
-npm run build:msi         # 构建 MSI 安装程序
+cd desktop && npm install
+npm run build:frontend && npm start          # 开发
+npm run build:exe                             # 打包 NSIS 安装包
 ```
 
 ---
 
-## API 概览
+## 🔌 接入 MCP 智能体
+
+1. 打开应用 → **设置 → MCP 接入** → 生成令牌。
+2. 添加到你的客户端（如 Claude Code / Cursor 的 `.mcp.json`）：
+
+```json
+{
+  "mcpServers": {
+    "investory": {
+      "type": "http",
+      "url": "https://investory.frostrain.tech/mcp",
+      "headers": { "Authorization": "Bearer <你的令牌>" }
+    }
+  }
+}
+```
+
+3. 重载客户端并运行 `/mcp` —— 应出现 `investory`（46 个工具）。域名使用有效的 Let's Encrypt 证书，**无需额外配置 CA 证书**。
+
+---
+
+## 📡 API 概览
 
 | 分组 | 端点 |
 |---|---|
-| 认证 | `GET /api/session` · `POST /api/password` · `DELETE /api/account` |
-| 组合 | CRUD `/api/portfolios` · `POST /api/portfolio/refresh` |
-| 仪表盘 | `GET /api/dashboard` · `GET /api/cash` · `GET /api/closed-positions` |
-| 持仓 | `GET /api/holdings` |
-| 交易 | CRUD `/api/transactions` |
-| 分红 | CRUD `/api/dividends` |
-| 股票 | `GET /api/search` · `GET /api/quote/{symbol}` · `GET /api/chart` · `GET /api/stocks/{symbol}` |
-| 盈亏 | `GET /api/daily-detail` · `GET /api/monthly-detail` |
+| 认证 / 会话 | `GET /api/session` · `GET/POST /oauth/frost-id/*` · `DELETE /api/account` |
+| 投资组合 | CRUD `/api/portfolios` · `POST /api/portfolio/refresh` |
+| 仪表盘 | `GET /api/dashboard` · `/api/cash` · `/api/closed-positions` |
+| 持仓 / 交易 / 分红 | `GET /api/holdings` · CRUD `/api/transactions` · CRUD `/api/dividends` |
+| 股票 | `GET /api/stock/search` · `/api/chart` · `/api/stocks/{symbol}` |
+| 盈亏日历 | `GET /api/chart?type=pnl_calendar` · `/api/daily-detail` · `/api/monthly-detail` |
 | 自选 | CRUD `/api/watchlist` · `PUT /api/watchlist/reorder` |
 | 市场 | `GET /api/market/indices` · `/exchange-rates` · `/news` |
-| 量化 | `GET /api/quant/holdings-metrics` · `/portfolio-style` · `/portfolio-scenario` |
-| 回测 | CRUD `/api/backtest/strategies` · `POST /api/backtest/start` · `GET /api/backtest/stream`（SSE） |
-| AI | `POST /api/ai/chat` · `GET /api/ai/stream`（SSE） · `GET/POST /api/ai/settings` |
-| 管理 | `/api/admin/status` · `/users` · `/crawl-history` · `/crawl/{market}` |
+| 量化 / 回测 | `/api/quant/*` · `/api/stocksage/*` · CRUD `/api/backtest/strategies` · `GET /api/backtest/stream`（SSE） |
+| AI | `POST /api/ai/chat` · `GET /api/ai/stream`（SSE） · `/api/ai/settings` |
+| MCP | `POST /mcp`（JSON-RPC） · `/oauth/mcp/*`（OAuth 2.1 + PKCE） |
+| 后台 | `/api/admin/status` · `/users` · `/crawl-history` · `/crawl/{market}` |
 
 ---
 
-## 许可证
+## 📄 许可证
 
 MIT
