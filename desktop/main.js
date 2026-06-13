@@ -18,6 +18,11 @@ const ICON = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png
 app.commandLine.appendSwitch('ignore-certificate-errors')
 app.commandLine.appendSwitch('no-proxy-server')
 
+// Windows: associate the running process with the installed app identity so the
+// taskbar shows our icon (not the generic Electron one) and groups under the
+// NSIS shortcut. Must match the electron-builder `appId`.
+if (process.platform === 'win32') app.setAppUserModelId('com.investory.desktop')
+
 // ── Deep-link login (investory://auth?token=…) ─────────────────────
 // Frost ID login happens in the system browser; the backend redirects to an
 // investory:// deep link carrying a one-time token, which we forward to the

@@ -13,7 +13,7 @@
 
     <groupId>com.investory</groupId>
     <artifactId>investory</artifactId>
-    <version>6.2.2</version>
+    <version>6.2.3</version>
     <name>Investory</name>
 
     <properties>
