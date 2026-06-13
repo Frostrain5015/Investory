@@ -38,9 +38,29 @@ const isElectron = !!(window as any).electronAPI?.isDesktop
 function LoadingScreen() {
   const { t } = useT()
   return (
-    <div className="flex flex-col items-center justify-center gap-3 h-full bg-slate-50 dark:bg-slate-950">
-      <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 dark:border-slate-700 dark:border-t-slate-300 rounded-full animate-spin" />
-      <span className="text-sm text-slate-400">{t.common.loading}</span>
+    <div className="flex flex-col items-center justify-center gap-4 h-full bg-slate-50 dark:bg-slate-950">
+      {/* Orb — a small glowing pill that pulses like the Guanlan idle state */}
+      <motion.div
+        className="w-10 h-10 rounded-full"
+        style={{ background: 'linear-gradient(135deg, #863bff, #47bfff)' }}
+        animate={{
+          scale: [1, 1.15, 1],
+          opacity: [0.8, 1, 0.8],
+        }}
+        transition={{
+          duration: 1.5,
+          repeat: Infinity,
+          ease: 'easeInOut',
+        }}
+      />
+      <motion.span
+        className="text-sm text-slate-400"
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2, duration: 0.3 }}
+      >
+        {t.common.loading}
+      </motion.span>
     </div>
   )
 }
