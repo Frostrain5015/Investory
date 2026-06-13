@@ -16,6 +16,14 @@ html {
   scrollbar-gutter: stable;
 }
 
+/* Electron: the frameless window scrolls only inside inner containers, so the
+   document never scrolls. Drop the reserved gutter, which would otherwise show
+   as an empty strip down the right edge. */
+html.electron {
+  overflow: hidden;
+  scrollbar-gutter: auto;
+}
+
 @keyframes breath-gradient {
   0%, 100% { filter: brightness(1); }
   50% { filter: brightness(1.15); }
