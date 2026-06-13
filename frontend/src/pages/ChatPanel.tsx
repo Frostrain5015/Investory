@@ -1152,11 +1152,14 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   // the target state (isIdle): whichever stage leads gets delay 0, the other waits.
   const POS_EASE  = 'cubic-bezier(0.22, 1, 0.36, 1)'     // smooth glide
   const SIZE_EASE = 'cubic-bezier(0.34, 1.28, 0.64, 1)'  // gentle spring overshoot
-  const posDur    = isIdle ? '300ms' : '260ms'
-  const sizeDur   = isIdle ? '260ms' : '340ms'
-  const STAGGER   = '110ms'
-  const posDelay  = isIdle ? STAGGER : '0ms'   // open: lead;  close: wait for collapse
-  const sizeDelay = isIdle ? '0ms'   : STAGGER // open: wait for glide;  close: lead
+  // The trailing stage must wait until the leading stage is ~done, or it steals
+  // the show. Open: glide leads (delay 0), bloom waits 220ms so the orb visibly
+  // travels to center first. Close: shrink leads (delay 0), glide waits 110ms —
+  // already reads well, so it's left untouched.
+  const posDur    = isIdle ? '300ms' : '240ms'
+  const sizeDur   = isIdle ? '260ms' : '300ms'
+  const posDelay  = isIdle ? '110ms' : '0ms'    // close waits for shrink; open leads
+  const sizeDelay = isIdle ? '0ms'   : '220ms'  // open waits for glide;  close leads
 
   const shellW = isIdle ? '60px' : 'min(720px, calc(100vw - 32px))'
   const shellH = isIdle ? '60px'
@@ -1225,7 +1228,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               initial={{ opacity: 0, scale: 0.25 }}
               animate={{ opacity: [0.5, 0], scale: 1.7 }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.7, ease: 'easeOut', delay: 0.1 }}
+              transition={{ duration: 0.7, ease: 'easeOut', delay: 0.22 }}
               className="pointer-events-none absolute left-1/2 bottom-0 -translate-x-1/2"
               style={{ width: '120%', aspectRatio: '1', borderRadius: '9999px',
                        background: 'radial-gradient(circle, rgba(134,59,255,0.40), transparent 62%)' }} />
@@ -1235,7 +1238,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               initial={{ x: '-130%', opacity: 0 }}
               animate={{ x: '160%', opacity: [0, 0.55, 0] }}
               exit={{ opacity: 0 }}
-              transition={{ duration: 0.85, ease: 'easeOut', delay: 0.18 }}
+              transition={{ duration: 0.85, ease: 'easeOut', delay: 0.28 }}
               className="pointer-events-none absolute inset-y-0 w-1/2"
               style={{ background: 'linear-gradient(105deg, transparent, rgba(255,255,255,0.6), transparent)' }} />
           )}
@@ -1250,7 +1253,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               initial={{ opacity: 0, scale: 0.6 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.6, transition: { duration: 0.1, ease: 'easeIn' } }}
-              transition={{ duration: 0.24, ease: [0.34, 1.28, 0.64, 1], delay: 0.12 }}
+              transition={{ duration: 0.24, ease: [0.34, 1.28, 0.64, 1], delay: 0.15 }}
               className="absolute inset-0 flex items-center justify-center text-white pointer-events-none">
               <Sparkles className="w-6 h-6" />
             </motion.div>
@@ -1266,7 +1269,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10, transition: { duration: 0.13, ease: 'easeIn' } }}
-              transition={{ duration: 0.30, ease: [0.22, 1, 0.36, 1], delay: 0.16 }}
+              transition={{ duration: 0.30, ease: [0.22, 1, 0.36, 1], delay: 0.28 }}
               className="flex flex-col h-full w-full">
 
               {/* Gradient hairline */}
