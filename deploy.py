@@ -308,29 +308,58 @@ def github_token():
     return token
 
 
+UNPACKED_EXE = r"C:\tmp\investory-dist\win-unpacked\Investory.exe"
+RCEDIT_EXE   = os.path.join(DESKTOP_DIR, "build-tools", "rcedit-x64.exe")
+APP_ICO      = os.path.join(DESKTOP_DIR, "assets", "icon.ico")
+
+
+def _run(cmd, env, label):
+    kw = {"cwd": DESKTOP_DIR, "env": env}
+    if isinstance(cmd, str):
+        kw["shell"] = True
+    r = subprocess.run(cmd, **kw)
+    if r.returncode != 0:
+        print(f"{label} FAILED.")
+        sys.exit(1)
+
+
 def publish_desktop_release(version):
-    """Build the Electron frontend and publish a signed NSIS installer +
-    latest.yml to GitHub Releases. Installed clients on an older version pick
-    up the feed on next launch — that is the auto-update 'trigger'."""
+    """Build the Electron app and publish an (unsigned) NSIS installer +
+    latest.yml to GitHub Releases. Installed clients on an older version pick up
+    the feed on next launch — that is the auto-update 'trigger'.
+
+    Three-phase, because electron-builder can't embed the app-exe icon in this
+    environment: the rcedit it bundles lives inside winCodeSign, whose archive
+    has macOS symlinks that won't extract on Windows without admin/Developer Mode
+    ("客户端没有所需的特权"). So win.signAndEditExecutable is false (no winCodeSign
+    download), and we embed the icon ourselves with a vendored standalone rcedit
+    between packing and installer assembly:
+        1. --dir            pack the app (default Electron exe icon)
+        2. rcedit           set the favicon icon on the packed exe
+        3. --prepackaged    build the NSIS installer from the edited dir + publish
+    """
     token = github_token()
     if not token:
         print("ERROR: no GitHub token. Set GH_TOKEN or run `gh auth login`.")
         sys.exit(1)
     env = os.environ.copy()
     env["GH_TOKEN"] = token
+    env["CSC_IDENTITY_AUTO_DISCOVERY"] = "false"  # never code-sign → no winCodeSign
 
     print("Building desktop frontend (electron mode) ...")
-    r = subprocess.run("npm run build:frontend", cwd=DESKTOP_DIR, env=env, shell=True)
-    if r.returncode != 0:
-        print("Desktop frontend build FAILED.")
-        sys.exit(1)
+    _run("npm run build:frontend", env, "Desktop frontend build")
 
-    print(f"Publishing desktop release v{version} to GitHub ...")
-    r = subprocess.run("npx electron-builder --win --publish always",
-                       cwd=DESKTOP_DIR, env=env, shell=True)
-    if r.returncode != 0:
-        print("electron-builder publish FAILED.")
-        sys.exit(1)
+    print("Phase 1/3 — packing app (electron-builder --dir) ...")
+    _run("npx electron-builder --win --dir", env, "electron-builder --dir")
+
+    print("Phase 2/3 — embedding app icon via rcedit ...")
+    _run([RCEDIT_EXE, UNPACKED_EXE, "--set-icon", APP_ICO], env, "rcedit set-icon")
+
+    print(f"Phase 3/3 — building installer + publishing v{version} ...")
+    unpacked_dir = os.path.dirname(UNPACKED_EXE)
+    _run(f'npx electron-builder --win --prepackaged "{unpacked_dir}" --publish always',
+         env, "electron-builder publish")
+
     print(f"Desktop release v{version} published. Older clients will detect "
           f"the update on next launch.")
 
