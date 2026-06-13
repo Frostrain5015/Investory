@@ -30,18 +30,18 @@ export default function Research() {
 
   return (
     <div className="p-6 space-y-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <h2 className="text-xl font-bold text-slate-900 tracking-tight shrink-0">
           投研
           <span className="ml-2 px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 rounded align-middle">Beta</span>
         </h2>
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] text-slate-400">仅支持中国A股分析</span>
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          <span className="hidden md:inline text-[10px] text-slate-400 whitespace-nowrap">仅支持中国A股分析</span>
           {regime && <MarketThermometer regime={regime} />}
           <div className="flex bg-slate-100 rounded-lg p-0.5">
             {TABS.map(({ key, icon: Icon, label }) => (
               <button key={key} onClick={() => setTab(key)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${tab === key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                className={`px-2.5 sm:px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap ${tab === key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
                 <Icon className="w-3.5 h-3.5 inline mr-1" />{label}
               </button>
             ))}
