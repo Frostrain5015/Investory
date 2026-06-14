@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle, Brain, BarChart2 } from 'lucide-react'
+import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle, Brain, BarChart2, Mic } from 'lucide-react'
 import { useToast } from '@/components/Toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { usePrompt } from '@/hooks/use-prompt'
@@ -33,7 +33,7 @@ export type TimelineStep =
   | { kind: 'thinking'; text: string; _ts?: number; _elapsed?: number }
   | { kind: 'kb'; topic: string }
   | { kind: 'memory'; count?: string | number }
-  | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string; summary?: string; callId?: string }
+  | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string; summary?: string; callId?: string; detail?: string }
   // The assistant's user-facing answer, interleaved in true emission order with
   // thinking/tool steps so a chunk of answer written *before* a later tool call
   // renders above that tool call — not dumped below the whole timeline.
@@ -88,6 +88,7 @@ const TOOL_ICONS: Record<string, typeof Search> = {
   get_daily_picks_report: Sparkles,
   ask_user: HelpCircle,
   consult_kb: BookOpen,
+  web_search: Globe,
 }
 
 function getToolIcon(name: string, category: ToolCategory) {
@@ -163,7 +164,6 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
     <div className="mb-1.5">
       <button onClick={() => { setUserToggled(true); setOpen(o => !o) }}
         className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-500 transition-colors">
-        <span className={`w-1.5 h-1.5 rounded-full ${done ? 'bg-slate-300' : 'bg-amber-400 animate-pulse'}`} />
         {done ? `已思考 用时${elapsedSec}s` : `思考中… ${elapsedSec}s`}
         <span className="text-[9px] ml-0.5 opacity-50">{open ? '▲' : '▼'}</span>
       </button>
@@ -201,38 +201,57 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
 
 /** A single tool invocation: icon + name + dot (colour-coded by category
  *  and running/done/failed state). Always visible, never collapsed. */
-function ToolStepDisplay({ step, lang }: { step: Extract<TimelineStep, { kind: 'tool' }>; lang: 'zh' | 'en' | 'hk' }) {
-  const { label, dot, Icon } = toolStyle(step)
+function ToolStepDisplay({ step, idx, lang, isLast }: { step: Extract<TimelineStep, { kind: 'tool' }>; idx: number; lang: 'zh' | 'en' | 'hk'; isLast?: boolean }) {
+  const { label, Icon } = toolStyle(step)
   const running = !step.done && !step.error
   const stockSage = isStockSageTool(step.name)
+  const isWebSearch = step.name === 'web_search'
   const displayName = stockSage
     ? (lang === 'en' ? 'StockSage engine' : 'StockSage 量化引擎')
     : localizeToolName(step.name, lang)
   const statusText = running
     ? (lang === 'en' ? 'running' : '运行中')
     : (lang === 'en' ? 'completed' : '已完成')
-  const bounce = stockSage ? 'bg-purple-400'
+  // web_search: count of referenced sources, parsed from the summary digest
+  // ("N 条" / "N items"). Renders as "参考了 N 篇资料" — like 头部 AI app.
+  const sourceCount = (() => {
+    if (!isWebSearch || !step.summary) return null
+    const m = step.summary.match(/\d+/)
+    return m ? m[0] : null
+  })()
+  const refsText = sourceCount
+    ? (lang === 'en' ? `referenced ${sourceCount} sources` : `参考了 ${sourceCount} 篇资料`)
+    : null
+  // Node colour: running → category hue (with halo), done → emerald, error → red.
+  const catColor = stockSage || step.category === 'analysis' ? 'bg-purple-400'
     : step.category === 'mutation' ? 'bg-amber-400'
-    : step.category === 'analysis' ? 'bg-purple-400'
     : 'bg-slate-400'
+  const dotClass = step.error ? 'bg-red-400' : step.done ? 'bg-emerald-400' : catColor
   return (
-    <motion.div initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-      className="mb-1.5 flex items-start gap-2 text-[11px]">
-      <span className={`mt-1 w-1.5 h-1.5 rounded-full shrink-0 ${dot}`} />
-      <div className={`flex-1 flex items-center gap-1.5 ${label}`}>
+    <StepRow idx={idx} live={running} dotClass={dotClass} ringColor={catColor} isLast={isLast}>
+      <div className={`flex items-center gap-1.5 text-[11px] ${label}`}>
         <Icon className={`w-3 h-3 ${running ? 'animate-pulse' : ''}`} />
         <span className="font-medium">{displayName}</span>
-        {!step.error && !stockSage && <span className="text-[10px] opacity-70">{statusText}</span>}
-        {running && (
-          <span className="inline-flex gap-0.5 ml-0.5" aria-label={statusText}>
-            <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} />
-            <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} style={{ animationDelay: '0.15s' }} />
-            <span className={`w-1 h-1 rounded-full animate-bounce ${bounce}`} style={{ animationDelay: '0.3s' }} />
-          </span>
-        )}
-        {step.done && !step.error && <Check className="w-3 h-3 opacity-70" />}
-        {step.done && !step.error && step.summary && !stockSage && (
-          <span className="text-[10px] text-slate-400">{step.summary}</span>
+        {/* web_search: show the search keyword while running (like 头部 AI app),
+            and "参考了 N 篇资料" once done — instead of the generic 运行中/已完成. */}
+        {isWebSearch && !step.error ? (
+          <>
+            {running && step.detail && (
+              <span className="text-[10px] text-slate-500 truncate max-w-[180px]" title={step.detail}>
+                “{step.detail}”
+              </span>
+            )}
+            {step.done && <Check className="w-3 h-3 opacity-70" />}
+            {step.done && refsText && <span className="text-[10px] text-slate-400">{refsText}</span>}
+          </>
+        ) : (
+          <>
+            {!step.error && !stockSage && <span className="text-[10px] opacity-70">{statusText}</span>}
+            {step.done && !step.error && <Check className="w-3 h-3 opacity-70" />}
+            {step.done && !step.error && step.summary && !stockSage && (
+              <span className="text-[10px] text-slate-400">{step.summary}</span>
+            )}
+          </>
         )}
         {/* StockSage engine: status shown as summary instead of inline */}
         {!step.error && stockSage && (
@@ -245,7 +264,7 @@ function ToolStepDisplay({ step, lang }: { step: Extract<TimelineStep, { kind: '
           </>
         )}
       </div>
-    </motion.div>
+    </StepRow>
   )
 }
 
@@ -258,74 +277,149 @@ function stripThinkTags(text: string): string {
 
 const MARKDOWN_BODY_CLASS = 'prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-100 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto'
 
+const MARKDOWN_COMPONENTS = {
+  code: ({ children, className, ...props }: { children?: React.ReactNode; className?: string }) => {
+    const txt = String(children).trim()
+    if (/^\d{4,6}\.(SH|SZ|HK|US)$/i.test(txt) || /^[A-Z]{1,5}\.US$/i.test(txt))
+      return <a href={`${BASE}/stock?symbol=${txt}`} target="_blank" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-xs font-medium hover:bg-purple-100">{txt}</a>
+    return <code className={className} {...props}>{children}</code>
+  }
+}
+
 /** Shared renderer for the assistant's answer markdown (stock-code chips +
  * GFM). Used by both the live/historical timeline text steps and the legacy
  * single-block fallback, so all answer text renders identically. */
 function MarkdownBody({ text }: { text: string }) {
   return (
     <div className={MARKDOWN_BODY_CLASS}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
-        code: ({ children, className, ...props }) => {
-          const txt = String(children).trim()
-          if (/^\d{4,6}\.(SH|SZ|HK|US)$/i.test(txt) || /^[A-Z]{1,5}\.US$/i.test(txt))
-            return <a href={`${BASE}/stock?symbol=${txt}`} target="_blank" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-xs font-medium hover:bg-purple-100">{txt}</a>
-          return <code className={className} {...props}>{children}</code>
-        }
-      }}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{text}</ReactMarkdown>
     </div>
   )
 }
 
-/** Renders an array of TimelineSteps as a peer-level sequence:
- * each thinking segment gets its own collapse block, each tool gets its
- * own inline indicator, and each answer chunk renders inline at its true
- * position — exactly how Claude Code / Codex render. */
+/** Live variant of MarkdownBody for the streaming answer. The text is ALWAYS
+ * rendered through the full Markdown pipeline (identical structure to the
+ * finished message — headers, lists, tables, code, stock chips all format
+ * correctly the whole way through), so streaming never shows raw markup.
+ *
+ * The fade-in is applied purely in CSS to the last rendered block of the live
+ * body (`.streaming-md > *:last-child`), so the trailing edge — where new
+ * tokens land — softly materializes while everything above stays steady. No
+ * splitting of the markdown string, so no chance of breaking its layout. */
+function StreamingMarkdownBody({ text }: { text: string }) {
+  return (
+    <div className={`${MARKDOWN_BODY_CLASS} streaming-md`}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{text}</ReactMarkdown>
+    </div>
+  )
+}
+
+/** One node on the connected timeline rail. Owns the fixed-width left gutter where
+ * the dot sits, plus the rail SEGMENT that connects this node down to the NEXT one.
+ * The segment is omitted on the last node (`isLast`) so the rail terminates exactly
+ * at the final data point — it never overshoots past the last emission. Geometry:
+ * the dot center is at x=7px / y=7px; the connector starts there and spans the row's
+ * full height, landing precisely on the next node's center. `live` shows the
+ * breathing halo; `idx` drives the staggered slide-in. */
+function StepRow({ idx, live, dotClass, ringColor, isLast, children }: {
+  idx: number; live?: boolean; dotClass: string; ringColor?: string; isLast?: boolean; children: React.ReactNode
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -6 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1], delay: Math.min(idx * 0.05, 0.4) }}
+      className="relative pl-6 pb-2 last:pb-0"
+    >
+      {/* Rail segment: from this node's center down to the next node's center. Drawn
+          behind the dot (the dot's ring-white masks the overlap) and grows downward
+          as the row enters. Omitted on the last node so the rail ends on a data point. */}
+      {!isLast && (
+        <span className="timeline-rail absolute left-[7px] top-[7px] h-full w-px bg-slate-200" />
+      )}
+      {/* Node, centered on the rail (x=7px). ring-white lifts it off the line. */}
+      <span className="absolute left-[3px] top-[3px] flex items-center justify-center">
+        {live && (
+          <span className={`absolute w-2 h-2 rounded-full node-halo ${ringColor || 'bg-slate-400'}`} />
+        )}
+        <span className={`relative w-2 h-2 rounded-full ring-2 ring-white ${dotClass}`} />
+      </span>
+      {children}
+    </motion.div>
+  )
+}
+
+/** Whether a step actually renders a node (empty text / empty thinking render
+ * nothing, so they must not count as the rail's terminus). */
+function stepRenders(step: TimelineStep): boolean {
+  if (step.kind === 'text') return stripThinkTags(step.text).trim() !== ''
+  if (step.kind === 'thinking') return step.text.trim() !== ''
+  return true
+}
+
+/** Renders an array of TimelineSteps as a CONNECTED vertical rail: a continuous
+ * line threads through EVERY step's node — thinking, memory, kb, tool, AND answer
+ * text are all data points in true emission order. The running node breathes; rows
+ * slide in staggered. The rail is built from per-node segments and terminates on the
+ * LAST data point (no overshoot past the final emission).
+ * Behavior/order is unchanged — only the visuals. */
 function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: boolean; lang: 'zh' | 'en' | 'hk' }) {
   if (steps.length === 0) return null
+  // Index of the last step that actually renders — that node ends the rail.
+  let lastIdx = -1
+  for (let i = steps.length - 1; i >= 0; i--) { if (stepRenders(steps[i])) { lastIdx = i; break } }
   return (
-    <div className="mb-2">
+    <div className="relative mb-2">
       {steps.map((step, i) => {
+        const isLast = i === lastIdx
         if (step.kind === 'text') {
           const body = stripThinkTags(step.text)
           if (!body.trim()) return null
-          return <div key={i} className="mb-2"><MarkdownBody text={body} /></div>
+          // The answer is a data point too. While streaming, the final text node is
+          // live (breathing) and uses the token-fade renderer.
+          const isLiveText = !done && i === steps.length - 1
+          return (
+            <StepRow key={i} idx={i} isLast={isLast} live={isLiveText}
+              dotClass={isLiveText ? 'bg-violet-400' : 'bg-violet-500'} ringColor="bg-violet-400">
+              <div className="pt-px">{isLiveText ? <StreamingMarkdownBody text={body} /> : <MarkdownBody text={body} />}</div>
+            </StepRow>
+          )
         }
         if (step.kind === 'thinking') {
-          // This segment is "done" if anything follows it (tool call or newer
-          // thinking) OR if the whole generation is complete. Only the very
-          // last segment in an active generation stays live.
+          // Live until something follows it OR the whole turn finishes.
           const segDone = i < steps.length - 1 || done
-          return <ThinkingSegment key={i} text={step.text} done={segDone} _ts={step._ts} _elapsed={step._elapsed} />
+          return (
+            <StepRow key={i} idx={i} isLast={isLast} live={!segDone}
+              dotClass={segDone ? 'bg-slate-300' : 'bg-amber-400'} ringColor="bg-amber-400">
+              <ThinkingSegment text={step.text} done={segDone} _ts={step._ts} _elapsed={step._elapsed} />
+            </StepRow>
+          )
         }
         if (step.kind === 'kb') {
           return (
-            <motion.div key={i} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-              className="mb-1.5 flex items-start gap-2 text-[11px]">
-              <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-indigo-400" />
-              <div className="flex-1 flex items-center gap-1.5 text-indigo-600">
+            <StepRow key={i} idx={i} isLast={isLast} dotClass="bg-indigo-400">
+              <div className="flex items-center gap-1.5 text-[11px] text-indigo-600">
                 <BookOpen className="w-3 h-3" />
                 <span className="font-medium">{lang === 'en' ? 'Consulting knowledge base' : '查阅知识库'}</span>
                 <Check className="w-3 h-3 opacity-70" />
                 <span className="text-[10px] text-slate-400">· {step.topic}</span>
               </div>
-            </motion.div>
+            </StepRow>
           )
         }
         if (step.kind === 'memory') {
           return (
-            <motion.div key={i} initial={{ opacity: 0, y: 3 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18, ease: 'easeOut' }}
-              className="mb-1.5 flex items-start gap-2 text-[11px]">
-              <span className="mt-1 w-1.5 h-1.5 rounded-full shrink-0 bg-blue-400" />
-              <div className="flex-1 flex items-center gap-1.5 text-blue-600">
+            <StepRow key={i} idx={i} isLast={isLast} dotClass="bg-blue-400">
+              <div className="flex items-center gap-1.5 text-[11px] text-blue-600">
                 <Brain className="w-3 h-3" />
                 <span className="font-medium">{lang === 'en' ? 'Recalling memory' : '读取记忆'}</span>
                 <Check className="w-3 h-3 opacity-70" />
                 {step.count ? <span className="text-[10px] text-slate-400">· {step.count} {lang === 'en' ? 'items' : '条'}</span> : null}
               </div>
-            </motion.div>
+            </StepRow>
           )
         }
-        if (step.kind === 'tool') return <ToolStepDisplay key={i} step={step} lang={lang} />
+        if (step.kind === 'tool') return <ToolStepDisplay key={i} step={step} idx={i} isLast={isLast} lang={lang} />
         return null  // unknown/legacy step kinds (e.g. old 'skill') — skip gracefully
       })}
     </div>
@@ -366,7 +460,9 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [streamTimeline, setStreamTimeline] = useState<TimelineStep[]>([])
-  const [webSearch, setWebSearch] = useState(false)
+  const [webSearch] = useState(false)
+  const [listening, setListening] = useState(false)
+  const recognitionRef = useRef<any>(null)
   const [dockHeight, setDockHeight] = useState(96)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
@@ -573,13 +669,13 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         pushTimeline()
       })
       es.addEventListener('tool', (e) => {
-        const d = JSON.parse(e.data) as { name?: string; category?: ToolCategory; callId?: string }
+        const d = JSON.parse(e.data) as { name?: string; category?: ToolCategory; callId?: string; detail?: string }
         const name = d.name || ''
         if (!name) return
         const category: ToolCategory = d.category === 'analysis' || d.category === 'mutation' ? d.category : 'query'
         // A new tool call closes any open thinking segment and starts a tool step
         stampClosedElapsed(timelineRef.current)
-        timelineRef.current = [...timelineRef.current, { kind: 'tool', name, category, done: false, ...(d.callId ? { callId: d.callId } : {}) }]
+        timelineRef.current = [...timelineRef.current, { kind: 'tool', name, category, done: false, ...(d.callId ? { callId: d.callId } : {}), ...(d.detail ? { detail: d.detail } : {}) }]
         pushTimeline()
       })
       es.addEventListener('tool_end', (e) => {
@@ -692,6 +788,31 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  function toggleVoiceInput() {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SR) { toast('语音输入不受支持', false); return }
+    if (listening) {
+      recognitionRef.current?.stop()
+      setListening(false)
+      return
+    }
+    const recog = new SR()
+    recog.lang = lang === 'zh' || lang === 'hk' ? 'zh-CN' : 'en-US'
+    recog.continuous = false
+    recog.interimResults = false
+    recog.maxAlternatives = 1
+    recog.onresult = (e: SpeechRecognitionEvent) => {
+      const transcript = e.results[0][0].transcript
+      setInput(prev => prev ? prev + transcript : transcript)
+      setListening(false)
+    }
+    recog.onerror = () => setListening(false)
+    recog.onend = () => setListening(false)
+    recognitionRef.current = recog
+    recog.start()
+    setListening(true)
+  }
 
   async function send(textOverride?: string) {
     const text = (textOverride !== undefined ? textOverride : input).trim()
@@ -891,7 +1012,11 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         {/* Deep-think toggle removed — thinking is now auto-enabled for real
             requests via server-side smart routing, so tools fire reliably
             without a manual switch. */}
-        <button onClick={() => setWebSearch(!webSearch)} className={`p-1.5 rounded-md transition-colors ${webSearch ? 'text-sky-500' : 'text-slate-400 hover:text-slate-500'}`} title={t.chat.webSearch}><Globe className="w-4 h-4" /></button>
+        <button onClick={toggleVoiceInput} disabled={streaming}
+          className={`p-1.5 rounded-md transition-colors ${listening ? 'text-purple-500 animate-pulse' : 'text-slate-400 hover:text-slate-500'} disabled:opacity-40`}
+          title={listening ? (lang === 'en' ? 'Listening…' : '语音输入中…') : (lang === 'en' ? 'Voice input' : '语音输入')}>
+          <Mic className="w-4 h-4" />
+        </button>
       </div>
       <textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
         placeholder={t.chat.placeholder} rows={1} disabled={streaming}
@@ -1237,7 +1362,14 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           transition: `width ${sizeDur} ${SIZE_EASE} ${sizeDelay}, height ${sizeDur} ${SIZE_EASE} ${sizeDelay}, border-radius ${sizeDur} ${SIZE_EASE} ${sizeDelay}`,
           willChange: 'width, height, border-radius',
         }}
-        className={`relative ring-1 shadow-2xl overflow-hidden flex flex-col pb-safe ${
+        // overflow-clip (not overflow-hidden): clips the bloom/sheen identically
+        // but does NOT create a scroll container. With overflow-hidden the shell is
+        // still programmatically scrollable, so the streaming auto-scroll
+        // (scrollRef.scrollIntoView) would scroll the SHELL itself — pushing the
+        // header/messages above the top edge and leaving the input floating in an
+        // empty panel. overflow-clip makes the shell unscrollable so scrollIntoView
+        // only moves the intended inner messages panel.
+        className={`relative ring-1 shadow-2xl overflow-clip flex flex-col pb-safe ${
           isIdle
             ? 'ring-white/20 shadow-purple-500/30 cursor-pointer active:brightness-95 items-center justify-center'
             : 'ring-slate-200/70 shadow-purple-500/15'

@@ -102,6 +102,7 @@ public class WebConfig implements WebMvcConfigurer {
                         "/api/session", "/api/session/test-login", "/api/stock/search",
                         "/api/stocksage/regime", "/api/stocksage/scan-results",
                         "/api/stocksage/portfolio-analysis",
-                        "/assets/**", "/favicon.svg", "/icons.svg", "/*.js", "/*.css", "/*.json");
+                        "/assets/**", "/favicon.svg", "/icons.svg", "/*.js", "/*.css", "/*.json",
+                        "/slides.html");
     }
 }

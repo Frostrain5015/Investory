@@ -1370,24 +1370,127 @@ def tool_consult_kb(topic: str) -> dict:
         "instruction": "已查阅知识库。请把上述内容作为判断标准或格式约束使用；不要因为查了知识库就重启工作流，也不要把知识库内容当作替代真实数据的证据。"
     }
 
-def tool_web_search(query: str, count: int = 5) -> dict:
-    """联网搜索（DuckDuckGo，免费无API key）"""
+def _get_search_key(env_var: str, ini_key: str) -> str:
+    """Search-provider API key: env var first, then config.ini [search] <ini_key>.
+    On the server, keys are injected via systemd Environment= (never in the repo)."""
+    key = os.getenv(env_var, "").strip()
+    if key:
+        return key
+    import configparser
+    cfg = configparser.ConfigParser()
+    cfg_file = SCRIPT_DIR / "config.ini"
+    if cfg_file.exists():
+        cfg.read(cfg_file, encoding="utf-8")
     try:
-        try:
-            from ddgs import DDGS
-        except ImportError:
-            from duckduckgo_search import DDGS
-        results = []
-        with DDGS() as ddgs:
-            for r in ddgs.text(query, max_results=min(count, 8)):
-                results.append({"title": r.get("title",""), "snippet": r.get("body","")[:300], "url": r.get("href","")})
-        if not results:
-            return {"query": query, "results": [], "note": "未找到相关结果"}
-        return {"query": query, "results": results, "note": f"共{len(results)}条结果"}
-    except ImportError:
-        return {"error": "搜索模块未安装", "note": "pip3 install --break-system-packages ddgs"}
-    except Exception as e:
-        return {"error": f"搜索失败: {str(e)[:100]}"}
+        return cfg.get("search", ini_key, fallback="").strip()
+    except Exception:
+        return ""
+
+
+def get_bocha_key() -> str:
+    return _get_search_key("BOCHA_API_KEY", "bocha_key")
+
+
+def get_tavily_key() -> str:
+    return _get_search_key("TAVILY_API_KEY", "tavily_key")
+
+
+def _bocha_search(query: str, count: int, api_key: str) -> dict:
+    """博查 Web Search API — domestic (no proxy / GFW), LLM-ready results with summaries.
+    Endpoint: POST https://api.bochaai.com/v1/web-search ; response is Bing-shaped
+    (data.webPages.value[]). Raises on HTTP/parse error so the caller can fall back."""
+    import requests
+    resp = requests.post(
+        "https://api.bochaai.com/v1/web-search",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={"query": query, "summary": True, "count": min(count, 10), "freshness": "noLimit"},
+        timeout=12,  # domestic endpoint should answer fast; fail quick rather than hang
+    )
+    resp.raise_for_status()
+    payload = resp.json()
+    pages = (((payload or {}).get("data") or {}).get("webPages") or {}).get("value") or []
+    results = []
+    for p in pages[:count]:
+        results.append({
+            "title": p.get("name", ""),
+            # 'summary' is Bocha's LLM-oriented digest; fall back to the raw snippet
+            "snippet": (p.get("summary") or p.get("snippet") or "")[:300],
+            "url": p.get("url", ""),
+            "site": p.get("siteName", ""),
+            "date": p.get("datePublished", "") or p.get("dateLastCrawled", ""),
+        })
+    return {"query": query, "results": results,
+            "note": f"共{len(results)}条结果" if results else "未找到相关结果"}
+
+
+def _tavily_search(query: str, count: int, api_key: str) -> dict:
+    """Tavily — LLM-native search API for overseas/English coverage. Tavily is hosted
+    abroad, so on the mainland server we route it through the proxy (same as the LLM
+    calls). topic='finance' biases toward financial sources, fitting this agent.
+    Endpoint: POST https://api.tavily.com/search ; response has results[] +
+    an optional LLM 'answer'. Raises on HTTP/parse error so the caller can fall back."""
+    import requests
+    proxy = os.getenv("PROXY_URL", get_proxy()) or None
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    resp = requests.post(
+        "https://api.tavily.com/search",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "query": query,
+            "max_results": min(count, 10),
+            "topic": "finance",
+            "search_depth": "basic",   # 1 credit; 'advanced' costs 2 and is slower
+            "include_answer": True,    # Tavily's synthesized answer — handy for the LLM
+        },
+        proxies=proxies,
+        timeout=15,
+    )
+    resp.raise_for_status()
+    payload = resp.json() or {}
+    results = []
+    for r in payload.get("results", [])[:count]:
+        results.append({
+            "title": r.get("title", ""),
+            "snippet": (r.get("content") or "")[:300],
+            "url": r.get("url", ""),
+        })
+    out = {"query": query, "results": results,
+           "note": f"共{len(results)}条结果" if results else "未找到相关结果"}
+    answer = (payload.get("answer") or "").strip()
+    if answer:
+        out["answer"] = answer  # surface Tavily's summary to the model
+    return out
+
+
+def tool_web_search(query: str, count: int = 5) -> dict:
+    """联网搜索。国内信息走博查(Bocha，无需代理、中文好)，海外信息走 Tavily(经代理，
+    LLM 原生)。两者各带一次重试；都配置时博查优先、失败降级 Tavily。"""
+    bocha_key = get_bocha_key()
+    tavily_key = get_tavily_key()
+    errors = []
+
+    def _try(name, fn):
+        for attempt in range(2):  # one retry on transient network/rate hiccup
+            try:
+                return fn()
+            except Exception as e:
+                errors.append(f"{name} try{attempt+1}: {str(e)[:80]}")
+        return None
+
+    # Primary: Bocha (domestic, fast, no proxy). Fallback: Tavily (overseas, via proxy).
+    if bocha_key:
+        r = _try("bocha", lambda: _bocha_search(query, count, bocha_key))
+        if r is not None:
+            return r
+    if tavily_key:
+        r = _try("tavily", lambda: _tavily_search(query, count, tavily_key))
+        if r is not None:
+            return r
+
+    if not bocha_key and not tavily_key:
+        return {"error": "搜索未配置",
+                "note": "请配置 BOCHA_API_KEY（国内）或 TAVILY_API_KEY（海外，经代理）"}
+    return {"error": "搜索失败: " + " | ".join(errors[-2:])}
 
 def tool_get_backtests(user_id: int, limit: int = 5) -> list:
     """获取最近的回测结果"""
@@ -2529,7 +2632,7 @@ _TOOL_TIMEOUTS = {
     "benchmark_compare": 45,
     "optimize_portfolio": 120,       # subprocess 110s
     "analyze_backtest": 45,
-    "web_search": 30,
+    "web_search": 20,   # Bocha caps at 12s + one retry; fail fast rather than hang
     "get_world_market": 30,
     "run_backtest": 120,             # subprocess 110s
 }
@@ -2607,17 +2710,34 @@ def _log_tool(name: str, latency_ms: int, ok: bool, extra: str = "") -> None:
         pass
 
 
+def _tool_detail(name: str, args: dict) -> str:
+    """A short, user-facing detail shown live while the tool runs (à la 头部 AI app
+    showing the search keywords). Currently only web_search surfaces its query.
+    Must be single-line (rides the tab-framed [TOOL] line)."""
+    try:
+        if name == "web_search":
+            q = str((args or {}).get("query", "")).strip()
+            return q.replace("\t", " ").replace("\n", " ")[:60]
+    except Exception:
+        pass
+    return ""
+
+
 def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0, call_id: str = "") -> str:
-    # Protocol: [TOOL] <name>\t<category>\t<call_id>. call_id is the model's own
-    # tool-call id (à la Claude Code's tool_use_id); it pairs this start with its
-    # [TOOL_END]/[TOOL_FAIL] so parallel calls of the SAME tool can't cross-wire
-    # the way the old name-only matching did.
+    # Protocol: [TOOL] <name>\t<category>\t<call_id>\t<detail>. call_id is the
+    # model's own tool-call id (à la Claude Code's tool_use_id); it pairs this start
+    # with its [TOOL_END]/[TOOL_FAIL] so parallel calls of the SAME tool can't
+    # cross-wire. <detail> is an optional live label (e.g. the web_search query).
     import time as _time, uuid as _uuid
     cid = call_id or _uuid.uuid4().hex[:8]
     # consult_kb emits its own [KB] line — don't double-show as a regular tool
     skip_tool_line = name == "consult_kb"
     if not skip_tool_line:
-        print(f"[TOOL] {name}\t{_tool_category(name)}\t{cid}", flush=True)
+        detail = _tool_detail(name, args)
+        line = f"[TOOL] {name}\t{_tool_category(name)}\t{cid}"
+        if detail:
+            line += f"\t{detail}"
+        print(line, flush=True)
     t0 = _time.monotonic()
     try:
         result = _run_tool(name, args, portfolio_id, user_id)

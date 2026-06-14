@@ -29,6 +29,51 @@ html.electron {
   50% { filter: brightness(1.15); }
 }
 
+/* ── 观澜 streaming answer fade-in ─────────────────────────────────────────
+   The live AI answer is rendered as full Markdown (correct structure the whole
+   way through). As tokens land, the trailing block — where new content appears
+   — softly fades up from a slightly-dimmed state, so the answer materializes at
+   its growing edge instead of snapping in, while everything above stays steady.
+   Applied only to the last block of the live body. Respects reduced-motion. */
+@keyframes token-fade-in {
+  from { opacity: 0.35; transform: translateY(1px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.streaming-md > *:last-child {
+  animation: token-fade-in 0.45s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .streaming-md > *:last-child { animation: none; }
+}
+
+/* ── 观澜 timeline — connected rail + live node ────────────────────────────
+   The agent timeline is a connected vertical rail (one continuous line) with
+   each step's dot sitting on it as a node. The currently-running node emits a
+   soft, slowly-expanding halo ring (currentColor-tinted by category) so the eye
+   tracks "where the work is" as it travels down the rail. Respects reduced-motion. */
+@keyframes node-halo {
+  0%   { transform: scale(1);   opacity: 0.55; }
+  70%  { transform: scale(2.6); opacity: 0; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+.node-halo {
+  /* a ring that rides on top of the dot; color comes from the parent's text color */
+  animation: node-halo 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+/* The rail line itself draws in (top→down) the first time it appears. */
+@keyframes rail-draw {
+  from { transform: scaleY(0); }
+  to   { transform: scaleY(1); }
+}
+.timeline-rail {
+  transform-origin: top center;
+  animation: rail-draw 0.5s ease-out both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .node-halo { animation: none; }
+  .timeline-rail { animation: none; }
+}
+
 /* Prevent text from collapsing into single-char-per-line on narrow mobile containers */
 h1, h2, h3, h4, h5, h6, p, span, a, th, td, label, button, li,
 [class*="text-"] {

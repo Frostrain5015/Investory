@@ -92,7 +92,7 @@ export default function UpdateBanner() {
             initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0, x: -8 }} transition={{ ...springSnappy, delay: stagger }}
             className="whitespace-nowrap">
-            正在后台下载…
+            正在下载…
           </motion.span>
         )}
 

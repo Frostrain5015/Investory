@@ -121,11 +121,12 @@ public class AiSessionManager {
         emitToAll(get(userId), "memory", data);
     }
 
-    public void emitTool(long userId, String name, String category, String callId) {
+    public void emitTool(long userId, String name, String category, String callId, String detail) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("name", name);
         data.put("category", category);
         if (callId != null && !callId.isEmpty()) data.put("callId", callId);
+        if (detail != null && !detail.isEmpty()) data.put("detail", detail);
         emitToAll(get(userId), "tool", data);
     }
 

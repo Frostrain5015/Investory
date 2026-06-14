@@ -346,11 +346,13 @@ public class AiApiController {
                             timeline.add(memStep);
                             session.emitMemory(uid, cnt);
                         } else if (line.startsWith("[TOOL]")) {
-                            // Payload: "<name>\t<category>\t<callId>" (latter two optional)
-                            String[] parts = line.substring(6).trim().split("\t", 3);
+                            // Payload: "<name>\t<category>\t<callId>\t<detail>" (last three optional).
+                            // <detail> is a live label such as the web_search query keywords.
+                            String[] parts = line.substring(6).trim().split("\t", 4);
                             String name = parts.length > 0 ? parts[0] : "";
                             String category = parts.length > 1 ? parts[1].trim() : "query";
                             String callId = parts.length > 2 ? parts[2].trim() : "";
+                            String detail = parts.length > 3 ? parts[3].trim() : "";
                             // A new tool call closes the current thinking + text segments
                             closeThinking.run();
                             closeText.run();
@@ -358,8 +360,9 @@ public class AiApiController {
                             step.put("kind", "tool"); step.put("name", name);
                             step.put("category", category); step.put("done", false);
                             if (!callId.isEmpty()) step.put("callId", callId);
+                            if (!detail.isEmpty()) step.put("detail", detail);
                             timeline.add(step);
-                            session.emitTool(uid, name, category, callId);
+                            session.emitTool(uid, name, category, callId, detail);
                         } else if (line.startsWith("[ARTIFACT]")) {
                             try {
                                 String jsonStr = line.substring(10).trim();
