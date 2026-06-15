@@ -73,7 +73,7 @@ function PageTransition({ children }: { children: React.ReactNode }) {
         <motion.div
           key={location.pathname}
           initial={{ opacity: 0, clipPath: 'circle(0% at 50% 50%)' }}
-          animate={{ opacity: 1, clipPath: 'circle(75% at 50% 50%)' }}
+          animate={{ opacity: 1, clipPath: 'circle(100% at 50% 50%)' }}
           exit={{ opacity: 0, scale: 0.97 }}
           transition={{
             type: 'spring',

@@ -24,3 +24,9 @@ investory_dump.sql.gz
 desktop/
 frontend/.env.electron
 
+# Generated docs / presentation artifacts & source archives (not source-controlled)
+/Investory-*.html
+/Investory-*.png
+/investory-presentation.html
+*.rar
+
