@@ -308,7 +308,7 @@ def github_token():
     return token
 
 
-UNPACKED_EXE = r"C:\tmp\investory-dist\win-unpacked\Investory.exe"
+UNPACKED_EXE = r"C:\tmp\investory-build\win-unpacked\Investory.exe"
 RCEDIT_EXE   = os.path.join(DESKTOP_DIR, "build-tools", "rcedit-x64.exe")
 APP_ICO      = os.path.join(DESKTOP_DIR, "assets", "icon.ico")
 

@@ -35,7 +35,7 @@ export default defineConfig(({ mode }) => {
     },
     base: env.VITE_BASE || '/',
     build: {
-      outDir: mode === 'electron' ? '../desktop/dist' : '../backend/src/main/resources/static',
+      outDir: mode === 'electron' ? '../desktop/www' : '../backend/src/main/resources/static',
       emptyOutDir: true,
     },
   }
