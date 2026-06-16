@@ -201,7 +201,7 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
 
 /** A single tool invocation: icon + name + dot (colour-coded by category
  *  and running/done/failed state). Always visible, never collapsed. */
-function ToolStepDisplay({ step, idx, lang, isLast }: { step: Extract<TimelineStep, { kind: 'tool' }>; idx: number; lang: 'zh' | 'en' | 'hk'; isLast?: boolean }) {
+function ToolStepDisplay({ step, idx, lang, isLast, noAnimate }: { step: Extract<TimelineStep, { kind: 'tool' }>; idx: number; lang: 'zh' | 'en' | 'hk'; isLast?: boolean; noAnimate?: boolean }) {
   const { label, Icon } = toolStyle(step)
   const running = !step.done && !step.error
   const stockSage = isStockSageTool(step.name)
@@ -228,7 +228,7 @@ function ToolStepDisplay({ step, idx, lang, isLast }: { step: Extract<TimelineSt
     : 'bg-slate-400'
   const dotClass = step.error ? 'bg-red-400' : step.done ? 'bg-emerald-400' : catColor
   return (
-    <StepRow idx={idx} live={running} dotClass={dotClass} ringColor={catColor} isLast={isLast}>
+    <StepRow idx={idx} live={running} dotClass={dotClass} ringColor={catColor} isLast={isLast} noAnimate={noAnimate}>
       <div className={`flex items-center gap-1.5 text-[11px] ${label}`}>
         <Icon className={`w-3 h-3 ${running ? 'animate-pulse' : ''}`} />
         <span className="font-medium">{displayName}</span>
@@ -286,29 +286,18 @@ const MARKDOWN_COMPONENTS = {
   }
 }
 
-/** Shared renderer for the assistant's answer markdown (stock-code chips +
- * GFM). Used by both the live/historical timeline text steps and the legacy
- * single-block fallback, so all answer text renders identically. */
-function MarkdownBody({ text }: { text: string }) {
-  return (
-    <div className={MARKDOWN_BODY_CLASS}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{text}</ReactMarkdown>
-    </div>
-  )
-}
-
-/** Live variant of MarkdownBody for the streaming answer. The text is ALWAYS
- * rendered through the full Markdown pipeline (identical structure to the
- * finished message — headers, lists, tables, code, stock chips all format
- * correctly the whole way through), so streaming never shows raw markup.
+/** Unified Markdown renderer for both streaming and completed answer text.
+ * Renders through the full Markdown pipeline (stock-code chips, GFM tables,
+ * headers, lists, code — all format correctly even mid-stream).
  *
- * The fade-in is applied purely in CSS to the last rendered block of the live
- * body (`.streaming-md > *:last-child`), so the trailing edge — where new
- * tokens land — softly materializes while everything above stays steady. No
- * splitting of the markdown string, so no chance of breaking its layout. */
-function StreamingMarkdownBody({ text }: { text: string }) {
+ * When `streaming` is true the `streaming-md` CSS class is added so the
+ * trailing block softly fades in via the token-fade-in animation; when false
+ * the class is removed in-place without unmounting — no flash on completion.
+ * This avoids the previous StreamingMarkdownBody → MarkdownBody component
+ * swap that caused React to unmount/remount the entire subtree. */
+function MarkdownBody({ text, streaming }: { text: string; streaming?: boolean }) {
   return (
-    <div className={`${MARKDOWN_BODY_CLASS} streaming-md`}>
+    <div className={`${MARKDOWN_BODY_CLASS}${streaming ? ' streaming-md' : ''}`}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{text}</ReactMarkdown>
     </div>
   )
@@ -321,14 +310,14 @@ function StreamingMarkdownBody({ text }: { text: string }) {
  * the dot center is at x=7px / y=7px; the connector starts there and spans the row's
  * full height, landing precisely on the next node's center. `live` shows the
  * breathing halo; `idx` drives the staggered slide-in. */
-function StepRow({ idx, live, dotClass, ringColor, isLast, children }: {
-  idx: number; live?: boolean; dotClass: string; ringColor?: string; isLast?: boolean; children: React.ReactNode
+function StepRow({ idx, live, dotClass, ringColor, isLast, noAnimate, children }: {
+  idx: number; live?: boolean; dotClass: string; ringColor?: string; isLast?: boolean; noAnimate?: boolean; children: React.ReactNode
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, x: -6 }}
+      initial={noAnimate ? false : { opacity: 0, x: -6 }}
       animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1], delay: Math.min(idx * 0.05, 0.4) }}
+      transition={noAnimate ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1], delay: Math.min(idx * 0.05, 0.4) }}
       className="relative pl-6 pb-2 last:pb-0"
     >
       {/* Rail segment: from this node's center down to the next node's center. Drawn
@@ -363,7 +352,7 @@ function stepRenders(step: TimelineStep): boolean {
  * slide in staggered. The rail is built from per-node segments and terminates on the
  * LAST data point (no overshoot past the final emission).
  * Behavior/order is unchanged — only the visuals. */
-function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: boolean; lang: 'zh' | 'en' | 'hk' }) {
+function TimelineRenderer({ steps, done, lang, noAnimate }: { steps: TimelineStep[]; done: boolean; lang: 'zh' | 'en' | 'hk'; noAnimate?: boolean }) {
   if (steps.length === 0) return null
   // Index of the last step that actually renders — that node ends the rail.
   let lastIdx = -1
@@ -379,9 +368,9 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
           // live (breathing) and uses the token-fade renderer.
           const isLiveText = !done && i === steps.length - 1
           return (
-            <StepRow key={i} idx={i} isLast={isLast} live={isLiveText}
+            <StepRow key={i} idx={i} isLast={isLast} live={isLiveText} noAnimate={noAnimate}
               dotClass={isLiveText ? 'bg-violet-400' : 'bg-violet-500'} ringColor="bg-violet-400">
-              <div className="pt-px">{isLiveText ? <StreamingMarkdownBody text={body} /> : <MarkdownBody text={body} />}</div>
+              <div className="pt-px"><MarkdownBody text={body} streaming={isLiveText} /></div>
             </StepRow>
           )
         }
@@ -389,7 +378,7 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
           // Live until something follows it OR the whole turn finishes.
           const segDone = i < steps.length - 1 || done
           return (
-            <StepRow key={i} idx={i} isLast={isLast} live={!segDone}
+            <StepRow key={i} idx={i} isLast={isLast} live={!segDone} noAnimate={noAnimate}
               dotClass={segDone ? 'bg-slate-300' : 'bg-amber-400'} ringColor="bg-amber-400">
               <ThinkingSegment text={step.text} done={segDone} _ts={step._ts} _elapsed={step._elapsed} />
             </StepRow>
@@ -397,7 +386,7 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
         }
         if (step.kind === 'kb') {
           return (
-            <StepRow key={i} idx={i} isLast={isLast} dotClass="bg-indigo-400">
+            <StepRow key={i} idx={i} isLast={isLast} noAnimate={noAnimate} dotClass="bg-indigo-400">
               <div className="flex items-center gap-1.5 text-[11px] text-indigo-600">
                 <BookOpen className="w-3 h-3" />
                 <span className="font-medium">{lang === 'en' ? 'Consulting knowledge base' : '查阅知识库'}</span>
@@ -409,7 +398,7 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
         }
         if (step.kind === 'memory') {
           return (
-            <StepRow key={i} idx={i} isLast={isLast} dotClass="bg-blue-400">
+            <StepRow key={i} idx={i} isLast={isLast} noAnimate={noAnimate} dotClass="bg-blue-400">
               <div className="flex items-center gap-1.5 text-[11px] text-blue-600">
                 <Brain className="w-3 h-3" />
                 <span className="font-medium">{lang === 'en' ? 'Recalling memory' : '读取记忆'}</span>
@@ -419,7 +408,7 @@ function TimelineRenderer({ steps, done, lang }: { steps: TimelineStep[]; done: 
             </StepRow>
           )
         }
-        if (step.kind === 'tool') return <ToolStepDisplay key={i} step={step} idx={i} isLast={isLast} lang={lang} />
+        if (step.kind === 'tool') return <ToolStepDisplay key={i} step={step} idx={i} isLast={isLast} lang={lang} noAnimate={noAnimate} />
         return null  // unknown/legacy step kinds (e.g. old 'skill') — skip gracefully
       })}
     </div>
@@ -1070,8 +1059,8 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                 const hasTextStep = !!tl && tl.some(s => s.kind === 'text')
                 return <>
                   {tl && tl.length > 0
-                    ? <TimelineRenderer steps={tl} done={true} lang={lang} />
-                    : m.thinking && <TimelineRenderer steps={[{ kind: 'thinking', text: m.thinking }]} done={true} lang={lang} />}
+                    ? <TimelineRenderer steps={tl} done={true} lang={lang} noAnimate />
+                    : m.thinking && <TimelineRenderer steps={[{ kind: 'thinking', text: m.thinking }]} done={true} lang={lang} noAnimate />}
                   {!hasTextStep && m.content && <MarkdownBody text={m.content} />}
                 </>
               })() : <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>}
