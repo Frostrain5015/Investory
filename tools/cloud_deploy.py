@@ -24,7 +24,8 @@ def runtime_path(source: str) -> str | None:
             return "stocksage_alpha/" + relative
     if source.startswith("script/"):
         relative = source[len("script/"):]
-        if "/" not in relative and (path.suffix in {".py", ".json"} or relative == "requirements.txt"):
+        if "/" not in relative and (path.suffix == ".py" or relative in {
+                "requirements.txt", "ai_knowledge_base.json", "tool_catalog.json"}):
             return source
         if relative.startswith("agent_skills/") and path.suffix == ".md":
             return source
@@ -35,7 +36,7 @@ def git(root: Path, *args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=root, encoding="utf-8").strip()
 
 
-def release_files(root: Path) -> tuple[dict[str, Path], list[str]]:
+def release_files(root: Path, previous_commit: str | None = None) -> tuple[dict[str, Path], list[str]]:
     files = {"investory.jar": root / "backend/target/investory.jar"}
     for source in git(root, "ls-files", "-z", "--", "script", ENGINE_PREFIX).split("\0"):
         target = runtime_path(source) if source else None
@@ -44,7 +45,12 @@ def release_files(root: Path) -> tuple[dict[str, Path], list[str]]:
             if not local.is_file():
                 raise FileNotFoundError(local)
             files[target] = local
-    removed = [target for source in git(root, "diff", "HEAD^", "HEAD", "--diff-filter=D", "--name-only").splitlines()
+    # A release can include follow-up commits after its version bump. Compare the
+    # whole release range rather than only the last commit.
+    if previous_commit is None:
+        version_commit = git(root, "log", "-1", "--format=%H", "--", "backend/pom.xml")
+        previous_commit = version_commit + "^"
+    removed = [target for source in git(root, "diff", previous_commit, "HEAD", "--diff-filter=D", "--name-only").splitlines()
                if (target := runtime_path(source)) is not None]
     return files, removed
 
@@ -83,6 +89,8 @@ if operation == "backup":
         source = scoped(stage / "files", relative)
         if hashlib.sha256(source.read_bytes()).hexdigest() != expected:
             raise ValueError("Staged checksum mismatch: " + relative)
+        if relative.endswith(".py"):
+            compile(source.read_text(encoding="utf-8"), str(source), "exec")
     backup.mkdir(exist_ok=False)
     existed = []
     paths = sorted(set(data["hashes"]) | set(data["removed"]))
@@ -176,7 +184,11 @@ def deploy_cloud(client, root: Path, version: str, health_url: str) -> dict:
     commit = git(root, "rev-parse", "HEAD")
     if commit != git(root, "rev-parse", "origin/master"):
         raise RuntimeError("Push this release to origin/master before deploying")
-    files, removed = release_files(root)
+    previous = remote(client, "test ! -f " + APP_ROOT + "/release.json || cat " + APP_ROOT + "/release.json")
+    previous_commit = json.loads(previous).get("commit") if previous else None
+    if previous_commit is not None:
+        git(root, "cat-file", "-e", previous_commit + "^{commit}")
+    files, removed = release_files(root, previous_commit)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     stage = f"{APP_ROOT}/releases/{version}-{commit[:12]}-{stamp}"
     manifest = {"version": version, "commit": commit, "createdAt": stamp,

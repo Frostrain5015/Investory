@@ -17,30 +17,11 @@ Refuses to restart the service if a market-data crawl is running.
 
 import paramiko, os, sys, subprocess, time, shlex, re, json
 from pathlib import Path
-import hashlib
 import shutil
-from datetime import datetime, timezone
+from tools.cloud_deploy import active_jobs, deploy_cloud
 
 HOST      = "116.62.179.231"
 USER      = "root"
-LOCAL_JAR  = r"d:\Java Projects\investory\backend\target\investory.jar"
-LOCAL_SCRIPT_DIR = r"d:\Java Projects\investory\script"
-SCRIPT_SYNC_DIRS = ["agent_skills"]
-# Sync the complete tracked runtime, including factor packages and deletions.
-LOCAL_ENGINE_DIR = r"d:\Java Projects\investory\backend\src\main\python\stocksage_alpha"
-REMOTE_ENGINE_DIR = "/opt/investory/stocksage_alpha"
-ENGINE_SERVICE = "stocksage"
-REMOTE_JAR = "/opt/investory/investory.jar"
-REMOTE_SCRIPT_DIR = "/opt/investory/script"
-SERVICE    = "investory"
-REMOTE_SSL_KEYSTORE = "/opt/investory/keystore.p12"
-REMOTE_SSL_ALIAS = "investory"
-REMOTE_SSL_PASSWORD = "investory"
-SYSTEMD_DROPIN_DIR = f"/etc/systemd/system/{SERVICE}.service.d"
-SYSTEMD_SSL_DROPIN = f"{SYSTEMD_DROPIN_DIR}/ssl.conf"
-
-CRAWL_PROC_PATTERN = "fetch_stocks.py"   # any active crawl shows this
-
 # ── Desktop release (GitHub) ─────────────────────────────────────────
 REPO_ROOT    = os.path.dirname(os.path.abspath(__file__))
 DESKTOP_DIR  = os.path.join(REPO_ROOT, "desktop")
@@ -86,12 +67,6 @@ def run_checked(client, cmd):
     return stdout
 
 
-def check_crawl_running(client):
-    """Return list of running crawl process lines, empty if none."""
-    result = run(client, f"ps aux | grep '{CRAWL_PROC_PATTERN}' | grep -v grep")
-    return [l for l in result.splitlines() if l.strip()]
-
-
 def build_jar():
     print("Building JAR ...")
     env = os.environ.copy()
@@ -115,139 +90,6 @@ def build_jar():
         print("BUILD FAILED:\n", r.stdout[-4000:], r.stderr[-1000:])
         sys.exit(1)
     print("Build OK.")
-
-
-def upload(client):
-    size = os.path.getsize(LOCAL_JAR)
-    print(f"Uploading JAR ({size/1024/1024:.1f} MB) ...")
-    sftp = client.open_sftp()
-    sftp.put(LOCAL_JAR, REMOTE_JAR)
-    sftp.close()
-    print("JAR done.")
-    print("Uploading Python scripts ...")
-    sftp = client.open_sftp()
-    for f in os.listdir(LOCAL_SCRIPT_DIR):
-        if f == "config.ini" or f.startswith("__pycache__"):
-            continue
-        src = os.path.join(LOCAL_SCRIPT_DIR, f)
-        dst = f"{REMOTE_SCRIPT_DIR}/{f}"
-        if os.path.isfile(src):
-            sftp.put(src, dst)
-            print(f"  {f}")
-    sftp.close()
-    for dirname in SCRIPT_SYNC_DIRS:
-        local_root = os.path.join(LOCAL_SCRIPT_DIR, dirname)
-        if not os.path.isdir(local_root):
-            continue
-        print(f"Uploading script directory {dirname} ...")
-        for root, dirs, files in os.walk(local_root):
-            dirs[:] = [d for d in dirs if not d.startswith("__pycache__")]
-            rel_root = os.path.relpath(root, LOCAL_SCRIPT_DIR)
-            remote_root = f"{REMOTE_SCRIPT_DIR}/{rel_root.replace(os.sep, '/')}"
-            run_checked(client, f"mkdir -p {shlex.quote(remote_root)}")
-            sftp = client.open_sftp()
-            try:
-                for filename in files:
-                    if filename.startswith("__pycache__"):
-                        continue
-                    src = os.path.join(root, filename)
-                    dst = f"{remote_root}/{filename}"
-                    sftp.put(src, dst)
-                    print(f"  {rel_root.replace(os.sep, '/')}/{filename}")
-            finally:
-                sftp.close()
-    # Sync StockSage engine files (resident service, Phase 2)
-    print("Syncing StockSage engine ...")
-    sftp = client.open_sftp()
-    for f in ENGINE_SYNC_FILES:
-        src = os.path.join(LOCAL_ENGINE_DIR, f)
-        dst = f"{REMOTE_ENGINE_DIR}/{f}"
-        if os.path.isfile(src):
-            sftp.put(src, dst)
-            print(f"  {f}")
-    sftp.close()
-    print("Upload done.")
-
-
-def ensure_stable_ssl(client):
-    print("Ensuring stable HTTPS certificate ...")
-    keytool = run(client, "command -v keytool || true")
-    if not keytool:
-        print("ERROR: keytool not found on server; cannot create stable HTTPS keystore.")
-        client.close()
-        sys.exit(1)
-
-    keystore = shlex.quote(REMOTE_SSL_KEYSTORE)
-    password = shlex.quote(REMOTE_SSL_PASSWORD)
-    alias = shlex.quote(REMOTE_SSL_ALIAS)
-    exists = run(client, f"test -f {keystore} && echo yes || echo no")
-    if exists != "yes":
-        dname = shlex.quote(f"CN={HOST}, OU=Investory, O=Investory, L=Hangzhou, ST=Zhejiang, C=CN")
-        san = shlex.quote(f"SAN=ip:{HOST},dns:localhost")
-        run_checked(
-            client,
-            " ".join([
-                "keytool -genkeypair",
-                f"-alias {alias}",
-                "-keyalg RSA",
-                "-keysize 2048",
-                "-validity 3650",
-                "-storetype PKCS12",
-                f"-keystore {keystore}",
-                f"-storepass {password}",
-                f"-keypass {password}",
-                f"-dname {dname}",
-                f"-ext {san}",
-            ]),
-        )
-        print(f"Created {REMOTE_SSL_KEYSTORE}.")
-    else:
-        print(f"Using existing {REMOTE_SSL_KEYSTORE}.")
-
-    dropin = f"""[Service]
-Environment=SSL_KEY_STORE=file:{REMOTE_SSL_KEYSTORE}
-Environment=SSL_KEY_PASSWORD={REMOTE_SSL_PASSWORD}
-Environment=SERVER_SSL_KEY_STORE=file:{REMOTE_SSL_KEYSTORE}
-Environment=SERVER_SSL_KEY_STORE_PASSWORD={REMOTE_SSL_PASSWORD}
-"""
-    run_checked(
-        client,
-        f"mkdir -p {shlex.quote(SYSTEMD_DROPIN_DIR)} && "
-        f"cat > {shlex.quote(SYSTEMD_SSL_DROPIN)} <<'EOF'\n{dropin}EOF\n"
-        "systemctl daemon-reload",
-    )
-    fingerprint = run(
-        client,
-        f"LANG=C keytool -list -v -keystore {keystore} -storetype PKCS12 "
-        f"-storepass {password} -alias {alias} 2>/dev/null | grep 'SHA256:' | head -1",
-    )
-    if fingerprint:
-        print(f"HTTPS certificate {fingerprint}")
-
-
-def restart_service(client):
-    print("Restarting service ...")
-    run(client, f"systemctl restart {SERVICE}")
-    time.sleep(4)
-    status = run(client, f"systemctl is-active {SERVICE}")
-    if status == "active":
-        print(f"Service is active.")
-    else:
-        print(f"WARNING: service status = {status}")
-        print(run(client, f"journalctl -u {SERVICE} -n 20 --no-pager"))
-
-def restart_engine(client):
-    """Restart the resident StockSage engine (Phase 2). Best-effort — if the
-    service was never installed, log and continue."""
-    exists = run(client, f"systemctl list-unit-files {ENGINE_SERVICE}.service 2>/dev/null | wc -l")
-    if not exists or "0" in exists:
-        print(f"Engine service {ENGINE_SERVICE} not installed, skipping.")
-        return
-    print("Restarting StockSage engine ...")
-    run(client, f"systemctl restart {ENGINE_SERVICE}")
-    time.sleep(2)
-    status = run(client, f"systemctl is-active {ENGINE_SERVICE}")
-    print(f"Engine: {status}")
 
 
 # ── Desktop GitHub release ───────────────────────────────────────────
@@ -301,6 +143,12 @@ def set_version(version):
     _replace_once(BACKEND_POM,
                   r'(<artifactId>investory</artifactId>\s*<version>)[^<]+(</version>)',
                   rf'\g<1>{version}\g<2>', "backend/pom.xml")
+    for directory in (DESKTOP_DIR, os.path.dirname(FRONTEND_PKG)):
+        lock = Path(directory) / "package-lock.json"
+        document = json.loads(lock.read_text(encoding="utf-8"))
+        document["version"] = version
+        document["packages"][""]["version"] = version
+        lock.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
 
 
 def github_token():
@@ -386,30 +234,22 @@ def main():
         return
 
     client = ssh_connect()
-
-    # ── Safety check: abort if a crawl is running ──────────────────────
-    crawls = check_crawl_running(client)
-    if crawls:
-        print("DEPLOY ABORTED — crawl is currently running:")
-        for line in crawls:
-            print(" ", line)
-        print("\nWait for the crawl to finish, then re-run deploy.py.")
+    try:
+        jobs = active_jobs(client)
+        if jobs:
+            raise RuntimeError("Wait for active jobs to finish: " + ", ".join(jobs))
+    finally:
         client.close()
-        sys.exit(1)
 
-    client.close()
-
-    # ── Build ───────────────────────────────────────────────────────────
     if not no_build:
         build_jar()
 
-    # ── Upload & restart ────────────────────────────────────────────────
     client = ssh_connect()
-    ensure_stable_ssl(client)
-    upload(client)
-    restart_engine(client)
-    restart_service(client)
-    client.close()
+    try:
+        deploy_cloud(client, Path(REPO_ROOT), read_current_version(),
+                     os.environ.get("DEPLOY_HEALTH_URL", "http://127.0.0.1:8443/api/session"))
+    finally:
+        client.close()
     print("Deploy complete.")
 
     # ── Desktop GitHub release (after a successful cloud deploy) ─────────
