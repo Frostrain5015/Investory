@@ -645,9 +645,9 @@ MAX_CORR_STOCKS = 10
 # the agent can chain "read portfolio → factor scores → market regime → news →
 # pick stocks → confirm watchlist" without hitting the cap mid-flow.
 MAX_TOOL_CALLS = 20
-# Web search is expensive (network + DDG rate-limit) and prone to infinite
-# curiosity loops. Cut it off early — 3 searches is enough to cover most
-# fact-finding tasks. Subsequent web_search calls return a synthetic error.
+# Web search costs a network round-trip (and DeepSeek bills per successful request)
+# and is prone to infinite curiosity loops. Cut it off early — 3 searches is enough
+# to cover most fact-finding tasks. Later web_search calls return a synthetic error.
 MAX_WEB_SEARCHES = 3
 
 # Tool taxonomy. Each tool belongs to one of:
@@ -1387,110 +1387,58 @@ def _get_search_key(env_var: str, ini_key: str) -> str:
         return ""
 
 
-def get_bocha_key() -> str:
-    return _get_search_key("BOCHA_API_KEY", "bocha_key")
+def get_deepseek_search_key() -> str:
+    """DeepSeek Web Search 用的就是一把 DeepSeek API Key。优先显式覆盖
+    (DEEPSEEK_SEARCH_KEY / config.ini [search] deepseek_key)，否则回落到部署时已注入的
+    AI_DEFAULT_KEY（与 LLM 同一把），免得再单独维护一个搜索供应商账户和它的余额。"""
+    return _get_search_key("DEEPSEEK_SEARCH_KEY", "deepseek_key") or os.getenv("AI_DEFAULT_KEY", "").strip()
 
 
-def get_tavily_key() -> str:
-    return _get_search_key("TAVILY_API_KEY", "tavily_key")
-
-
-def _bocha_search(query: str, count: int, api_key: str) -> dict:
-    """博查 Web Search API — domestic (no proxy / GFW), LLM-ready results with summaries.
-    Endpoint: POST https://api.bochaai.com/v1/web-search ; response is Bing-shaped
-    (data.webPages.value[]). Raises on HTTP/parse error so the caller can fall back."""
+def _deepseek_search(query: str, count: int, api_key: str) -> dict:
+    """DeepSeek Web Search API — 服务端搜索：真正抓取网页的是 DeepSeek 的服务器，客户端只连
+    api.deepseek.com（大陆可直连、免代理），海外站点(sec.gov/nasdaq 等)也由 DeepSeek 侧取回，
+    无需本地代理。need_content=True 让每条结果带回整页 Markdown，截断后作为证据喂给模型
+    （比原来的短 snippet 更充分）。Endpoint: POST https://api.deepseek.com/v1/tools/search
+    非 200 抛异常，交由调用方重试。"""
     import requests
     resp = requests.post(
-        "https://api.bochaai.com/v1/web-search",
+        "https://api.deepseek.com/v1/tools/search",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={"query": query, "summary": True, "count": min(count, 10), "freshness": "noLimit"},
-        timeout=12,  # domestic endpoint should answer fast; fail quick rather than hang
+        json={"query": query, "count": min(count, 10), "need_content": True},
+        timeout=12,  # 国内端点应答快(~0.5s)；给足冗余但失败要快，别拖住 agent
     )
-    resp.raise_for_status()
-    payload = resp.json()
-    pages = (((payload or {}).get("data") or {}).get("webPages") or {}).get("value") or []
+    if resp.status_code != 200:
+        raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+    payload = resp.json() or {}
     results = []
-    for p in pages[:count]:
+    for r in payload.get("results", [])[:count]:
+        content = (r.get("content") or "").strip()
         results.append({
-            "title": p.get("name", ""),
-            # 'summary' is Bocha's LLM-oriented digest; fall back to the raw snippet
-            "snippet": (p.get("summary") or p.get("snippet") or "")[:300],
-            "url": p.get("url", ""),
-            "site": p.get("siteName", ""),
-            "date": p.get("datePublished", "") or p.get("dateLastCrawled", ""),
+            "title": r.get("title", ""),
+            # 优先用整页正文(截断到 600 字)，没有再退回引擎给的短 snippet
+            "snippet": (content or r.get("snippet") or "")[:600],
+            "url": r.get("url", ""),
+            "date": r.get("date", ""),
+            "score": r.get("rerank_score"),  # 相关性分，供模型排序/取舍
         })
     return {"query": query, "results": results,
             "note": f"共{len(results)}条结果" if results else "未找到相关结果"}
 
 
-def _tavily_search(query: str, count: int, api_key: str) -> dict:
-    """Tavily — LLM-native search API for overseas/English coverage. Tavily is hosted
-    abroad, so on the mainland server we route it through the proxy (same as the LLM
-    calls). topic='finance' biases toward financial sources, fitting this agent.
-    Endpoint: POST https://api.tavily.com/search ; response has results[] +
-    an optional LLM 'answer'. Raises on HTTP/parse error so the caller can fall back."""
-    import requests
-    proxy = os.getenv("PROXY_URL", get_proxy()) or None
-    proxies = {"http": proxy, "https": proxy} if proxy else None
-    resp = requests.post(
-        "https://api.tavily.com/search",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        json={
-            "query": query,
-            "max_results": min(count, 10),
-            "topic": "finance",
-            "search_depth": "basic",   # 1 credit; 'advanced' costs 2 and is slower
-            "include_answer": True,    # Tavily's synthesized answer — handy for the LLM
-        },
-        proxies=proxies,
-        timeout=15,
-    )
-    resp.raise_for_status()
-    payload = resp.json() or {}
-    results = []
-    for r in payload.get("results", [])[:count]:
-        results.append({
-            "title": r.get("title", ""),
-            "snippet": (r.get("content") or "")[:300],
-            "url": r.get("url", ""),
-        })
-    out = {"query": query, "results": results,
-           "note": f"共{len(results)}条结果" if results else "未找到相关结果"}
-    answer = (payload.get("answer") or "").strip()
-    if answer:
-        out["answer"] = answer  # surface Tavily's summary to the model
-    return out
-
-
 def tool_web_search(query: str, count: int = 5) -> dict:
-    """联网搜索。国内信息走博查(Bocha，无需代理、中文好)，海外信息走 Tavily(经代理，
-    LLM 原生)。两者各带一次重试；都配置时博查优先、失败降级 Tavily。"""
-    bocha_key = get_bocha_key()
-    tavily_key = get_tavily_key()
-    errors = []
-
-    def _try(name, fn):
-        for attempt in range(2):  # one retry on transient network/rate hiccup
-            try:
-                return fn()
-            except Exception as e:
-                errors.append(f"{name} try{attempt+1}: {str(e)[:80]}")
-        return None
-
-    # Primary: Bocha (domestic, fast, no proxy). Fallback: Tavily (overseas, via proxy).
-    if bocha_key:
-        r = _try("bocha", lambda: _bocha_search(query, count, bocha_key))
-        if r is not None:
-            return r
-    if tavily_key:
-        r = _try("tavily", lambda: _tavily_search(query, count, tavily_key))
-        if r is not None:
-            return r
-
-    if not bocha_key and not tavily_key:
+    """联网搜索 — DeepSeek Web Search API（唯一 provider）。带一次重试兜住瞬时抖动；
+    未配置密钥时返回可读提示。"""
+    api_key = get_deepseek_search_key()
+    if not api_key:
         return {"error": "搜索未配置",
-                "note": "请配置 BOCHA_API_KEY（国内）或 TAVILY_API_KEY（海外，经代理）"}
-    return {"error": "搜索失败: " + " | ".join(errors[-2:])}
+                "note": "请配置 DEEPSEEK_SEARCH_KEY，或设置 AI_DEFAULT_KEY（DeepSeek 密钥）"}
+    errors = []
+    for attempt in range(2):  # 一次重试，兜住瞬时网络/限流抖动
+        try:
+            return _deepseek_search(query, count, api_key)
+        except Exception as e:
+            errors.append(f"try{attempt+1}: {str(e)[:100]}")
+    return {"error": "搜索失败: " + " | ".join(errors)}
 
 def tool_get_backtests(user_id: int, limit: int = 5) -> list:
     """获取最近的回测结果"""
@@ -2632,7 +2580,7 @@ _TOOL_TIMEOUTS = {
     "benchmark_compare": 45,
     "optimize_portfolio": 120,       # subprocess 110s
     "analyze_backtest": 45,
-    "web_search": 20,   # Bocha caps at 12s + one retry; fail fast rather than hang
+    "web_search": 30,   # DeepSeek ~0.5s typical; 12s/try × 2 tries worst case — fail fast over hang
     "get_world_market": 30,
     "run_backtest": 120,             # subprocess 110s
 }
