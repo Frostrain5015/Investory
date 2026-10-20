@@ -1,7 +1,11 @@
-import { useState, useRef, useEffect, useLayoutEffect, useMemo } from 'react'
+import type { PortfolioCard, PicksCard, ReportArtifact, ToolCategory, TimelineStep, Message, ConfirmData, ConfirmStatus } from '@/features/chat/types'
+import MarkdownBody from '@/features/chat/MarkdownBody'
+import { getChatMessages, useChatMessages } from '@/features/chat/store'
+import type { BrowserSpeechRecognition, SpeechRecognitionWindow } from '@/types/speech-recognition'
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle, Brain, BarChart2, Mic } from 'lucide-react'
-import { useToast } from '@/components/Toast'
+import { useToast } from '@/hooks/use-toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { usePrompt } from '@/hooks/use-prompt'
 import ReactMarkdown from 'react-markdown'
@@ -12,48 +16,8 @@ import { localizeToolName, MAPS } from '@/i18n/toolNames'
 import { getCachedSuggestions, getSuggestionsPromise } from '@/services/aiPreload'
 import { BASE } from '@/services/api'
 
-interface PortfolioCard { portfolio_score: number; holdings_scored: number; top_holdings: { symbol: string; name: string; total_score: number }[]; bottom_holdings: { symbol: string; name: string; total_score: number }[]; group_exposure: Record<string, { buy_score: number }> }
-interface PicksCard { regime: string; picks: { code: string; name: string; total_score: number; buy_score: number; bullish: string[] }[]; scanned: number }
-interface ReportArtifact {
-  id?: number
-  type: string
-  title: string
-  summary?: string
-  contentJson?: unknown
-  content_json?: unknown
-  contentMarkdown?: string
-  content_markdown?: string
-  createdAt?: string
-  created_at?: string
-}
 /** A single step in the agent's reasoning trace. Either a chunk of native
  * reasoning_content, or a tool call (with its eventual completion status). */
-export type ToolCategory = 'query' | 'analysis' | 'mutation'
-export type TimelineStep =
-  | { kind: 'thinking'; text: string; _ts?: number; _elapsed?: number }
-  | { kind: 'kb'; topic: string }
-  | { kind: 'memory'; count?: string | number }
-  | { kind: 'tool'; name: string; category?: ToolCategory; done: boolean; error?: string; summary?: string; callId?: string; detail?: string }
-  // The assistant's user-facing answer, interleaved in true emission order with
-  // thinking/tool steps so a chunk of answer written *before* a later tool call
-  // renders above that tool call — not dumped below the whole timeline.
-  | { kind: 'text'; text: string }
-interface Message { role: 'user' | 'assistant' | 'system'; content: string; thinking?: string; timeline?: TimelineStep[]; hasCode?: boolean; strategyName?: string; strategyDesc?: string; strategyCode?: string; confirm?: ConfirmData; portfolioCard?: PortfolioCard; picksCard?: PicksCard; artifacts?: ReportArtifact[] }
-interface ConfirmBody {
-  stockName?: string
-  type?: string
-  shares?: number
-  price?: number
-  fee?: number
-  tradeDate?: string
-  currency?: string
-  amountPerShare?: number
-  note?: string
-  [key: string]: string | number | undefined
-}
-interface ConfirmItem { action: string; label: string; endpoint: string; method: string; body: ConfirmBody }
-interface ConfirmData { id: string; title: string; items: ConfirmItem[] }
-type ConfirmStatus = 'pending' | 'accepted' | 'refused' | 'failed'
 
 const gradientStyle = { background: 'linear-gradient(135deg, #863bff, #47bfff)' }
 
@@ -68,10 +32,6 @@ function isDuplicateConfirmCopy(title: string, label: string) {
   const b = normalizeConfirmCopy(label)
   return !!a && !!b && (a === b || a.includes(b) || b.includes(a))
 }
-
-let gMessages: Message[] = []
-let gListeners: (() => void)[] = []
-function notify() { gListeners.forEach(fn => fn()) }
 
 function isStockSageTool(name: string) {
   return name === 'get_stock_report'
@@ -144,7 +104,7 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
     }
     return t
   }, [text, lang])
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(Date.now)
   useEffect(() => {
     if (done || _ts == null) return
     const id = setInterval(() => setNow(Date.now()), 1000)
@@ -152,17 +112,16 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
   }, [done, _ts])
   const elapsedMs = done ? (_elapsed || 0) : (_ts != null ? now - _ts : 0)
   const elapsedSec = Math.max(0, Math.round(elapsedMs / 1000))
-  const [userToggled, setUserToggled] = useState(false)
-  const [open, setOpen] = useState(true)
+  const [userOpen, setUserOpen] = useState<boolean | null>(null)
+  const open = userOpen ?? !done
   const innerRef = useRef<HTMLDivElement>(null)
-  useEffect(() => { if (!userToggled) setOpen(!done) }, [done, userToggled])
   useEffect(() => {
     if (!done && innerRef.current) innerRef.current.scrollTop = innerRef.current.scrollHeight
   })
   if (!text.trim()) return null
   return (
     <div className="mb-1.5">
-      <button onClick={() => { setUserToggled(true); setOpen(o => !o) }}
+      <button onClick={() => { setUserOpen(!open) }}
         className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-500 transition-colors">
         {done ? `已思考 用时${elapsedSec}s` : `思考中… ${elapsedSec}s`}
         <span className="text-[9px] ml-0.5 opacity-50">{open ? '▲' : '▼'}</span>
@@ -275,17 +234,6 @@ function stripThinkTags(text: string): string {
   return text.replace(/<\/?think(?:ing)?>/gi, '')
 }
 
-const MARKDOWN_BODY_CLASS = 'prose prose-sm prose-slate max-w-none text-[13px] [&_table]:text-[11px] [&_th]:border [&_th]:border-slate-200 [&_th]:px-2 [&_th]:py-1 [&_td]:border [&_td]:border-slate-100 [&_td]:px-2 [&_td]:py-1 [&_table]:w-full [&_code]:bg-slate-100 [&_code]:px-1 [&_code]:rounded [&_pre]:bg-slate-100 [&_pre]:p-2 [&_pre]:rounded-lg [&_pre]:overflow-auto'
-
-const MARKDOWN_COMPONENTS = {
-  code: ({ children, className, ...props }: { children?: React.ReactNode; className?: string }) => {
-    const txt = String(children).trim()
-    if (/^\d{4,6}\.(SH|SZ|HK|US)$/i.test(txt) || /^[A-Z]{1,5}\.US$/i.test(txt))
-      return <a href={`${BASE}/stock?symbol=${txt}`} target="_blank" className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 text-xs font-medium hover:bg-purple-100">{txt}</a>
-    return <code className={className} {...props}>{children}</code>
-  }
-}
-
 /** Unified Markdown renderer for both streaming and completed answer text.
  * Renders through the full Markdown pipeline (stock-code chips, GFM tables,
  * headers, lists, code — all format correctly even mid-stream).
@@ -295,13 +243,6 @@ const MARKDOWN_COMPONENTS = {
  * the class is removed in-place without unmounting — no flash on completion.
  * This avoids the previous StreamingMarkdownBody → MarkdownBody component
  * swap that caused React to unmount/remount the entire subtree. */
-function MarkdownBody({ text, streaming }: { text: string; streaming?: boolean }) {
-  return (
-    <div className={`${MARKDOWN_BODY_CLASS}${streaming ? ' streaming-md' : ''}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{text}</ReactMarkdown>
-    </div>
-  )
-}
 
 /** One node on the connected timeline rail. Owns the fixed-width left gutter where
  * the dot sits, plus the rail SEGMENT that connects this node down to the NEXT one.
@@ -415,16 +356,6 @@ function TimelineRenderer({ steps, done, lang, noAnimate }: { steps: TimelineSte
   )
 }
 
-function useChatMessages(): [Message[], (msgs: Message[]) => void] {
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    const fn = () => setTick(t => t + 1)
-    gListeners.push(fn)
-    return () => { gListeners = gListeners.filter(f => f !== fn) }
-  }, [])
-  return [gMessages, (msgs: Message[]) => { gMessages = msgs; notify() }]
-}
-
 export type ChatMode = 'idle' | 'dock' | 'expanded'
 
 interface ChatPanelProps {
@@ -443,15 +374,16 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   // 'idle' = collapsed to the floating button; otherwise dock/expanded.
   const [internalMode, setInternalMode] = useState<'dock' | 'expanded'>(defaultMode)
   const mode: ChatMode = open ? internalMode : 'idle'
-  const setMode = (m: 'dock' | 'expanded') => { setInternalMode(m); onOpen?.() }
+  const setMode = useCallback((m: 'dock' | 'expanded') => { setInternalMode(m); onOpen?.() }, [onOpen])
   const [messages, setMessages] = useChatMessages()
-  const [input, setInput] = useState('')
+  const [input, setInput] = useState(initialMessage || '')
+  const [lastInitialMessage, setLastInitialMessage] = useState(initialMessage)
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [streamTimeline, setStreamTimeline] = useState<TimelineStep[]>([])
   const [webSearch] = useState(false)
   const [listening, setListening] = useState(false)
-  const recognitionRef = useRef<any>(null)
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null)
   const [dockHeight, setDockHeight] = useState(96)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const pendingStrategy = useRef<{ name: string; desc: string; code: string } | null>(null)
@@ -515,7 +447,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   // not silently green-light a transaction delete.
   const autoAcceptActionsRef = useRef<Set<string>>(new Set())
   const [rememberConfirm, setRememberConfirm] = useState(false)
-  const [suggestions, setSuggestions] = useState<string[]>([])
+  const [suggestions, setSuggestions] = useState<string[]>(() => getCachedSuggestions() || [])
   const esRef = useRef<EventSource | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const hairlineRef = useRef<HTMLDivElement>(null)
@@ -524,7 +456,10 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const brandStripRef = useRef<HTMLDivElement>(null)
   const inputWrapRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => { if (initialMessage) setInput(initialMessage) }, [initialMessage])
+  if (initialMessage !== lastInitialMessage) {
+    setLastInitialMessage(initialMessage)
+    if (initialMessage) setInput(initialMessage)
+  }
 
   // ESC: collapse from expanded → dock, or close dock if already there
   useEffect(() => {
@@ -535,7 +470,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [mode, streaming, input, onClose])
+  }, [mode, streaming, input, onClose, setMode])
 
   // Auto-grow the textarea up to ~8 lines, then scroll inside it
   useLayoutEffect(() => {
@@ -548,7 +483,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
 
   // Replay persisted history on mount, if nothing in memory yet
   useEffect(() => {
-    if (gMessages.length > 0) return
+    if (getChatMessages().length > 0) return
     fetch(`${BASE}/api/ai/history`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
@@ -583,18 +518,18 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         }
       })
       .catch(() => {})
-  }, [])
+  }, [setMessages])
 
   useEffect(() => {
     const cached = getCachedSuggestions()
-    if (cached) { setSuggestions(cached); return }
+    if (cached) return
     const pending = getSuggestionsPromise()
     if (pending) { pending.then(list => { if (list.length > 0) setSuggestions(list); else setSuggestions([...t.chat.suggestions]) }); return }
     fetch(`${BASE}/api/ai/suggestions`, { credentials: 'include' }).then(r => r.json()).then(d => {
       if (Array.isArray(d.suggestions) && d.suggestions.length > 0) setSuggestions(d.suggestions)
       else setSuggestions([...t.chat.suggestions])
     }).catch(() => { setSuggestions([...t.chat.suggestions]) })
-  }, [])
+  }, [t.chat.suggestions])
 
   // Streaming: instant scroll to chase the rapidly-arriving tokens.
   // Use a ref to avoid calling scrollIntoView on every single character
@@ -629,7 +564,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         try {
           const artifact = JSON.parse(e.data) as ReportArtifact
           if (artifact?.title) pendingArtifacts.current = [...pendingArtifacts.current, artifact]
-        } catch {}
+        } catch { /* Ignore malformed or unavailable optional state. */ }
       })
       es.addEventListener('ask', (e) => { const d = JSON.parse(e.data); setAskData({ question: d.question, options: d.options || [], multiSelect: d.multiSelect || false }); setAskChecked(new Set()); setAskOther('') })
       es.addEventListener('confirm', (e) => {
@@ -642,7 +577,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             const allRemembered = parsed.items.every(it => autoAcceptActionsRef.current.has(it.action))
             if (allRemembered) { handleConfirmAccept(parsed, false) }
           }
-        } catch {}
+        } catch { /* Ignore malformed or unavailable optional state. */ }
       })
       es.addEventListener('kb', (e) => {
         const d = JSON.parse(e.data) as { topic?: string }
@@ -751,7 +686,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         try {
           const raw = (e as MessageEvent).data
           if (raw) { const d: SseEvent = JSON.parse(raw); errMsg = d.msg || t.chat.errorUnknown }
-        } catch {}
+        } catch { /* Ignore malformed or unavailable optional state. */ }
         setMessages([...baseMessages, { role: 'system', content: `⚠ ${errMsg}` }])
         setStreaming(false); es.close(); esRef.current = null
       })
@@ -772,14 +707,14 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       if (cancelled || !d?.active || streaming || esRef.current) return
       setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; pendingArtifacts.current = []
       const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
-      attachStream(es, gMessages)
+      attachStream(es, getChatMessages())
     }).catch(() => {})
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function toggleVoiceInput() {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    const SR = (window as SpeechRecognitionWindow).SpeechRecognition || (window as SpeechRecognitionWindow).webkitSpeechRecognition
     if (!SR) { toast('语音输入不受支持', false); return }
     if (listening) {
       recognitionRef.current?.stop()
@@ -829,7 +764,6 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   /** Reset local chat state without touching the database.
    *  Does NOT call /api/ai/clear — that endpoint destroys ALL user history. */
   function resetChat() {
-    gMessages = []
     setMessages([])
     setStreamText('')
     convIdRef.current = 0
@@ -868,7 +802,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           }
           return { role: m.role === 'user' ? 'user' as const : m.role === 'assistant' ? 'assistant' as const : 'system' as const, content: m.content, ...(timeline ? { timeline } : {}), ...(thinkingLegacy ? { thinking: thinkingLegacy } : {}), ...(m.artifacts?.length ? { artifacts: m.artifacts } : {}) }
         })
-        gMessages = restored; setMessages(restored); convIdRef.current = id; setShowConvList(false)
+        setMessages(restored); convIdRef.current = id; setShowConvList(false)
       }).catch(() => {})
   }
 
@@ -1701,11 +1635,11 @@ function DataCard({ title, score, top, bottom }: { title: string; score: number;
         <span className="text-xs font-semibold text-slate-700">{title}</span>
         <span className={`text-xs font-bold ${score >= 60 ? 'text-emerald-600' : score >= 40 ? 'text-amber-600' : 'text-red-500'}`}>{score.toFixed(0)}分</span>
       </div>
-      {top?.length! > 0 && <div className="text-[11px] space-y-1"><span className="text-emerald-600 font-medium">评分最高</span>
-        {top!.map((h, i) => (<div key={i} className="flex justify-between text-slate-600"><span>{h.symbol} {h.name}</span><span className="font-medium">{h.total_score?.toFixed(0)}分</span></div>))}
+      {(top?.length ?? 0) > 0 && <div className="text-[11px] space-y-1"><span className="text-emerald-600 font-medium">评分最高</span>
+        {top?.map((h, i) => (<div key={i} className="flex justify-between text-slate-600"><span>{h.symbol} {h.name}</span><span className="font-medium">{h.total_score?.toFixed(0)}分</span></div>))}
       </div>}
-      {bottom?.length! > 0 && <div className="text-[11px] space-y-1"><span className="text-red-500 font-medium">评分最低</span>
-        {bottom!.map((h, i) => (<div key={i} className="flex justify-between text-slate-600"><span>{h.symbol} {h.name}</span><span className="font-medium">{h.total_score?.toFixed(0)}分</span></div>))}
+      {(bottom?.length ?? 0) > 0 && <div className="text-[11px] space-y-1"><span className="text-red-500 font-medium">评分最低</span>
+        {bottom?.map((h, i) => (<div key={i} className="flex justify-between text-slate-600"><span>{h.symbol} {h.name}</span><span className="font-medium">{h.total_score?.toFixed(0)}分</span></div>))}
       </div>}
     </div>
   )
@@ -1730,7 +1664,7 @@ function PicksCardDisplay({ card }: { card: PicksCard }) {
   )
 }
 
-function StrategyCard({ name, description, code: _code, onSave }: { name: string; description: string; code: string; onSave: (name: string) => Promise<boolean> }) {
+function StrategyCard({ name, description, onSave }: { name: string; description: string; code: string; onSave: (name: string) => Promise<boolean> }) {
   const { t } = useT()
   const prompt = usePrompt()
   const [saving, setSaving] = useState(false)

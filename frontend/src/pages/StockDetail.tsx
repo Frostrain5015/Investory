@@ -10,6 +10,14 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent'
 import { displaySymbol, fmtPriceTs } from '@/lib/format'
 
+// Benchmarks per market (proper names, not translated)
+const BENCHMARKS: Record<string, { symbol: string; name: string }[]> = {
+    SH: [{ symbol: '000001.SH', name: '上证指数' }],
+    SZ: [{ symbol: '399001.SZ', name: '深证成指' }],
+    HK: [{ symbol: 'HSI.HK', name: '恒生指数' }, { symbol: 'HSTECH.HK', name: '恒生科技' }],
+    US: [{ symbol: 'GSPC.US', name: '标普500' }, { symbol: 'IXIC.US', name: '纳斯达克' }],
+  }
+
 export default function StockDetail() {
   const [params] = useSearchParams()
   const symbol = params.get('symbol') || ''
@@ -24,28 +32,24 @@ export default function StockDetail() {
   const [chartParams, setChartParams] = useState<ChartParams>({ days: 365 })
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
-  const [loading, setLoading] = useState(true)
+  const [loadedRequest, setLoadedRequest] = useState('')
   const [watching, setWatching] = useState(false)
   const [watchId, setWatchId] = useState<number | null>(null)
   const [benchmark, setBenchmark] = useState('')
+  const requestKey = JSON.stringify([symbol, portfolioId, chartParams, benchmark])
+  const loading = loadedRequest !== requestKey
   const [bmData, setBmData] = useState<{ date: string; base100: number; bmBase100: number; bmName: string }[] | null>(null)
   const [correlations, setCorrelations] = useState<HoldingCorrelation[]>([])
 
-  // Benchmarks per market (proper names, not translated)
-  const BENCHMARKS: Record<string, { symbol: string; name: string }[]> = {
-    SH: [{ symbol: '000001.SH', name: '上证指数' }],
-    SZ: [{ symbol: '399001.SZ', name: '深证成指' }],
-    HK: [{ symbol: 'HSI.HK', name: '恒生指数' }, { symbol: 'HSTECH.HK', name: '恒生科技' }],
-    US: [{ symbol: 'GSPC.US', name: '标普500' }, { symbol: 'IXIC.US', name: '纳斯达克' }],
-  }
 
   useEffect(() => {
     if (!symbol || !portfolioId) return
-    setLoading(true)
+    let cancelled = false
     Promise.all([
       getStockDetail(symbol),
       chartAPI.price(symbol, chartParams.days, chartParams.start, chartParams.end, benchmark || undefined),
     ]).then(([detail, rawPrices]) => {
+      if (cancelled) return
       setData(detail)
       // rawPrices is array when no benchmark, { prices, benchmark } when benchmark set
       if (Array.isArray(rawPrices)) {
@@ -55,22 +59,26 @@ export default function StockDetail() {
         setPriceData(rawPrices.prices)
         const bm = rawPrices.benchmark
         if (bm && bm.length > 0) {
-          const bmName = BENCHMARKS[stock?.market || '']?.find(b => b.symbol === benchmark)?.name || benchmark
+          const bmName = BENCHMARKS[detail.stock?.market || '']?.find(b => b.symbol === benchmark)?.name || benchmark
           setBmData(bm.map((d) => ({ date: d.date, base100: d.base100, bmBase100: d.bmBase100, bmName })))
         } else {
           setBmData(null)
         }
       }
-    }).finally(() => setLoading(false))
+    }).catch(() => { /* Keep the last valid data if a refresh fails. */ })
+      .finally(() => { if (!cancelled) setLoadedRequest(requestKey) })
     // Check watchlist status
     fetch(`${BASE}/api/watchlist`, { credentials: 'include' })
       .then(r => r.json() as Promise<{ id: number; symbol: string }[]>).then((list) => {
+        if (cancelled) return
         const found = list.find((w) => w.symbol === symbol)
-        if (found) { setWatching(true); setWatchId(found.id) }
+        setWatching(!!found)
+        setWatchId(found?.id ?? null)
       }).catch(() => {})
     // Holdings correlation
-    getHoldingsCorrelation(symbol).then(setCorrelations).catch(() => {})
-  }, [symbol, portfolioId, chartParams, benchmark])
+    getHoldingsCorrelation(symbol).then(value => { if (!cancelled) setCorrelations(value) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [symbol, portfolioId, chartParams, benchmark, requestKey])
 
   if (loading) {
     return (

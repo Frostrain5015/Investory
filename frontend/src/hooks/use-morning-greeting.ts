@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useAuth } from './use-auth'
-import { useNotificationBubble } from '@/components/NotificationBubble'
+import { useNotificationBubble } from '@/hooks/use-notification-bubble'
 
 /**
  * Show a local, time-aware Guanlan greeting once per Beijing calendar day.
@@ -74,7 +74,7 @@ export function useMorningGreeting() {
     const { dateKey, hour } = beijingParts()
     try {
       if (localStorage.getItem(STORAGE_KEY) === dateKey) return
-    } catch {}
+    } catch { /* Ignore malformed or unavailable optional state. */ }
 
     const timer = setTimeout(() => {
       const greeting = GREETINGS[greetingSlot(hour)]
@@ -88,7 +88,7 @@ export function useMorningGreeting() {
           window.dispatchEvent(new CustomEvent('investory:open-chat'))
         },
       })
-      try { localStorage.setItem(STORAGE_KEY, dateKey) } catch {}
+      try { localStorage.setItem(STORAGE_KEY, dateKey) } catch { /* Ignore malformed or unavailable optional state. */ }
     }, 700)
 
     return () => clearTimeout(timer)

@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useEffectEvent, useState, useRef, useCallback } from 'react'
 import { useAuth } from '@/hooks/use-auth'
-import { useToast } from '@/components/Toast'
+import { useToast } from '@/hooks/use-toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useT } from '@/i18n/I18nContext'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -104,7 +104,6 @@ export default function Admin() {
   }
 
   const fetchStatus = useCallback((force = false) => {
-    setLoadingStatus(true)
     getPreloadedAdminStatus({ force })
       .then(setStatus)
       .catch(() => {})
@@ -130,11 +129,7 @@ export default function Admin() {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [cs.logs])
 
-  // On mount: check for an ongoing crawl and reconnect
-  useEffect(() => {
-    fetch(`${BASE}/api/admin/crawl/status`, { credentials: 'include' })
-      .then(r => r.json())
-      .then((data: { active?: boolean; market?: string; label?: string; startDate?: string; endDate?: string; progress?: ProgressData; recentLogs?: string[] }) => {
+  const restoreCrawl = useEffectEvent((data: { active?: boolean; market?: string; label?: string; startDate?: string; endDate?: string; progress?: ProgressData; recentLogs?: string[] }) => {
         if (!data.active || !data.market) return
         // Restore crawl state from server
         cs.setCrawling(data.market)
@@ -208,7 +203,7 @@ export default function Admin() {
             try {
               const d: SseEvent = JSON.parse(raw)
               cs.setLogs(prev => [...prev, `✗ ${d.msg}`])
-            } catch {}
+            } catch { /* Ignore malformed or unavailable optional state. */ }
             eventSource.close()
             gEsRef = null
             if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
@@ -216,8 +211,15 @@ export default function Admin() {
           }
         })
         eventSource.onerror = () => {}
-      })
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${BASE}/api/admin/crawl/status`, { credentials: 'include' })
+      .then(response => response.json())
+      .then(data => { if (!cancelled) restoreCrawl(data) })
       .catch(() => {})
+    return () => { cancelled = true }
   }, [])
 
   function marketToScript(market: string): string {
@@ -281,7 +283,7 @@ export default function Admin() {
       gEsRef = null
       cs.setEsRef(null)
       resetCrawlState()
-      fetchStatus(true)
+      setLoadingStatus(true); fetchStatus(true)
     })
     eventSource.addEventListener('stopped', (e) => {
       if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
@@ -300,7 +302,7 @@ export default function Admin() {
         try {
           const d: SseEvent = JSON.parse(raw)
           cs.setLogs(prev => [...prev, `✗ ${d.msg}`])
-        } catch {}
+        } catch { /* Ignore malformed or unavailable optional state. */ }
         eventSource.close()
         gEsRef = null
         if (gHeartbeat) { clearInterval(gHeartbeat); gHeartbeat = null }
@@ -328,7 +330,7 @@ export default function Admin() {
   async function impersonate(userId: number) {
     if (!(await confirm(t.admin.confirmImpersonate))) return
     await fetch(`${BASE}/api/admin/impersonate/${userId}`, { method: 'POST', credentials: 'include' })
-    window.location.href = import.meta.env.BASE_URL + 'dashboard'
+    window.location.assign(import.meta.env.BASE_URL + 'dashboard')
   }
 
   async function deleteUser(userId: number, username: string) {
@@ -368,7 +370,7 @@ export default function Admin() {
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
             <Globe className="w-3.5 h-3.5" />{t.admin.allMarketCrawl}
           </button>
-          <button onClick={() => { fetchStatus(true); fetchUsers(true); fetchCrawlHistory(true) }} disabled={loadingStatus}
+          <button onClick={() => { setLoadingStatus(true); fetchStatus(true); fetchUsers(true); fetchCrawlHistory(true) }} disabled={loadingStatus}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-100 text-slate-600 text-xs font-medium hover:bg-slate-200 transition-colors">
             <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />{t.common.refresh}
           </button>

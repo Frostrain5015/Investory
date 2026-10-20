@@ -12,21 +12,21 @@ interface ClosedItem {
 }
 
 export default function ClosedPositions({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return open ? <ClosedPositionsContent onClose={onClose} /> : null
+}
+
+function ClosedPositionsContent({ onClose }: { onClose: () => void }) {
   const { positiveClass, negativeClass, formatCurrency } = useSettings()
   const { t, lang } = useT()
   const [items, setItems] = useState<ClosedItem[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (!open) return
-    setLoading(true)
     fetch(`${BASE}/api/closed-positions`, { credentials: 'include' })
       .then(r => r.json()).then(setItems)
       .catch(() => setItems([]))
       .finally(() => setLoading(false))
-  }, [open])
-
-  if (!open) return null
+  }, [])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">

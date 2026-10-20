@@ -1,16 +1,11 @@
-import { useState, useCallback, createContext, useContext, type ReactNode } from 'react'
+import { ToastCtx } from '@/hooks/use-toast'
+import { useState, useCallback, type ReactNode } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CheckCircle, XCircle } from 'lucide-react'
 
 const SHOW_DURATION = 4000
 
 interface ToastItem { id: number; msg: string; ok: boolean }
-
-const ToastCtx = createContext<(msg: string, ok: boolean) => void>(() => {})
-
-export function useToast() {
-  return useContext(ToastCtx)
-}
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([])

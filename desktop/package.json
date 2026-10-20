@@ -1,11 +1,50 @@
 {
   "name": "investory-desktop",
-  "version": "6.2.2",
+  "version": "6.3.3",
   "description": "Investory Desktop Client",
   "author": "Investory",
   "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build:frontend": "npm --prefix ../frontend run build:electron",
+    "pack": "npm run build:frontend && electron-builder --win --dir --publish never",
+    "build:exe": "npm run build:frontend && electron-builder --win --publish never"
+  },
+  "build": {
+    "appId": "com.investory.desktop",
+    "productName": "Investory",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "www/**"
+    ],
+    "extraResources": [
+      { "from": "assets", "to": "assets" }
+    ],
+    "win": {
+      "icon": "assets/icon.ico",
+      "target": ["nsis"],
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Frostrain5015",
+      "repo": "Investory"
+    }
+  },
   "dependencies": {
     "canvas": "^3.2.3",
     "electron-updater": "^6.8.3"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "26.8.1"
   }
 }

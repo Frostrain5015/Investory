@@ -1,24 +1,14 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
-import { BASE, checkSession, exchangeFrostIdToken, login as apiLogin, register as apiRegister } from '@/services/api'
+import { AuthContext } from '@/hooks/use-auth'
+import { useEffect, useState, type ReactNode } from 'react'
+import {
+  BASE,
+  checkSession,
+  exchangeFrostIdToken,
+  login as apiLogin,
+  register as apiRegister,
+} from '@/services/api'
 import { preloadPostLoginPages } from '@/services/pagePreload'
 import type { SessionResponse } from '@/types'
-
-interface AuthState {
-  userId: number | null
-  username: string | null
-  portfolioId: number | null
-  portfolioName: string
-  isAdmin: boolean
-  setPortfolioName: (name: string) => void
-  authenticated: boolean
-  loading: boolean
-  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>
-  register: (username: string, password: string, email?: string) => Promise<{ success: boolean; error?: string }>
-  logout: () => void
-  setPortfolioId: (id: number) => void
-}
-
-const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [userId, setUserId] = useState<number | null>(null)
@@ -45,7 +35,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   useEffect(() => {
-    const onExpired = () => { setUserId(null); setAuthenticated(false); window.location.href = import.meta.env.BASE_URL }
+    const onExpired = () => {
+      setUserId(null)
+      setAuthenticated(false)
+      window.location.href = import.meta.env.BASE_URL
+    }
     window.addEventListener('investory:auth-expired', onExpired)
     return () => window.removeEventListener('investory:auth-expired', onExpired)
   }, [])
@@ -106,19 +100,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   function logout() {
-    fetch(BASE + '/logout', { credentials: 'include' })
-      .finally(() => { window.location.href = import.meta.env.BASE_URL })
+    fetch(BASE + '/logout', { credentials: 'include' }).finally(() => {
+      window.location.href = import.meta.env.BASE_URL
+    })
   }
 
   return (
-    <AuthContext.Provider value={{ userId, username, portfolioId, portfolioName, isAdmin, setPortfolioName, authenticated, loading, login, register, logout, setPortfolioId }}>
+    <AuthContext.Provider
+      value={{
+        userId,
+        username,
+        portfolioId,
+        portfolioName,
+        isAdmin,
+        setPortfolioName,
+        authenticated,
+        loading,
+        login,
+        register,
+        logout,
+        setPortfolioId,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext)
-  if (!ctx) throw new Error('useAuth must be inside AuthProvider')
-  return ctx
 }

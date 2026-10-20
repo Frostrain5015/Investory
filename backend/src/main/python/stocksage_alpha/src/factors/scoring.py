@@ -20,7 +20,7 @@ Final score = weighted sum of (factor_score / factor_max), scaled to 100.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np

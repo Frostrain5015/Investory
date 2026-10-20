@@ -1,20 +1,5 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
-
-type ThemePref = 'system' | 'light' | 'dark'
-type Theme = 'light' | 'dark'
-
-interface ThemeCtxValue {
-  theme: Theme
-  pref: ThemePref
-  setPref: (p: ThemePref) => void
-  toggleTheme: () => void
-  isDark: boolean
-}
-
-const ThemeCtx = createContext<ThemeCtxValue>({
-  theme: 'light', pref: 'system',
-  setPref: () => {}, toggleTheme: () => {}, isDark: false,
-})
+import { ThemeCtx, type ThemePref, type Theme } from '@/hooks/use-theme'
+import { useState, useEffect, type ReactNode } from 'react'
 
 function resolveTheme(pref: ThemePref): Theme {
   if (pref === 'system') {
@@ -24,12 +9,12 @@ function resolveTheme(pref: ThemePref): Theme {
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [pref, setPrefState] = useState<ThemePref>(() =>
-    (localStorage.getItem('theme-pref') as ThemePref) || 'system'
+  const [pref, setPrefState] = useState<ThemePref>(
+    () => (localStorage.getItem('theme-pref') as ThemePref) || 'system',
   )
-  const [theme, setTheme] = useState<Theme>(() => resolveTheme(
-    (localStorage.getItem('theme-pref') as ThemePref) || 'system'
-  ))
+  const [theme, setTheme] = useState<Theme>(() =>
+    resolveTheme((localStorage.getItem('theme-pref') as ThemePref) || 'system'),
+  )
 
   useEffect(() => {
     const apply = () => {
@@ -60,5 +45,3 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     </ThemeCtx.Provider>
   )
 }
-
-export function useTheme() { return useContext(ThemeCtx) }

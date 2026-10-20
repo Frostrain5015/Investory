@@ -13,7 +13,7 @@
 
     <groupId>com.investory</groupId>
     <artifactId>investory</artifactId>
-    <version>6.3.2</version>
+    <version>6.3.3</version>
     <name>Investory</name>
 
     <properties>
@@ -133,7 +133,7 @@
                                 <goals><goal>run</goal></goals>
                                 <configuration>
                                     <target>
-                                        <exec executable="cmd" dir="${project.basedir}/../frontend" failonerror="false">
+                                        <exec executable="cmd" dir="${project.basedir}/../frontend" failonerror="true">
                                             <arg value="/c"/>
                                             <arg value="npm"/>
                                             <arg value="run"/>
@@ -166,7 +166,7 @@
                                 <goals><goal>run</goal></goals>
                                 <configuration>
                                     <target>
-                                        <exec executable="npm" dir="${project.basedir}/../frontend" failonerror="false">
+                                        <exec executable="npm" dir="${project.basedir}/../frontend" failonerror="true">
                                             <arg value="run"/>
                                             <arg value="build"/>
                                         </exec>

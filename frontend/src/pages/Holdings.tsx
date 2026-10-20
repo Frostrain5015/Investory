@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
@@ -30,6 +30,11 @@ const GROUP_KEYS = ['A', 'HK', 'US'] as const
 
 export default function Holdings() {
   const { portfolioId } = useAuth()
+  return <HoldingsContent key={portfolioId} />
+}
+
+function HoldingsContent() {
+  const { portfolioId } = useAuth()
   const { positiveClass, negativeClass, showRiskMetrics } = useSettings()
   const { t } = useT()
   const [items, setItems] = useState<WatchItem[]>([])
@@ -45,21 +50,32 @@ export default function Holdings() {
   const [factorScores, setFactorScores] = useState<Record<string, FactorScore>>({})
 
   useEffect(() => {
-    if (items.length === 0) return
-    items.forEach(item => {
-      if (sparkData[item.symbol]) return
-      chartAPI.price(item.symbol, 30).then((raw) => {
+    const missing = items.filter(item => !sparkData[item.symbol])
+    if (missing.length === 0) return
+    let cancelled = false
+    Promise.all(missing.map(async item => {
+      try {
+        const raw = await chartAPI.price(item.symbol, 30)
         const prices: PriceData[] = Array.isArray(raw) ? raw : raw.prices
-        setSparkData(prev => ({ ...prev, [item.symbol]: prices.map(p => p.close) }))
-      }).catch(() => {})
+        return [item.symbol, prices.map(price => price.close)] as const
+      } catch { return null }
+    })).then(entries => {
+      if (cancelled) return
+      const loaded = entries.filter(entry => entry !== null)
+      if (loaded.length) setSparkData(previous => ({ ...previous, ...Object.fromEntries(loaded) }))
     })
-  }, [items])
+    return () => { cancelled = true }
+  }, [items, sparkData])
 
+  const scoreSymbols = items.map(item => item.symbol).join(',')
   useEffect(() => {
-    if (!showRiskMetrics || items.length === 0) return
-    const syms = items.map(i => i.symbol)
-    getFactorScores(syms).then(r => { if (r?.scores) setFactorScores(r.scores) }).catch(() => {})
-  }, [showRiskMetrics, items.length])
+    if (!showRiskMetrics || !scoreSymbols) return
+    let cancelled = false
+    getFactorScores(scoreSymbols.split(',')).then(result => {
+      if (!cancelled && result?.scores) setFactorScores(result.scores)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [showRiskMetrics, scoreSymbols])
 
   function handleDragStart(groupKey: string, idx: number) {
     setDragKey(groupKey)
@@ -94,7 +110,6 @@ export default function Holdings() {
     }).catch(() => {})
   }
 
-  useEffect(() => { setItems([]); setSparkData({}); setLoading(true) }, [portfolioId])
 
   const load = useCallback(() => {
     if (!portfolioId) return
@@ -150,14 +165,12 @@ export default function Holdings() {
     load()
   }
 
-  const groups = useMemo<MarketGroup[]>(() => {
-    return GROUP_KEYS.map(key => ({
+  const groups: MarketGroup[] = GROUP_KEYS.map(key => ({
       key,
       label: t.holdings.marketGroupLabels[key],
       flag: GROUP_META[key].flag,
       items: items.filter(item => marketToGroup(item.market) === key),
     })).filter(g => g.items.length > 0)
-  }, [items, t])
 
   if (loading) {
     return <div className="flex flex-col items-center justify-center gap-3 h-96">

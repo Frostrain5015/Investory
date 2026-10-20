@@ -1,6 +1,7 @@
 package com.investory.crawler;
 
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import javax.sql.DataSource;
@@ -18,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.*;
  *   - socks5h://127.0.0.1:7897 代理可达（Clash）
  *   - script/fetch_stocks.py 存在
  */
+@Tag("integration")
+@EnabledIfEnvironmentVariable(named = "INVESTORY_INTEGRATION_TESTS", matches = "true")
 class CrawlerSchedulerTest {
 
     private JdbcTemplate jdbc;
@@ -83,7 +86,7 @@ class CrawlerSchedulerTest {
             (logTail != null ? logTail.substring(Math.max(0, logTail.length() - 500)) : "(null)"));
 
         assertEquals("hk", row.get("market"));
-        assertNotEquals("running", row.get("status"), "进程应该已结束");
+        assertEquals("ok", row.get("status"), "采集失败不能作为测试通过");
         assertNotNull(row.get("log_tail"));
     }
 
@@ -113,7 +116,7 @@ class CrawlerSchedulerTest {
             (logTail != null ? logTail.substring(Math.max(0, logTail.length() - 500)) : "(null)"));
 
         assertEquals("us", row.get("market"));
-        assertNotEquals("running", row.get("status"));
+        assertEquals("ok", row.get("status"), "采集失败不能作为测试通过");
         assertNotNull(row.get("log_tail"));
     }
 
@@ -141,7 +144,7 @@ class CrawlerSchedulerTest {
         System.out.println("log: " + row.get("log_preview"));
 
         assertEquals("idx", row.get("market"));
-        assertNotEquals("running", row.get("status"));
+        assertEquals("ok", row.get("status"), "采集失败不能作为测试通过");
     }
 
     // ── helpers ──

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 export function useTimedRefresh(fn: () => void): [Date | null, () => void] {
   const fnRef = useRef(fn)
-  fnRef.current = fn
+  useEffect(() => { fnRef.current = fn }, [fn])
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
 
   const markRefreshed = () => setLastRefresh(new Date())

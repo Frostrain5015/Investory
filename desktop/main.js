@@ -12,10 +12,10 @@ let win = null
 
 const PORT = 18256
 const PROTOCOL = 'investory'
-const DIST = path.join(__dirname, 'dist')
-const ICON = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'))
+const DIST = path.join(__dirname, 'www')
+const ASSETS = path.join(app.isPackaged ? process.resourcesPath : __dirname, 'assets')
+const ICON = nativeImage.createFromPath(path.join(ASSETS, 'icon.png'))
 
-app.commandLine.appendSwitch('ignore-certificate-errors')
 app.commandLine.appendSwitch('no-proxy-server')
 
 // Windows: associate the running process with the installed app identity so the

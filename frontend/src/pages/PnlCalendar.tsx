@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useAsyncResource } from '@/hooks/use-async-resource'
+import { useCallback, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
@@ -8,6 +9,8 @@ import type { PnlCalendarItem } from '@/types'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { BarChart, Bar, Cell, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+
+const EMPTY_CALENDAR: PnlCalendarItem[] = []
 
 const WEEKDAYS_ZH = ['日', '一', '二', '三', '四', '五', '六'] as const
 const WEEKDAYS_EN = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const
@@ -25,6 +28,11 @@ type Selected =
   | { kind: 'month'; year: number; month: number }
 
 export default function PnlCalendar() {
+  const { portfolioId } = useAuth()
+  return <PnlCalendarContent key={portfolioId} />
+}
+
+function PnlCalendarContent() {
   const { portfolioId } = useAuth()
   const { convertCurrency, positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
   const { t, lang } = useT()
@@ -60,45 +68,27 @@ export default function PnlCalendar() {
   const [pnlDisplay, setPnlDisplay] = useState<PnlDisplay>('amount')
   const [year, setYear] = useState(new Date().getFullYear())
   const [month, setMonth] = useState(new Date().getMonth())
-  const [data, setData] = useState<PnlCalendarItem[]>([])
-  const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<Selected | null>(null)
-  const [detail, setDetail] = useState<Detail | null>(null)
-  const [detailLoading, setDetailLoading] = useState(false)
-
-  useEffect(() => { setData([]); setLoading(true) }, [portfolioId])
-
-  useEffect(() => {
-    if (!portfolioId) return
-    setLoading(true)
-    chartAPI.pnlCalendar(portfolioId, year)
-      .then((d: PnlCalendarItem[]) => setData(d))
-      .finally(() => setLoading(false))
-  }, [portfolioId, year])
-
-  // Fetch detail whenever selected changes
-  useEffect(() => {
-    if (!selected) { setDetail(null); return }
-    setDetailLoading(true)
+  const loadCalendar = useCallback(() => chartAPI.pnlCalendar(portfolioId!, year), [portfolioId, year])
+  const calendar = useAsyncResource<PnlCalendarItem[]>(portfolioId ? `${portfolioId}:${year}` : null, loadCalendar)
+  const data = calendar.data ?? EMPTY_CALENDAR
+  const loading = calendar.loading
+  const loadDetail = useCallback(async (signal: AbortSignal): Promise<Detail | null> => {
+    if (!selected) return null
     const url = selected.kind === 'day'
       ? `${BASE}/api/daily-detail?date=${selected.date}`
       : `${BASE}/api/monthly-detail?year=${selected.year}&month=${selected.month}`
-    fetch(url, { credentials: 'include' })
-      .then(r => r.json())
-      .then((d: Record<string, unknown>) => {
-        const title = selected.kind === 'day'
-          ? fmt(t.pnl.dayDetailTitle, { date: selected.date })
-          : fmt(t.pnl.monthDetailTitle, { year: selected.year, month: selected.month })
-        setDetail({
-          title,
-          totalPnl: Number(d.totalPnl ?? 0),
-          holdings: (d.holdings as HoldingRow[]) ?? [],
-          transactions: (d.transactions as TxRow[]) ?? [],
-        })
-      })
-      .catch(() => setDetail(null))
-      .finally(() => setDetailLoading(false))
+    const response = await fetch(url, { credentials: 'include', signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const value = await response.json() as { totalPnl?: number; holdings?: HoldingRow[]; transactions?: TxRow[] }
+    const title = selected.kind === 'day'
+      ? t.pnl.dayDetailTitle.replace('{date}', selected.date)
+      : t.pnl.monthDetailTitle.replace('{year}', String(selected.year)).replace('{month}', String(selected.month))
+    return { title, totalPnl: Number(value.totalPnl ?? 0), holdings: value.holdings ?? [], transactions: value.transactions ?? [] }
   }, [selected, t.pnl.dayDetailTitle, t.pnl.monthDetailTitle])
+  const detailResource = useAsyncResource(selected ? JSON.stringify(selected) : null, loadDetail)
+  const detail = detailResource.data ?? null
+  const detailLoading = detailResource.loading
 
   const dateMap = useMemo(() => {
     const map = new Map<string, { pnl: number; total: number }>()

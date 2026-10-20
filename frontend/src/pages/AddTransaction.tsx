@@ -90,11 +90,11 @@ export default function AddTransaction() {
           }
         }
       })
-  }, [editId])
+  }, [editId, initType])
 
   useEffect(() => {
     if (stockQuery.length >= 1 && !selectedStock) searchStocks(stockQuery).then(setStocks)
-  }, [stockQuery])
+  }, [stockQuery, selectedStock])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()

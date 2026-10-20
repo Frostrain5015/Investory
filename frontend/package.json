@@ -1,12 +1,16 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "6.3.2",
+  "version": "6.3.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "eslint .",
+    "build:electron": "tsc -b && vite build --mode electron",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "tsc -b",
+    "check:imports": "node scripts/check-imports.mjs",
+    "check": "npm run typecheck && npm run lint && npm run check:imports",
     "preview": "vite preview"
   },
   "dependencies": {

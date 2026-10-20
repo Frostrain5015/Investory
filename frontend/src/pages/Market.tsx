@@ -273,7 +273,7 @@ export default function Market() {
                   const countryName = t.market.countryNames[flag as keyof typeof t.market.countryNames] || d.country_code || ''
                   return `<div style="max-width:300px">
                     <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                      ${flag ? `<img src=\"${import.meta.env.BASE_URL}flags/${flag}.svg\" onerror=\"this.style.display='none'\" style=\"width:18px;height:12px;border-radius:2px\"/>` : ''}
+                      ${flag ? `<img src="${import.meta.env.BASE_URL}flags/${flag}.svg" onerror="this.style.display='none'" style="width:18px;height:12px;border-radius:2px"/>` : ''}
                       <span style="background:${cc};color:#fff;font-size:10px;padding:2px 7px;border-radius:4px">${cl}</span>
                       <span style="font-size:10px;color:#64748b">${countryName}</span>
                     </div>
@@ -319,7 +319,7 @@ export default function Market() {
       window.removeEventListener('resize', onResize)
       chart.dispose()
     }
-  }, [markers, countryRegions, positiveHex, negativeHex, newsPoints, lang, t.market.noData, t.market.clickToViewSource, t.market.categoryFinance, t.market.categoryGeopolitics, t.market.countryNames, timeLocale])
+  }, [indices, t, markers, countryRegions, positiveHex, negativeHex, newsPoints, lang, t.market.noData, t.market.clickToViewSource, t.market.categoryFinance, t.market.categoryGeopolitics, t.market.countryNames, timeLocale])
 
   if (loading) return <div className="flex flex-col items-center justify-center gap-3 h-screen">
     <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />

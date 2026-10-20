@@ -23,7 +23,6 @@ Investory 全市场日K线统一抓取脚本
 """
 
 import argparse
-import configparser
 import json
 import logging
 import math
@@ -36,35 +35,22 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
+from db import get_conn, load_config as load_db_config, read_config
+
 # ─── 配置 ─────────────────────────────────────────────────────────────────────
 
 SCRIPT_DIR     = Path(__file__).parent
-CONFIG_FILE    = SCRIPT_DIR / "config.ini"
 CHECKPOINT_DIR = SCRIPT_DIR / ".checkpoints"
 
 
 def load_config() -> dict:
-    cfg = configparser.ConfigParser()
-    if CONFIG_FILE.exists():
-        cfg.read(CONFIG_FILE, encoding="utf-8")
-
-    def get(section, key, default=""):
-        try:
-            return cfg.get(section, key).strip()
-        except (configparser.NoSectionError, configparser.NoOptionError):
-            return default
-
+    cfg = read_config()
     return {
-        "db_host":     os.getenv("DB_HOST",     get("database", "host",     "localhost")),
-        "db_port":     int(os.getenv("DB_PORT", get("database", "port",     "3306"))),
-        "db_name":     os.getenv("DB_NAME",     get("database", "name",     "investory")),
-        "db_user":     os.getenv("DB_USER",     get("database", "user",     "root")),
-        "db_password": os.getenv("DB_PASSWORD", get("database", "password", "")),
-        "proxy_url":   os.getenv("PROXY_URL",   get("proxy",    "url",      "")),
-        "days_back":   int(os.getenv("DAYS_BACK", get("fetch", "days_back", "7"))),
-        "delay_a":     float(get("fetch", "delay_a",  "0.15")),
-        "delay_hk":    float(get("fetch", "delay_hk", "0.05")),
-        "delay_us":    float(get("fetch", "delay_us", "0.3")),
+        **load_db_config(),
+        "days_back": int(os.getenv("DAYS_BACK", cfg.get("fetch", "days_back", fallback="7"))),
+        "delay_a": cfg.getfloat("fetch", "delay_a", fallback=0.15),
+        "delay_hk": cfg.getfloat("fetch", "delay_hk", fallback=0.05),
+        "delay_us": cfg.getfloat("fetch", "delay_us", fallback=0.3),
     }
 
 
@@ -108,18 +94,6 @@ def setup_logging(verbose: bool) -> logging.Logger:
 
 
 # ─── 数据库 ───────────────────────────────────────────────────────────────────
-
-def get_conn(cfg: dict):
-    import pymysql
-    return pymysql.connect(
-        host=cfg["db_host"],
-        port=cfg["db_port"],
-        database=cfg["db_name"],
-        user=cfg["db_user"],
-        password=cfg["db_password"],
-        charset="utf8mb4",
-        autocommit=False,
-    )
 
 
 def upsert_prices(conn, rows: list) -> int:

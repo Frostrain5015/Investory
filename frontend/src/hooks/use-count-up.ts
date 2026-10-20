@@ -5,10 +5,11 @@ export function useCountUp(target: number, duration = 600): number {
   const startRef = useRef(target)
   const startTimeRef = useRef(0)
   const rafRef = useRef(0)
+  const currentRef = useRef(target)
 
   useEffect(() => {
-    if (target === current) return
-    startRef.current = current
+    if (target === currentRef.current) return
+    startRef.current = currentRef.current
     startTimeRef.current = performance.now()
     cancelAnimationFrame(rafRef.current)
 
@@ -16,7 +17,8 @@ export function useCountUp(target: number, duration = 600): number {
       const elapsed = now - startTimeRef.current
       const progress = Math.min(elapsed / duration, 1)
       const eased = 1 - Math.pow(1 - progress, 3) // ease-out cubic
-      setCurrent(startRef.current + (target - startRef.current) * eased)
+      currentRef.current = startRef.current + (target - startRef.current) * eased
+      setCurrent(currentRef.current)
       if (progress < 1) rafRef.current = requestAnimationFrame(animate)
     }
 

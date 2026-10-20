@@ -6,22 +6,18 @@
 """
 from __future__ import annotations
 
-import configparser
 import json
-import os
 import subprocess
 import sys
 import time
 import urllib.parse
 from datetime import date, datetime
-from pathlib import Path
 
 import feedparser
-import pymysql
 import requests
 
-SCRIPT_DIR  = Path(__file__).parent
-CONFIG_FILE = SCRIPT_DIR / "config.ini"
+from db import get_conn, load_config
+
 
 RSS_FEEDS = [
     ("Guardian World",    "https://www.theguardian.com/world/rss"),
@@ -162,27 +158,6 @@ COUNTRY_HINTS: dict[str, list[str]] = {
 }
 
 
-def load_config() -> dict:
-    cfg = configparser.ConfigParser()
-    if CONFIG_FILE.exists():
-        cfg.read(CONFIG_FILE, encoding="utf-8")
-
-    def get(section, key, default=""):
-        try:
-            return cfg.get(section, key).strip()
-        except (configparser.NoSectionError, configparser.NoOptionError):
-            return default
-
-    return {
-        "db_host":     os.getenv("DB_HOST",     get("database", "host",     "localhost")),
-        "db_port":     int(os.getenv("DB_PORT", get("database", "port",     "3306"))),
-        "db_name":     os.getenv("DB_NAME",     get("database", "name",     "investory")),
-        "db_user":     os.getenv("DB_USER",     get("database", "user",     "root")),
-        "db_password": os.getenv("DB_PASSWORD", get("database", "password", "")),
-        "proxy_url":   os.getenv("PROXY_URL",   get("proxy",    "url",      "")),
-    }
-
-
 def score_and_classify(text: str) -> tuple[int, str]:
     lower = text.lower()
     fin = sum(1 for w in FINANCE_WORDS if w in lower)
@@ -245,11 +220,8 @@ def main():
     if cfg["proxy_url"]:
         proxies = {"http": cfg["proxy_url"], "https": cfg["proxy_url"]}
 
-    conn = pymysql.connect(
-        host=cfg["db_host"], port=cfg["db_port"],
-        user=cfg["db_user"], password=cfg["db_password"],
-        database=cfg["db_name"], charset="utf8mb4",
-    )
+    conn = get_conn(cfg)
+
     try:
         cur = conn.cursor()
 

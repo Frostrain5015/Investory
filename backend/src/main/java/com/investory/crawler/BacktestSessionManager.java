@@ -3,104 +3,131 @@ package com.investory.crawler;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
+/** One independent run per user; completed events remain briefly available for late SSE clients. */
 @Component
 public class BacktestSessionManager {
+    private static final long RETENTION_MS = 30 * 60 * 1000L;
+    private final Map<Long, Run> runs = new ConcurrentHashMap<>();
 
-    private volatile boolean active = false;
-    private volatile Map<String, Object> currentProgress = null;
-    private final LinkedList<String> recentLogs = new LinkedList<>();
-    private static final int MAX_LOGS = 300;
-
-    private final List<SseEmitter> subscribers = new CopyOnWriteArrayList<>();
-
-    public synchronized void startSession() {
-        this.active = true;
-        this.currentProgress = null;
-        this.recentLogs.clear();
+    public synchronized Run tryStart(long userId) {
+        long now = System.currentTimeMillis();
+        runs.entrySet().removeIf(entry -> entry.getValue().expired(now));
+        Run current = runs.get(userId);
+        if (current != null && current.isActive()) return null;
+        Run run = new Run();
+        runs.put(userId, run);
+        return run;
     }
 
-    public synchronized void clearSession() {
-        this.active = false;
-        this.currentProgress = null;
+    public Map<String, Object> getStatus(long userId) {
+        Run run = runs.get(userId);
+        return run == null ? Map.of("active", false) : run.getStatus();
     }
 
-    public void updateProgress(Map<String, Object> progress) {
-        this.currentProgress = progress;
-        emitToAll("progress", progress);
-    }
-
-    public void addLog(String msg) {
-        synchronized (recentLogs) {
-            recentLogs.addLast(msg);
-            if (recentLogs.size() > MAX_LOGS) recentLogs.removeFirst();
+    public SseEmitter subscribe(long userId) {
+        Run run = runs.get(userId);
+        if (run == null) {
+            SseEmitter empty = new SseEmitter();
+            empty.complete();
+            return empty;
         }
-        emitToAll("log", Map.of("msg", msg));
+        return run.subscribe();
     }
 
-    public void emitInfo(String msg) {
-        addLog("[信息] " + msg);
-        emitToAll("info", Map.of("msg", msg));
-    }
+    public static final class Run {
+        private record Event(String name, Object data) {}
+        private final LinkedList<Event> events = new LinkedList<>();
+        private final LinkedList<String> logs = new LinkedList<>();
+        private final List<SseEmitter> subscribers = new CopyOnWriteArrayList<>();
+        private boolean active = true;
+        private long finishedAt;
+        private Map<String, Object> progress;
 
-    public void emitStatus(String msg) {
-        addLog("[状态] " + msg);
-        emitToAll("status", Map.of("msg", msg));
-    }
+        public synchronized boolean isActive() { return active; }
 
-    public void emitDone(String msg, long resultId) {
-        emitToAll("done", Map.of("msg", msg, "resultId", resultId));
-    }
+        private synchronized boolean expired(long now) {
+            return !active && now - finishedAt > RETENTION_MS;
+        }
 
-    public void emitError(String msg) {
-        emitToAll("error", Map.of("msg", msg));
-    }
+        public synchronized void updateProgress(Map<String, Object> value) {
+            progress = Map.copyOf(value);
+            emit("progress", progress);
+        }
 
-    public SseEmitter subscribe() {
-        SseEmitter emitter = new SseEmitter(0L);
-        subscribers.add(emitter);
-        emitter.onCompletion(() -> subscribers.remove(emitter));
-        emitter.onTimeout(() -> subscribers.remove(emitter));
-        emitter.onError(e -> subscribers.remove(emitter));
+        public synchronized void addLog(String message) {
+            logs.add(message);
+            if (logs.size() > 300) logs.removeFirst();
+            emit("log", Map.of("msg", message));
+        }
 
-        synchronized (recentLogs) {
-            for (String log : recentLogs) {
-                emitSingle(emitter, "log", Map.of("msg", log));
+        public synchronized void emitInfo(String message) {
+            addLog("[信息] " + message);
+            emit("info", Map.of("msg", message));
+        }
+
+        public synchronized void emitStatus(String message) {
+            addLog("[状态] " + message);
+            emit("status", Map.of("msg", message));
+        }
+
+        public synchronized void emitDone(String message, long resultId) {
+            emit("done", Map.of("msg", message, "resultId", resultId));
+        }
+
+        public synchronized void emitError(String message) {
+            emit("error", Map.of("msg", message));
+        }
+
+        public synchronized void finish() {
+            active = false;
+            finishedAt = System.currentTimeMillis();
+            for (SseEmitter subscriber : subscribers) subscriber.complete();
+            subscribers.clear();
+        }
+
+        private synchronized Map<String, Object> getStatus() {
+            Map<String, Object> status = new LinkedHashMap<>();
+            status.put("active", active);
+            status.put("progress", progress);
+            status.put("recentLogs", new ArrayList<>(logs));
+            return status;
+        }
+
+        private synchronized SseEmitter subscribe() {
+            SseEmitter emitter = new SseEmitter(0L);
+            subscribers.add(emitter);
+            emitter.onCompletion(() -> subscribers.remove(emitter));
+            emitter.onTimeout(() -> subscribers.remove(emitter));
+            emitter.onError(error -> subscribers.remove(emitter));
+            for (Event event : events) send(emitter, event);
+            if (!active) {
+                emitter.complete();
+                subscribers.remove(emitter);
+            }
+            return emitter;
+        }
+
+        private void emit(String name, Object data) {
+            Event event = new Event(name, data);
+            events.add(event);
+            if (events.size() > 300) events.removeFirst();
+            for (SseEmitter subscriber : subscribers) send(subscriber, event);
+        }
+
+        private void send(SseEmitter emitter, Event event) {
+            try {
+                emitter.send(SseEmitter.event().name(event.name()).data(event.data()));
+            } catch (Exception disconnected) {
+                subscribers.remove(emitter);
             }
         }
-        if (currentProgress != null) {
-            emitSingle(emitter, "progress", currentProgress);
-        }
-
-        return emitter;
     }
-
-    public Map<String, Object> getStatus() {
-        Map<String, Object> status = new LinkedHashMap<>();
-        status.put("active", active);
-        if (!active) return status;
-        status.put("progress", currentProgress);
-        synchronized (recentLogs) {
-            status.put("recentLogs", new ArrayList<>(recentLogs));
-        }
-        return status;
-    }
-
-    private void emitToAll(String event, Object data) {
-        for (SseEmitter emitter : subscribers) {
-            emitSingle(emitter, event, data);
-        }
-    }
-
-    private void emitSingle(SseEmitter emitter, String event, Object data) {
-        try {
-            emitter.send(SseEmitter.event().name(event).data(data));
-        } catch (Exception ignored) {
-            subscribers.remove(emitter);
-        }
-    }
-
-    public boolean isActive() { return active; }
 }

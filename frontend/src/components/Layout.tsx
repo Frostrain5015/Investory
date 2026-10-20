@@ -1,3 +1,4 @@
+import { ChatContext } from '@/hooks/use-chat'
 import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { usePortfolioPreload } from '@/hooks/use-portfolio-preload'
@@ -5,20 +6,13 @@ import { useMorningGreeting } from '@/hooks/use-morning-greeting'
 import { useT } from '@/i18n/I18nContext'
 import LangSwitcher from '@/components/LangSwitcher'
 import { motion, AnimatePresence } from 'framer-motion'
-import {
-  LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays,
-  LogOut, TrendingUp, User, Search, Menu, Shield, FlaskConical
-} from 'lucide-react'
-import { createContext, useContext, useEffect, useState } from 'react'
+import { LayoutDashboard, Wallet, ArrowRightLeft, CalendarDays, LogOut, TrendingUp, User, Search, Menu, Shield, FlaskConical } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { searchStocks, getPortfolios } from '@/services/api'
 import ChatPanel from '@/pages/ChatPanel'
 import UpdateBanner from '@/components/UpdateBanner'
 import type { StockSearchItem } from '@/types'
 import { displaySymbol } from '@/lib/format'
-
-interface ChatContextType { openChatWith: (message: string) => void }
-export const ChatContext = createContext<ChatContextType>({ openChatWith: () => {} })
-export function useChatContext() { return useContext(ChatContext) }
 
 export default function Layout() {
   const { t, lang } = useT()
@@ -59,7 +53,7 @@ export default function Layout() {
       const p = list.find(p => p.id === portfolioId)
       if (p) setPortfolioName(p.name)
     }).catch(() => {})
-  }, [portfolioId])
+  }, [portfolioId, setPortfolioName])
 
   async function handleSearch(q: string) {
     setQuery(q)

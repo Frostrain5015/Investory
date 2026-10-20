@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSettings, type BaseCurrency } from '@/hooks/use-settings'
 import { useTheme } from '@/hooks/use-theme'
 import { useT } from '@/i18n/I18nContext'
-import { useToast } from '@/components/Toast'
+import { useToast } from '@/hooks/use-toast'
 import {
   Sun, Moon, Monitor, Globe, Bot, Plug,
   ChevronRight, Copy, Download, Trash2, ExternalLink,

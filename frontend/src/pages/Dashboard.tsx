@@ -4,13 +4,13 @@ import { useTheme } from '@/hooks/use-theme'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
-import { useToast } from '@/components/Toast'
+import { useToast } from '@/hooks/use-toast'
 import { useSettings } from '@/hooks/use-settings'
 import { chartAPI } from '@/services/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { AllocationItem, CumulativeReturnItem } from '@/types'
 import { ArrowLeftRight, Sparkles } from 'lucide-react'
-import { useChatContext } from '@/components/Layout'
+import { useChatContext } from '@/hooks/use-chat'
 import {
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
   AreaChart, Area, Tooltip, ResponsiveContainer
@@ -39,6 +39,11 @@ const COLORS = [
 ]
 
 export default function Dashboard() {
+  const { portfolioId } = useAuth()
+  return <DashboardContent key={portfolioId} />
+}
+
+function DashboardContent() {
   const { portfolioId, portfolioName, setPortfolioName } = useAuth()
   const { positiveClass, negativeClass, positiveHex, negativeHex, formatCurrency, convertCurrency } = useSettings()
   const { openChatWith } = useChatContext()
@@ -64,15 +69,6 @@ export default function Dashboard() {
   const [cashByCurrency, setCashByCurrency] = useState<{ currency: string; amount: number }[]>([])
   const [refreshing, setRefreshing] = useState(false)
   const [loading, setLoading] = useState(true)
-
-  // Clear data when switching portfolios to avoid stale data flash
-  useEffect(() => {
-    setSnapshots([])
-    setAllocation([])
-    setCumulative([])
-    setTotals({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, cumulativeReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
-    setLoading(true)
-  }, [portfolioId])
 
   const loadDashboard = useCallback(() => {
     if (!portfolioId) return
@@ -106,7 +102,7 @@ export default function Dashboard() {
       const p = list.find(p => p.id === portfolioId)
       if (p) setPortfolioName(p.name)
     }).catch(() => {})
-  }, [portfolioId])
+  }, [portfolioId, setPortfolioName])
 
   useEffect(() => { loadDashboard() }, [loadDashboard])
 

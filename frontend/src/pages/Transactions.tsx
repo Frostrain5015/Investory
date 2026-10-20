@@ -16,8 +16,12 @@ interface Activity {
 }
 
 export default function Transactions() {
-  const confirm = useConfirm()
   const { portfolioId } = useAuth()
+  return <TransactionsContent key={portfolioId} />
+}
+
+function TransactionsContent() {
+  const confirm = useConfirm()
   const { t, lang } = useT()
   const [items, setItems] = useState<Activity[]>([])
   const [loading, setLoading] = useState(true)
@@ -29,8 +33,7 @@ export default function Transactions() {
       .finally(() => setLoading(false))
   }, [])
 
-  useEffect(() => { setItems([]); setLoading(true); load() }, [portfolioId])
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [load])
 
   async function handleDelete(id: number, type: string) {
     const msg = lang === 'zh'

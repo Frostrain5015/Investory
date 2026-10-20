@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import MarketRegimeBadge from '@/components/MarketRegimeBadge'
 import FactorRadarChart from '@/components/FactorRadarChart'
-import { useToast } from '@/components/Toast'
+import { useToast } from '@/hooks/use-toast'
 import {
   BASE, getFactorBreakdown,
   getRegimeStatus, searchStocks,
@@ -35,8 +35,8 @@ const MARKETS = [
 
 export default function Screener({ embedded }: { embedded?: boolean }) {
   const toast = useToast()
-  const toastOk = (msg: string) => toast(msg, true)
-  const toastErr = (msg: string) => toast(msg, false)
+  const toastOk = useCallback((msg: string) => toast(msg, true), [toast])
+  const toastErr = useCallback((msg: string) => toast(msg, false), [toast])
 
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<StockSearchItem[]>([])
@@ -184,7 +184,7 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
       es.close()
     }
     setTimeout(() => { if (es.readyState !== 2) { setScanning(false); es.close() } }, 300000)
-  }, [symbols, toast, toastOk, toastErr])
+  }, [symbols, toast, toastOk, toastErr, scanStrategy])
 
   const sortIcon = (key: SortKey) => {
     if (sortKey !== key) return null
@@ -279,7 +279,8 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
                   {FACTOR_GROUPS.map(g => (
                     <button key={g.key} onClick={() => {
                       const next = new Set(activeGroups)
-                      next.has(g.key) ? next.delete(g.key) : next.add(g.key)
+                      if (next.has(g.key)) next.delete(g.key)
+                      else next.add(g.key)
                       setActiveGroups(next)
                     }}
                       className={`px-2 py-0.5 rounded text-xs transition-colors ${activeGroups.has(g.key) ? 'bg-blue-100 text-blue-700' : 'bg-white text-slate-500 border border-slate-200'}`}>

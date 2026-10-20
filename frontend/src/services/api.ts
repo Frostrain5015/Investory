@@ -9,7 +9,7 @@ import type {
   FactorScoresResponse, ScanResultsResponse, DailyPick,
   AdminStatus, AdminUser, AdminCrawlHistoryItem, StatusResponse,
   WatchlistItem, AiSettings, AiChatRequest,
-  MarketIndexItem, MarketNewsItem, ExchangeRatesResponse,
+  MarketIndexItem, MarketNewsItem, ExchangeRatesResponse, PortfolioAnalysisResult,
 } from '@/types'
 
 export const BASE = import.meta.env.VITE_API_BASE || ''
@@ -49,11 +49,11 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(BASE + url, { credentials: 'include', ...options })
   if (res.status === 401) {
     window.dispatchEvent(new CustomEvent('investory:auth-expired'))
-    return {} as T
+    throw new Error('Authentication expired')
   }
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const text = await res.text()
-  if (!text) return {} as T
+  if (!text) throw new Error('Expected a JSON response')
   return JSON.parse(text) as T
 }
 
@@ -252,10 +252,6 @@ export function deleteBacktest(id: number): Promise<{ status: string }> {
   return request<{ status: string }>(`/api/backtest/${id}`, { method: 'DELETE' })
 }
 
-export async function getBacktestStream(): Promise<Response> {
-  return fetch(`${BASE}/api/backtest/stream`, { credentials: 'include' })
-}
-
 // ── Admin ────────────────────────────────────────────────────────────────
 
 export function adminGetStatus(): Promise<AdminStatus> { return request('/api/admin/status') }
@@ -377,10 +373,11 @@ export function refreshStockSageScan(): EventSource {
   return new EventSource(`${BASE}/api/stocksage/refresh`, { withCredentials: true })
 }
 
-export function analyzePortfolio(holdings: { symbol: string; weight: number; name: string }[]): Promise<Record<string, unknown>> {
+export function analyzePortfolio(holdings: { symbol: string; weight: number; name: string }[], signal?: AbortSignal): Promise<PortfolioAnalysisResult> {
   return request('/api/stocksage/portfolio-analysis', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ holdings }),
+    signal,
   })
 }

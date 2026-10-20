@@ -16,17 +16,18 @@ Refuses to restart the service if a market-data crawl is running.
 """
 
 import paramiko, os, sys, subprocess, time, shlex, re, json
+from pathlib import Path
+import hashlib
+import shutil
+from datetime import datetime, timezone
 
 HOST      = "116.62.179.231"
 USER      = "root"
 LOCAL_JAR  = r"d:\Java Projects\investory\backend\target\investory.jar"
 LOCAL_SCRIPT_DIR = r"d:\Java Projects\investory\script"
 SCRIPT_SYNC_DIRS = ["agent_skills"]
-# Resident StockSage engine files (the "ghost submodule"): only a couple of
-# files change in normal work, so we sync just these rather than the whole tree.
+# Sync the complete tracked runtime, including factor packages and deletions.
 LOCAL_ENGINE_DIR = r"d:\Java Projects\investory\backend\src\main\python\stocksage_alpha"
-ENGINE_SYNC_FILES = ["server.py", "bridge.py", "src/research.py", "src/fetcher.py",
-                     "src/factors/scoring.py"]
 REMOTE_ENGINE_DIR = "/opt/investory/stocksage_alpha"
 ENGINE_SERVICE = "stocksage"
 REMOTE_JAR = "/opt/investory/investory.jar"
@@ -50,23 +51,22 @@ VERSION_RE   = re.compile(r"[vV]?(\d+\.\d+\.\d+)")
 
 
 def ssh_connect():
-    from pathlib import Path
-    pw = os.environ.get("DEPLOY_SSH_PASSWORD")
-    if not pw:
-        # Fall back to user-level CLAUDE.md (single shared server across all projects)
-        mem = Path.home() / ".claude" / "CLAUDE.md"
-        if mem.exists():
-            for line in mem.read_text(encoding="utf-8").splitlines():
-                if "Password:" in line:
-                    # Format: "- Password: `xxx`" — strip backticks/whitespace
-                    pw = line.split(":", 1)[1].strip().strip("`").strip()
-                    break
-    if not pw:
-        print("ERROR: SSH password not found. Set DEPLOY_SSH_PASSWORD or add to ~/.claude/CLAUDE.md.")
-        sys.exit(1)
+    config = paramiko.SSHConfig()
+    config_file = Path.home() / ".ssh" / "config"
+    if config_file.exists():
+        with config_file.open(encoding="utf-8") as stream:
+            config.parse(stream)
+    target = config.lookup("alias")
+    identity = os.environ.get("DEPLOY_SSH_KEY") or next(iter(target.get("identityfile", [])), "D:/Frostrain.pem")
+    identity = Path(identity).expanduser()
+    if not identity.is_file():
+        raise FileNotFoundError("SSH identity not found; configure alias IdentityFile or DEPLOY_SSH_KEY")
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(HOST, username=USER, password=pw, timeout=30, banner_timeout=60)
+    client.load_system_host_keys()
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    client.connect(HOST, port=int(target.get("port", 22)), username=USER,
+                   key_filename=str(identity), look_for_keys=False, allow_agent=False,
+                   timeout=30, banner_timeout=60, auth_timeout=30)
     return client
 
 
@@ -101,14 +101,18 @@ def build_jar():
     # lets every past build's hashed assets pile up in the JAR (it had grown to
     # ~80 MB / 480+ JS files). `clean package` rebuilds target from scratch, so
     # the JAR carries only the current build's assets.
+    maven = os.environ.get("MAVEN_CMD") or shutil.which("mvn") or shutil.which("mvn.cmd")
+    if not maven:
+        candidates = sorted((Path.home() / ".m2/wrapper/dists").glob("apache-maven-*-bin/*/apache-maven-*/bin/mvn.cmd"))
+        maven = str(candidates[-1]) if candidates else None
+    if not maven:
+        raise FileNotFoundError("Maven not found; set MAVEN_CMD")
     r = subprocess.run(
-        [r"E:\Maven\apache-maven-3.9.16\bin\mvn.cmd",
-         "-f", r"d:\Java Projects\investory\backend\pom.xml",
-         "clean", "package", "-DskipTests"],
+        [maven, "-f", BACKEND_POM, "clean", "package"],
         env=env, capture_output=True, text=True
     )
     if r.returncode != 0:
-        print("BUILD FAILED:\n", r.stdout[-2000:])
+        print("BUILD FAILED:\n", r.stdout[-4000:], r.stderr[-1000:])
         sys.exit(1)
     print("Build OK.")
 

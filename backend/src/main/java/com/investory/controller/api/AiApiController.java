@@ -2,6 +2,7 @@ package com.investory.controller.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.investory.crawler.AiSessionManager;
+import com.investory.util.ProcessRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -13,6 +14,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -818,12 +820,13 @@ public class AiApiController {
     private void summarizeTitleAsync(long convId, String userMessage, long userId) {
         if (!aiTitleEnabled || convId <= 0 || userId <= 0) return;
         executor.submit(() -> {
+            Path tmpInput = null;
             try {
                 File script = new File("script/ai_agent.py");
                 if (!script.exists()) script = new File("../script/ai_agent.py").getCanonicalFile();
                 if (!script.exists()) return;
                 // Build temp input with the user message
-                Path tmpInput = Files.createTempFile("ai_title_", ".json");
+                tmpInput = Files.createTempFile("ai_title_", ".json");
                 Files.writeString(tmpInput, json.writeValueAsString(Map.of("message", userMessage)));
                 // Load user's AI settings
                 String key = defaultKey, model = DEFAULT_MODEL, base = DEFAULT_BASE_URL, provider = DEFAULT_PROVIDER;
@@ -840,7 +843,6 @@ public class AiApiController {
                     }
                 } catch (Exception ignored) {}
                 if (key == null || key.isBlank()) {
-                    Files.deleteIfExists(tmpInput);
                     return;
                 }
                 try {
@@ -849,24 +851,30 @@ public class AiApiController {
                         String.class, convId, userId);
                     if (currentTitle != null && !currentTitle.isBlank()
                             && !"\u65e0\u6807\u9898".equals(currentTitle)) {
-                        Files.deleteIfExists(tmpInput);
                         return;
                     }
                 } catch (Exception ignored) {}
                 ProcessBuilder pb = new ProcessBuilder(pythonExecutable, "-u",
-                    script.getAbsolutePath(), "--mode", "title", "--api-key", key,
+                    script.getAbsolutePath(), "--mode", "title",
                     "--model", model, "--provider", provider, "--api-base", base,
                     "--input", tmpInput.toString());
                 pb.directory(script.getParentFile());
-                pb.redirectErrorStream(true);
-                Process p = pb.start();
-                String title = new String(p.getInputStream().readAllBytes(), "UTF-8").trim();
-                p.waitFor(15, TimeUnit.SECONDS);
-                Files.deleteIfExists(tmpInput);
-                if (!title.isEmpty() && !"\u65e0\u6807\u9898".equals(title)) {
-                    jdbc.update("UPDATE ai_conversations SET title = ? WHERE id = ?", title, convId);
+                pb.environment().put("AI_API_KEY", key);
+                StringBuilder output = new StringBuilder();
+                int exit = ProcessRunner.run(pb, Duration.ofSeconds(15), line -> output.append(line).append('\n'));
+                String title = output.toString().trim();
+                if (exit == 0 && !title.isEmpty() && !"\u65e0\u6807\u9898".equals(title)) {
+                    jdbc.update("UPDATE ai_conversations SET title = ? WHERE id = ? AND user_id = ?", title, convId, userId);
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception error) {
+                if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+                // Title generation is optional; the conversation remains usable on failure.
+            } finally {
+                if (tmpInput != null) {
+                    try { Files.deleteIfExists(tmpInput); }
+                    catch (IOException ignored) { /* Best-effort cleanup of this task's temporary input. */ }
+                }
+            }
         });
     }
 

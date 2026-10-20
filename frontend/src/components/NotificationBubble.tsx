@@ -1,27 +1,8 @@
-import { useState, useCallback, createContext, useContext, type ReactNode } from 'react'
+import { ctx, type Variant, type Bubble } from '@/hooks/use-notification-bubble'
+import { useState, useCallback, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Sparkles, Sun, X, ChevronRight } from 'lucide-react'
-
-type Variant = 'default' | 'morning'
-
-interface Bubble {
-  id: number
-  title: string
-  message: string
-  actionLabel?: string
-  actionHref?: string
-  variant?: Variant
-  onAction?: () => void
-}
-
-interface Ctx {
-  show: (b: Omit<Bubble, 'id'>) => void
-  dismiss: (id: number) => void
-}
-
-const ctx = createContext<Ctx>({ show: () => {}, dismiss: () => {} })
-export const useNotificationBubble = () => useContext(ctx)
 
 const STYLES: Record<Variant, {
   shadow: string; border: string; iconBg: string; iconNode: ReactNode; actionBg: string;

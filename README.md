@@ -8,7 +8,7 @@
 
 Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-currency P&L.
 
-`v6.3.0` · Java 17 · Spring Boot 3.3.5 · React 19 · Electron 33 · ~58k LOC
+`v6.3.3` · Java 17 · Spring Boot 3.3.5 · React 19 · Electron 33
 
 🌐 **Live demo: [investory.frostrain.tech](https://investory.frostrain.tech)**
 
@@ -18,8 +18,8 @@ Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-cur
 
 ## ✨ Highlights
 
-- **🤖 MCP server** — exposes **46 tools** at `/mcp` so Claude / Cursor / Cline and any MCP client can read your dashboard, run backtests, and place (confirmed) trades. Zero logic rewrite: each tool replays your existing REST API with an injected identity.
-- **🧠 AI assistant "Guanlan" (观澜)** — streaming chat with tool-use, deep-thinking mode, and a morph animation system; can analyze your portfolio and generate strategies mid-conversation.
+- **🤖 MCP server** — exposes **46 tools** at `/mcp` so Claude / Cursor / Cline and any MCP client can read your dashboard, run backtests, and record (confirmed) portfolio transactions. Zero logic rewrite: each tool replays your existing REST API with an injected identity.
+- **🧠 AI assistant "Guanlan" (观澜)** — streaming chat with tool-use and a morph animation system; can analyze your portfolio and generate strategies mid-conversation.
 - **📊 Quantitative engine (StockSage Alpha)** — factor scoring, market-regime detection, portfolio style/risk analysis, and a strategy backtester (SMA/EMA/RSI/MACD/Bollinger/KDJ rules or custom Python), with walk-forward validation and parameter optimization.
 - **🌍 Multi-market, multi-currency** — A-shares, HK, US; CNY / HKD / USD with daily FX refresh and per-currency cash tracking.
 - **💻 Cross-platform** — responsive web (tested from 320px phones to 21:9 ultra-wide) + a native Electron desktop client with auto-update.
@@ -56,7 +56,7 @@ Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-cur
 - **Backtest**: visual rule builder or custom Python · live SSE progress · equity curve with buy/sell markers, Sharpe, max drawdown, win rate, profit factor · walk-forward & grid optimization
 
 ### AI Assistant — Guanlan (观澜)
-- Floating chat, token-by-token streaming (SSE), deep-thinking mode
+- Floating chat, token-by-token streaming (SSE), tool execution timeline
 - Tool use mid-conversation; saves generated strategies to the backtest library
 - Pluggable provider: DeepSeek, OpenAI, Anthropic Claude, Moonshot, Zhipu GLM, Alibaba Bailian, or any OpenAI-compatible endpoint
 
@@ -85,28 +85,14 @@ Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-cur
 | **Backend** | Java 17 · Spring Boot 3.3.5 · MySQL (JdbcTemplate, no ORM) · Flyway · Spring Session JDBC · BCrypt · Gson |
 | **Frontend** | React 19 · TypeScript · Vite 8 · React Router 7 · Tailwind CSS 4 · Recharts 3 · ECharts 6 · Framer Motion 12 |
 | **Desktop** | Electron 33 · electron-builder · electron-updater (auto-update via GitHub Releases) |
-| **Quant / Data** | Python 3.8+ · StockSage Alpha engine · Yahoo / Sina / East Money data sources · custom AI agent & backtest engine |
+| **Quant / Data** | Python 3.10+ · StockSage Alpha engine · Yahoo / Sina / East Money data sources · custom AI agent & backtest engine |
 | **Integration** | MCP (Model Context Protocol) server, 46 tools, Streamable HTTP + OAuth 2.1/PKCE |
 
 ---
 
-## 📏 Project Scale
+## 📚 Architecture and development
 
-| Module | Files | Lines |
-|---|--:|--:|
-| Backend — Java (main) | 76 | 14,453 |
-| Backend — Java (tests) | 4 | 517 |
-| Frontend — TS/TSX | 62 | 13,657 |
-| Frontend — CSS | 1 | 216 |
-| Python — StockSage Alpha engine | 29 | 19,516 |
-| Python — data / AI scripts | 17 | 8,683 |
-| Python — deploy / stress | 2 | 711 |
-| Electron desktop (JS) | 7 | 550 |
-| SQL migrations | 9 | 245 |
-| Thymeleaf template | 1 | 72 |
-| **Total** | **208** | **~58,620** |
-
-By language: **Java ~14.9k · TypeScript ~13.7k · Python ~28.9k**.
+See [current architecture](docs/architecture.md) for module boundaries, runtime flows, entry points, validation, and limitations. The [cleanup record](docs/code-hygiene-2026-10-20.md) documents verified changes. Assessments and plans live in [docs](docs/README.md).
 
 ---
 
@@ -123,16 +109,17 @@ investory/
 │   │   ├── crawler/     # @Scheduled market-data sync & FX refresh
 │   │   ├── web/         # LoginInterceptor, CORS, GlobalExceptionHandler
 │   │   └── config/
+│   ├── src/main/python/stocksage_alpha/ # analysis engine source
 │   └── src/main/resources/
 │       ├── application.properties
-│       ├── db/migration/             # Flyway V1..V7
-│       ├── python/stocksage_alpha/   # resident quant engine
+│       ├── db/migration/             # Flyway V2..V7 (legacy baseline)
 │       └── static/                   # built frontend (Vite output)
 ├── frontend/                         # React + TS + Vite
-│   └── src/{pages,components,hooks,services,i18n,types}
+│   └── src/{pages,features,providers,components,hooks,services,i18n,types}
 ├── desktop/                          # Electron (main.js, preload.js, electron-builder)
 ├── script/                           # data crawlers, AI agent, backtest engine, agent_skills/
-└── deploy.py                         # safe deploy + GitHub desktop release
+├── docs/                             # architecture, assessments and plans
+└── deploy.py                         # manual cloud deployment + desktop publication
 ```
 
 ---
@@ -140,13 +127,13 @@ investory/
 ## 🚀 Getting Started
 
 ### Prerequisites
-Java 17 · Maven 3.9+ · Node.js 20+ · Python 3.8+ · MySQL 8
+Java 17 · Maven 3.9+ · Node.js 22.12+ · Python 3.10+ · MySQL 8
 
 ### 1. Database
 ```sql
 CREATE DATABASE investory CHARACTER SET utf8mb4;
 ```
-Set credentials via env vars (`DB_USER`, `DB_PASSWORD`, …) — see `application.properties`. Flyway applies migrations on startup.
+Set credentials via env vars (`DB_USER`, `DB_PASSWORD`, …) — see `application.properties`. Flyway maintains incremental migrations from V2; a new database still needs the initial business schema, as described in [storage boundaries](docs/architecture.md#6-身份mcp-与存储).
 
 ### 2. Backend (builds the frontend automatically)
 The Maven build runs `tsc -b && vite build` and copies the output into `static/` before packaging.
@@ -167,11 +154,13 @@ cd frontend && npm install && npm run dev   # http://localhost:5173, proxies /ap
 ```bash
 cd script && pip install -r requirements.txt
 cp config.ini.example config.ini            # set MySQL + proxy
-python fetch_stocks.py --market a|hk|us      # crawl market data
+pip install -r ../backend/src/main/python/stocksage_alpha/requirements.txt
+python fetch_stocks.py -m a                 # crawl market data
 ```
 
 ### 5. Desktop client
 ```bash
+cp frontend/.env.electron.example frontend/.env.electron  # set the actual backend URL
 cd desktop && npm install
 npm run build:frontend && npm start          # dev
 npm run build:exe                             # NSIS installer

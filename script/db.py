@@ -10,17 +10,21 @@ import configparser
 import os
 from pathlib import Path
 
-import pymysql
-
 SCRIPT_DIR = Path(__file__).parent
 CONFIG_FILE = SCRIPT_DIR / "config.ini"
 
 
-def load_config() -> dict:
-    """Load DB config from env vars first, then config.ini, then defaults."""
+def read_config() -> configparser.ConfigParser:
+    """Read the shared INI without opening a database connection."""
     cfg = configparser.ConfigParser()
     if CONFIG_FILE.exists():
         cfg.read(CONFIG_FILE, encoding="utf-8")
+    return cfg
+
+
+def load_config() -> dict:
+    """Load DB config from env vars first, then config.ini, then defaults."""
+    cfg = read_config()
 
     def get(section, key, default=""):
         try: return cfg.get(section, key).strip()
@@ -36,9 +40,11 @@ def load_config() -> dict:
     }
 
 
-def get_conn(cfg: dict):
+def get_conn(cfg: dict, *, autocommit: bool = False):
+    import pymysql
+
     return pymysql.connect(
         host=cfg["db_host"], port=cfg["db_port"],
         database=cfg["db_name"], user=cfg["db_user"],
-        password=cfg["db_password"], charset="utf8mb4", autocommit=False,
+        password=cfg["db_password"], charset="utf8mb4", autocommit=autocommit,
     )

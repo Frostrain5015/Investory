@@ -3,6 +3,7 @@ package com.investory.web;
 import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -29,6 +30,11 @@ public class GlobalExceptionHandler {
 
     /** JUL 日志记录器，用于将数据库错误和未知异常记录到应用日志。 */
     private static final Logger log = Logger.getLogger(GlobalExceptionHandler.class.getName());
+
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<Map<String, String>> handleUnreadableBody(HttpMessageNotReadableException e) {
+        return ResponseEntity.badRequest().body(Map.of("error", "请求 JSON 或参数格式不正确"));
+    }
 
     /**
      * 处理数据库访问异常（{@link DataAccessException} 及其所有子类）。

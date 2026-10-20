@@ -21,7 +21,15 @@ __pycache__/
 script/.checkpoints/
 script/config.ini
 investory_dump.sql.gz
-desktop/
+desktop/*
+!desktop/main.js
+!desktop/preload.js
+!desktop/package.json
+!desktop/package-lock.json
+!desktop/assets/
+desktop/assets/*
+!desktop/assets/icon.ico
+!desktop/assets/icon.png
 frontend/.env.electron
 
 # Generated docs / presentation artifacts & source archives (not source-controlled)

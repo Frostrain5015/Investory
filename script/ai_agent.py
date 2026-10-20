@@ -13,6 +13,8 @@ SCRIPT_DIR = Path(__file__).parent
 # Ensure sibling modules (agent_message) import regardless of cwd.
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+
+from model_transport import get_proxy, needs_proxy as _needs_proxy
 from agent_message import AgentMessage, to_openai_messages, to_anthropic_messages
 
 KB_FILE = SCRIPT_DIR / "ai_knowledge_base.json"
@@ -28,22 +30,7 @@ RUNTIME_EFFICIENCY_RULES = """【运行时效率规则（直接注入，不属�
 - strategy_id 来源验证：run_backtest 的 strategy_id 必须来自刚保存的策略或 get_strategies 查询结果，禁止凭空编 ID。
 - 不预演不空转：发出工具调用后等真实结果再分析；证据齐了就给结论，证据不足就说明缺哪块数据、证据是否冲突、受何约束。"""
 
-# DeepSeek fast model for chit-chat / simple queries (the pro model handles real
-# analysis with thinking on). Per DeepSeek docs the fast path runs thinking off.
-DEEPSEEK_FAST_MODEL = "deepseek-v4-flash"
 
-# Keywords that signal the user needs deep analysis — always use the full model
-_COMPLEX_SIGNALS = [
-    "分析", "研究", "报告", "评估", "评价", "优化", "建议", "推荐",
-    "详细", "全面", "深入", "综合", "系统性",
-    "帮我", "帮我写", "生成策略", "写一个策略", "回测",
-    "查看", "看看", "检查", "审视",
-    "比较", "对比", "风险", "夏普", "回撤", "收益率",
-    "组合", "配置", "调仓", "再平衡", "仓位",
-    "基本面", "估值", "财务", "行业", "赛道",
-    "最近", "近期", "今日", "现在",
-    "帮我查", "帮我跑", "帮我调",
-]
 
 # Keywords that signal the user wants to write/modify transaction records
 _TRANSACTION_WRITE_SIGNALS = [
@@ -105,15 +92,6 @@ def _is_trivial_chitchat(text: str) -> bool:
             return True
     return False
 
-def _is_complex_query(messages: list) -> bool:
-    """Return True (→ full/pro model with thinking) for anything but obvious
-    chit-chat. We only trade latency for the fast model on pure smalltalk; every
-    real request gets the tool-reliable pro model."""
-    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
-    if not last_user:
-        return True
-    text = str(last_user.get("content", ""))
-    return not _is_trivial_chitchat(text)
 
 def _latest_user_text(messages: list) -> str:
     last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
@@ -332,6 +310,11 @@ def build_system_prompt(kb: dict) -> str:
 - 只有用户明确要求”深度分析、审计报告、完整报告、专业分析、证据链、风险拆解、组合体检、今日候选理由”，或轻量回答后用户继续追问更深层原因时，才调用 get_stock_report / get_portfolio_report / get_daily_picks_report。
 - StockSage 报告返回的是可阅读 Markdown 任务产物；你应像读取文件一样先读 report_markdown，再按需引用摘要，不要把完整 JSON 或 raw_factors 展开给用户。
 - 连续工具调用上限 20 次。
+
+【行情标注格式】
+- 正文引用具体标的（股票/指数）的现价或涨跌幅时，写成行内代码 token：`名称|现价|涨跌幅%`，例如 `上证指数|3716.28|+0.24%`、`贵州茅台|1285.60|+2.10%`；只有涨跌幅没有现价时现价留空：`标普500||-1.09%`。前端渲染器据此按涨跌配色并生成跳转该标的行情详情页的链接。
+- 名称用完整规范名（上证指数/深证成指/创业板指/恒生指数/标普500/纳斯达克/贵州茅台…），别用随意缩写；裸数字（如"加息25个基点""CPI 3.5%"）不要套此格式。
+- 纯定性、无具体现价或涨跌数字的表述正常行文即可，不要硬造 token。
 
 【回复规则】
 - 每次不超过 3 句。涉及策略代码、风险展开、多空对比时可适度延长，但不堆词
@@ -2716,24 +2699,6 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0, cal
 
 # ── OpenAI-compatible streaming with function calling ────────────────────
 
-def get_proxy():
-    """Load proxy URL from config.ini (only for overseas APIs like Yahoo Finance)."""
-    import configparser
-    cfg = configparser.ConfigParser()
-    cfg_file = SCRIPT_DIR / "config.ini"
-    if cfg_file.exists(): cfg.read(cfg_file, encoding="utf-8")
-    try: return cfg.get("proxy", "url", fallback="").strip()
-    except: return ""
-
-
-def _needs_proxy(api_base: str) -> bool:
-    """Domestic Chinese APIs don't need proxy. Only use proxy for overseas endpoints."""
-    domestic_domains = ["aliyuncs.com", "aliyun.com", "bailian", "dashscope", "deepseek.com"]
-    if api_base and any(d in api_base for d in domestic_domains):
-        return False
-    return True
-
-
 
 # ── Dynamic tool subsetting (#4) ─────────────────────────────────────────
 # Sending all ~35 tools every call costs tokens and muddies the model's choice.
@@ -3141,7 +3106,6 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
 
     # ── Model routing ──────────────────────────────────────────────────────
     # v4-flash does NOT support thinking/reasoning — always disable it.
-    is_complex = _is_complex_query(messages)
     want_thinking = False  # v4-flash has no thinking mode
     max_tokens = 8192
     extra_body = {}

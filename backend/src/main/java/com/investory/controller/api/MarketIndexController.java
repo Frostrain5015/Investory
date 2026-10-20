@@ -46,6 +46,23 @@ public class MarketIndexController {
         this.indexExecutor = indexExecutor;
     }
 
+    public record ExchangeRatesResponse(Map<String, BigDecimal> rates, String base, String updatedAt) {}
+
+    /** Rates are stored as foreign-currency units per CNY, matching display conversion. */
+    @GetMapping("/exchange-rates")
+    public ExchangeRatesResponse exchangeRates() {
+        Map<String, BigDecimal> rates = new LinkedHashMap<>();
+        for (Map<String, Object> row : jdbc.queryForList("SELECT currency, rate FROM exchange_rates")) {
+            if (row.get("currency") instanceof String currency && row.get("rate") instanceof Number rate) {
+                BigDecimal value = new BigDecimal(rate.toString());
+                if (value.signum() > 0) rates.put(currency, value);
+            }
+        }
+        rates.put("CNY", BigDecimal.ONE);
+        // The legacy table has no freshness timestamp; do not fabricate one.
+        return new ExchangeRatesResponse(Collections.unmodifiableMap(rates), "CNY", null);
+    }
+
     private enum Source { SINA, YAHOO }
 
     private record IndexSpec(Source source, String fetchSymbol, String name, String flag,

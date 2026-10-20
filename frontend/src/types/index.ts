@@ -565,7 +565,7 @@ export interface MarketNewsItem {
 export interface ExchangeRatesResponse {
   rates: Record<string, number>
   base: string
-  updatedAt: string
+  updatedAt: string | null
 }
 
 // ── Account ───────────────────────────────────────────────────────────────
