@@ -86,7 +86,7 @@ class CrawlerSchedulerTest {
             (logTail != null ? logTail.substring(Math.max(0, logTail.length() - 500)) : "(null)"));
 
         assertEquals("hk", row.get("market"));
-        assertEquals("ok", row.get("status"), "采集失败不能作为测试通过");
+        assertTrue(java.util.Set.of("ok", "no_change").contains(row.get("status")), "采集失败不能作为测试通过");
         assertNotNull(row.get("log_tail"));
     }
 
@@ -116,7 +116,7 @@ class CrawlerSchedulerTest {
             (logTail != null ? logTail.substring(Math.max(0, logTail.length() - 500)) : "(null)"));
 
         assertEquals("us", row.get("market"));
-        assertEquals("ok", row.get("status"), "采集失败不能作为测试通过");
+        assertTrue(java.util.Set.of("ok", "no_change").contains(row.get("status")), "采集失败不能作为测试通过");
         assertNotNull(row.get("log_tail"));
     }
 

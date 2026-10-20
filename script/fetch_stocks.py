@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Optional
 
 from db import get_conn, load_config as load_db_config, read_config
+from crawl_protocol import a_share_readiness, hk_stock_code, yahoo_exclusive_end
 
 # ─── 配置 ─────────────────────────────────────────────────────────────────────
 
@@ -145,7 +146,8 @@ def build_skip_set(conn, stock_ids: list, start: str, end: str) -> set:
 # ─── A股 (BaoStock) ───────────────────────────────────────────────────────────
 
 def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.Logger,
-                   market_filter: str | None = None, checkpoint_key: str = "a") -> None:
+                   market_filter: str | None = None, checkpoint_key: str = "a",
+                   require_latest: bool = False) -> None:
     label = {"SH": "沪市", "SZ": "深市"}.get(market_filter, "沪深")
     log.info(f"=== A股/{label} (BaoStock) | {start} ~ {end} ===")
 
@@ -167,6 +169,17 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
 
     conn = None
     try:
+        if require_latest and not dry_run:
+            outcome, latest = a_share_readiness(bs, end)
+            if outcome != "ready":
+                reason = "信源尚未发布目标交易日数据，留待晚间补抓" if outcome == "pending" else "目标日期非交易日"
+                log.info(reason)
+                log.info("RESULT: " + json.dumps({
+                    "market": checkpoint_key, "rows_written": 0, "stocks_failed": 0,
+                    "outcome": outcome, "requested_end": end,
+                    "latest_data_date": latest, "reason": reason,
+                }, ensure_ascii=False))
+                return
         if not dry_run:
             conn = get_conn(cfg)
 
@@ -215,9 +228,12 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
         # ── 3. 逐只抓取 K 线 ─────────────────────────────────────────────────
         total     = len(df)
         total_rows = 0
+        rows_fetched = 0
+        latest_data_date = None
         errors    = []
         skip_ids  = set() if dry_run else build_skip_set(conn, list(df["stock_id"].astype(int)), start, end)
         if skip_ids:
+            latest_data_date = end
             log.info(f"已有完整数据，跳过 {len(skip_ids)} 只，剩余 {total - len(skip_ids)} 只")
         checkpoint = load_checkpoint(checkpoint_key)
         skipped    = checkpoint is not None
@@ -263,6 +279,9 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
                     continue
 
             n = len(price_rows)
+            rows_fetched += len(price_rows)
+            if price_rows:
+                latest_data_date = max(latest_data_date or "", max(price[1] for price in price_rows))
             if price_rows and not dry_run:
                 n = upsert_prices(conn, price_rows)
                 total_rows += n
@@ -274,7 +293,12 @@ def fetch_a_shares(cfg: dict, start: str, end: str, dry_run: bool, log: logging.
 
         clear_checkpoint(checkpoint_key)
         log.info(f"A股/{label}完成: 写入 {total_rows} 行，失败 {len(errors)} 只")
-        log.info(f"RESULT: {json.dumps({'market': checkpoint_key, 'rows_written': total_rows, 'stocks_failed': len(errors)}, ensure_ascii=False)}")
+        outcome = "ok" if total_rows > 0 else "error" if errors else "no_change"
+        log.info("RESULT: " + json.dumps({
+            "market": checkpoint_key, "rows_written": total_rows, "rows_fetched": rows_fetched,
+            "stocks_failed": len(errors), "outcome": outcome,
+            "latest_data_date": latest_data_date, "requested_end": end,
+        }, ensure_ascii=False))
         for sym, nm, msg in errors[:10]:
             log.warning(f"  ✗ {sym} {nm}: {msg}")
         if len(errors) > 10:
@@ -463,6 +487,7 @@ def fetch_hk_stocks(
     cfg: dict, start: str, end: str, dry_run: bool,
     discover: bool, log: logging.Logger
 ) -> None:
+    global _FAIL_STREAK
     log.info(f"=== 港股 (Yahoo Finance) | {start} ~ {end} ===")
 
     # 代理必须在 import yfinance 之前注入 os.environ
@@ -484,7 +509,7 @@ def fetch_hk_stocks(
 
     def fetch_kline(ticker: str) -> list:
         t    = yf.Ticker(ticker)
-        hist = t.history(start=start, end=end, interval="1d", auto_adjust=True)
+        hist = t.history(start=start, end=yahoo_exclusive_end(end), interval="1d", auto_adjust=True)
         if hist.empty:
             return []
         rows = []
@@ -511,10 +536,13 @@ def fetch_hk_stocks(
         return
 
     cur = conn.cursor()
-    cur.execute("SELECT id, symbol, name FROM stocks WHERE market='HK'")
-    stocks = cur.fetchall()
+    cur.execute("SELECT id, symbol, name FROM stocks WHERE market='HK' ORDER BY symbol")
+    raw_stocks = cur.fetchall()
+    stocks = [(stock_id, symbol, name, code) for stock_id, symbol, name in raw_stocks
+              if (code := hk_stock_code(symbol)) is not None]
     cur.close()
     log.info(f"DB 中港股: {len(stocks)} 只")
+    log.info(f"股票抓取排除 {len(raw_stocks) - len(stocks)} 个非数字标的（指数由 idx 任务处理）")
 
     # 启动前信源健康检查
     log.info("信源探测 (00700.HK)...")
@@ -530,15 +558,15 @@ def fetch_hk_stocks(
         log.info(f"已有完整数据，跳过 {len(skip_ids)} 只，剩余 {len(stocks) - len(skip_ids)} 只")
     total_rows = 0
     no_data    = 0
+    rows_fetched = 0
+    latest_data_date = end if skip_ids else None
     checkpoint = load_checkpoint("hk")
+    if checkpoint is not None and checkpoint not in {stock[3] for stock in stocks}:
+        log.warning("旧港股断点不在当前股票列表中，忽略该断点")
+        checkpoint = None
     skipped    = checkpoint is not None
 
-    for seq, (stock_id, symbol, name) in enumerate(stocks, 1):
-        # Normalize symbol to 5-digit code: handles both "116.00700" and "00700.HK"
-        code5d = symbol.removesuffix(".HK")
-        if "." in code5d:
-            code5d = code5d.split(".")[-1]
-        code5d = f"{int(code5d):05d}"
+    for seq, (stock_id, symbol, name, code5d) in enumerate(stocks, 1):
 
         if skipped:
             if code5d != checkpoint:
@@ -562,6 +590,8 @@ def fetch_hk_stocks(
 
         if krows:
             _FAIL_STREAK = 0
+            rows_fetched += len(krows)
+            latest_data_date = max(latest_data_date or "", max(row[0] for row in krows))
             db_rows = [(stock_id, r[0], r[1], r[2], r[3], r[4], r[5]) for r in krows]
             n = upsert_prices(conn, db_rows)
             total_rows += n
@@ -578,7 +608,12 @@ def fetch_hk_stocks(
     if conn:
         conn.close()
     log.info(f"港股完成: 写入 {total_rows} 行，无数据(停牌/错误) {no_data} 只")
-    log.info(f"RESULT: {json.dumps({'market': 'hk', 'rows_written': total_rows, 'stocks_failed': no_data}, ensure_ascii=False)}")
+    log.info("RESULT: " + json.dumps({
+        "market": "hk", "rows_written": total_rows, "rows_fetched": rows_fetched,
+        "stocks_failed": no_data, "stocks_excluded": len(raw_stocks) - len(stocks),
+        "outcome": "ok" if total_rows > 0 else "error" if no_data else "no_change",
+        "latest_data_date": latest_data_date, "requested_end": end,
+    }, ensure_ascii=False))
 
 
 # ─── 美股 (Yahoo Finance + 代理) ─────────────────────────────────────────────
@@ -632,6 +667,7 @@ _US_TICKERS_BUILTIN = sorted(set([
 
 
 def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging.Logger) -> None:
+    global _FAIL_STREAK
     log.info(f"=== 美股 (Yahoo Finance) | {start} ~ {end} ===")
 
     # 代理必须在 import yfinance 之前注入 os.environ
@@ -705,7 +741,7 @@ def fetch_us_stocks(cfg: dict, start: str, end: str, dry_run: bool, log: logging
         Yahoo Finance 返回已复权价格（adjustedClose），列名: Open/High/Low/Close/Volume
         """
         t    = yf.Ticker(ticker)
-        hist = t.history(start=start, end=end, interval="1d", auto_adjust=True)
+        hist = t.history(start=start, end=yahoo_exclusive_end(end), interval="1d", auto_adjust=True)
         if hist.empty:
             return []
         rows = []
@@ -914,7 +950,7 @@ def fetch_indices(cfg: dict, start: str, end: str, dry_run: bool, log: logging.L
         """Yahoo Finance K-line, returns same format as fetch_us_stocks"""
         import yfinance as yf
         t = yf.Ticker(ticker)
-        hist = t.history(start=start, end=end, interval="1d", auto_adjust=True)
+        hist = t.history(start=start, end=yahoo_exclusive_end(end), interval="1d", auto_adjust=True)
         if hist.empty:
             return []
         rows = []
@@ -1047,6 +1083,8 @@ def parse_args():
         "--discover", action="store_true",
         help="港股: 扫描腾讯 API 发现新股补入 stocks 表（仅 -m hk/all 有效）",
     )
+    p.add_argument("--require-latest", action="store_true",
+                   help="A股定时任务先探测目标日数据是否发布，未发布则快速返回待更新")
     p.add_argument(
         "--dry-run", action="store_true",
         help="测试模式：跑完整流程但不写 DB",
@@ -1101,13 +1139,13 @@ def main():
     if do_sh and do_sz:
         # 沪深一起抓，checkpoint key = "a"（与定时任务兼容）
         fetch_a_shares(cfg, start, end, args.dry_run, log,
-                       market_filter=None, checkpoint_key="a")
+                       market_filter=None, checkpoint_key="a", require_latest=args.require_latest)
     elif do_sh:
         fetch_a_shares(cfg, start, end, args.dry_run, log,
-                       market_filter="SH", checkpoint_key="sh")
+                       market_filter="SH", checkpoint_key="sh", require_latest=args.require_latest)
     elif do_sz:
         fetch_a_shares(cfg, start, end, args.dry_run, log,
-                       market_filter="SZ", checkpoint_key="sz")
+                       market_filter="SZ", checkpoint_key="sz", require_latest=args.require_latest)
 
     if do_hk:
         fetch_hk_stocks(cfg, start, end, args.dry_run, args.discover, log)

@@ -344,8 +344,14 @@ export default function Admin() {
   const crawlStatusLabel = (s: string) => {
     if (s === 'ok') return t.admin.crawlOk
     if (s === 'running') return t.admin.crawlRunning
+    if (s === 'pending') return t.admin.crawlPending
+    if (s === 'no_change') return t.admin.crawlNoChange
     return t.admin.crawlFailed
   }
+  const crawlOutcome = (row: CrawlHistoryRow) => row.status === 'ok' && Number(row.rows_written) === 0 && Number(row.stocks_failed) === 0 ? 'no_change' : row.status
+  const crawlBadge = (status: string) => status === 'ok' ? 'bg-emerald-50 text-emerald-600'
+    : status === 'running' || status === 'pending' ? 'bg-amber-50 text-amber-600'
+    : status === 'no_change' ? 'bg-slate-100 text-slate-500' : 'bg-red-50 text-red-600'
 
   if (!isAdmin) {
     return <div className="flex items-center justify-center h-screen bg-slate-50 text-slate-500">{t.admin.noPermission}</div>
@@ -465,8 +471,8 @@ export default function Admin() {
                             <td className="px-3 py-2 text-right tabular-nums">{Number(h.rows_written).toLocaleString()}</td>
                             <td className="px-3 py-2 text-right tabular-nums">{h.stocks_failed}</td>
                             <td className="px-4 py-2 text-center">
-                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${h.status === 'ok' ? 'bg-emerald-50 text-emerald-600' : h.status === 'running' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
-                                {crawlStatusLabel(h.status)}
+                              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${crawlBadge(crawlOutcome(h))}`}>
+                                {crawlStatusLabel(crawlOutcome(h))}
                               </span>
                             </td>
                           </tr>
@@ -478,13 +484,13 @@ export default function Admin() {
                 <div className="md:hidden divide-y divide-slate-50">
                   {crawlHistory.map(h => {
                     const started = h.started_at ? new Date(h.started_at) : null
-                    const statusBadge = h.status === 'ok' ? 'bg-emerald-50 text-emerald-600' : h.status === 'running' ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'
+                    const statusBadge = crawlBadge(crawlOutcome(h))
                     return (
                       <div key={h.market} className="px-4 py-3 space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="font-medium text-slate-700 text-xs">{marketLabels[h.market] ?? h.market}</span>
                           <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium ${statusBadge}`}>
-                            {crawlStatusLabel(h.status)}
+                            {crawlStatusLabel(crawlOutcome(h))}
                           </span>
                         </div>
                         <div className="flex items-center gap-x-4 text-xs text-slate-400">

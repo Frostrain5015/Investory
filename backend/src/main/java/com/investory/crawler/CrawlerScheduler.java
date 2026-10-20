@@ -14,6 +14,8 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.time.Duration;
+import com.investory.util.ProcessRunner;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.InetSocketAddress;
@@ -85,6 +87,9 @@ public class CrawlerScheduler {
 
     @Value("${python.executable:python3}")
     private String pythonExecutable;
+
+    @Value("${crawler.timeout-minutes:180}")
+    private long crawlTimeoutMinutes = 180;
 
     // ── A-shares: 15:30 Mon-Fri (BaoStock) ──────────────────────────
 
@@ -357,10 +362,9 @@ public class CrawlerScheduler {
         sessionManager.emitStatus(
             String.format("启动 %s 定时抓取 (%s ~ %s)...", label, startDate, endDate), marketCode);
 
-        StringBuilder logTail = new StringBuilder();
-        int[] rowsWritten = {0};
-        int[] stocksFailed = {0};
-        String[] status = {"error"};
+        StringBuffer logTail = new StringBuffer();
+        CrawlRunSummary summary = new CrawlRunSummary();
+        String status = "error";
 
         // Progress regex — same as AdminController
         java.util.regex.Pattern progressRe = java.util.regex.Pattern.compile(
@@ -374,62 +378,46 @@ public class CrawlerScheduler {
             cmd.add(marketCode);
             cmd.add("--days");
             cmd.add("3"); // daily cron fetches last 3 days
+            if ("a".equals(marketCode)) cmd.add("--require-latest");
 
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.directory(script.getParentFile());
             pb.redirectErrorStream(true);
 
-            Process p = pb.start();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(p.getInputStream(), "UTF-8"))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    logTail.append(line).append("\n");
-                    // Report progress via shared session
-                    java.util.regex.Matcher pm = progressRe.matcher(line);
-                    if (pm.find()) {
-                        java.util.Map<String, Object> prog = new java.util.LinkedHashMap<>();
-                        prog.put("current", Integer.parseInt(pm.group(1)));
-                        prog.put("total",   Integer.parseInt(pm.group(2)));
-                        prog.put("pct",     Double.parseDouble(pm.group(3)));
-                        prog.put("name",    pm.group(4).trim());
-                        sessionManager.updateProgress(prog);
-                    } else if (!line.contains("===") && !line.contains("完成")) {
-                        sessionManager.addLog(line.trim());
-                    }
-                    // Parse summary — try structured JSON first, fall back to regex
-                    Matcher rjm = RESULT_JSON_RE.matcher(line);
-                    if (rjm.find()) {
-                        JsonObject r = JsonParser.parseString(rjm.group(1)).getAsJsonObject();
-                        rowsWritten[0] = r.get("rows_written").getAsInt();
-                        stocksFailed[0] = r.get("stocks_failed").getAsInt();
-                    }
-                    Matcher m = SUMMARY_RE.matcher(line);
-                    if (m.find()) {
-                        if (rowsWritten[0] == 0) rowsWritten[0] = Integer.parseInt(m.group(1));
-                        if (stocksFailed[0] == 0) stocksFailed[0] = Integer.parseInt(m.group(2));
-                    }
+            int exitCode = ProcessRunner.run(pb, Duration.ofMinutes(crawlTimeoutMinutes), line -> {
+                logTail.append(line).append("\n");
+                if (logTail.length() > 12000) logTail.delete(0, logTail.length() - 6000);
+                // Report progress via shared session
+                java.util.regex.Matcher pm = progressRe.matcher(line);
+                if (pm.find()) {
+                    java.util.Map<String, Object> prog = new java.util.LinkedHashMap<>();
+                    prog.put("current", Integer.parseInt(pm.group(1)));
+                    prog.put("total",   Integer.parseInt(pm.group(2)));
+                    prog.put("pct",     Double.parseDouble(pm.group(3)));
+                    prog.put("name",    pm.group(4).trim());
+                    sessionManager.updateProgress(prog);
+                } else if (!line.contains("===") && !line.contains("完成")) {
+                    sessionManager.addLog(line.trim());
                 }
-            }
-            boolean finished = p.waitFor(30, TimeUnit.MINUTES);
-            if (!finished) {
-                p.destroyForcibly();
-                logTail.append("Error: process timed out after 30min\n");
-                log.warning(label + " process timed out after 30min, killed");
-                sessionManager.emitError(label + " 抓取超时（30分钟），已终止");
-            }
-            int exitCode = finished ? p.exitValue() : -1;
-            status[0] = (finished && exitCode == 0) ? "ok" : "error";
+                summary.accept(line);
+            });
+            status = summary.status(exitCode);
+            if ("error".equals(status)) sessionManager.emitError(label + " 抓取失败，请查看任务日志");
             log.info(String.format("%s sync completed, exit=%d, rows=%d, failed=%d",
-                label, exitCode, rowsWritten[0], stocksFailed[0]));
+                label, exitCode, summary.rowsWritten(), summary.stocksFailed()));
         } catch (Exception e) {
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             logTail.append("Error: ").append(e.getMessage());
             log.warning(label + " sync error: " + e.getMessage());
             sessionManager.emitError(e.getMessage());
         } finally {
             // Emit done/error to SSE subscribers
-            if ("ok".equals(status[0])) {
+            if ("ok".equals(status)) {
                 sessionManager.emitDone(marketCode, label + " 定时抓取完成");
+            } else if ("pending".equals(status)) {
+                sessionManager.emitDone(marketCode, label + " 信源尚未发布目标日数据，留待晚间补抓");
+            } else if ("no_change".equals(status)) {
+                sessionManager.emitDone(marketCode, label + " 数据无变更");
             } else if (!sessionManager.isActive()) {
                 // Already cleared by error handler
             }
@@ -441,7 +429,7 @@ public class CrawlerScheduler {
             try {
                 jdbc.update(
                     "UPDATE crawl_history SET ended_at=?, rows_written=?, stocks_failed=?, status=?, log_tail=? WHERE id=?",
-                    LocalDateTime.now(), rowsWritten[0], stocksFailed[0], status[0], tail, historyId);
+                    LocalDateTime.now(), summary.rowsWritten(), summary.stocksFailed(), status, tail, historyId);
             } catch (Exception ex) {
                 log.warning(label + " failed to update crawl_history: " + ex.getMessage());
             }
