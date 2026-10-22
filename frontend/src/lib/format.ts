@@ -1,3 +1,17 @@
+/** Keep the sign before the currency symbol, e.g. -¥1,137.00. */
+export function formatCurrencyAmount(value: number, symbol: string): string {
+  const amount = Math.abs(value).toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+  return `${value < 0 ? '-' : ''}${symbol}${amount}`
+}
+
+/** Format P&L without losing a loss sign when formatting its absolute amount. */
+export function formatSignedAmount(value: number, formatAmount: (amount: number) => string): string {
+  return `${value >= 0 ? '+' : '-'}${formatAmount(Math.abs(value))}`
+}
+
 /**
  * Format a price timestamp. ISO-8601 strings → "实时 · HH:mm"; plain date strings → "MM/DD" (same year) or "YYYY/MM/DD".
  */

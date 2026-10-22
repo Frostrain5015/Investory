@@ -1,0 +1,54 @@
+flowchart TB
+    ui["`现有 Investory 界面
+React / TS / Vite
+Electron 可复用`"]
+    api["`现有业务后端
+Java 17 / Spring Boot
+MySQL / 新任务状态待补`"]
+    data["`统一数据入口 · 待补
+独立 REST 查询已实现
+业务切源 / 共享缓存待接`"]
+    service["`同花顺金融API
+REST / MCP / CLI 已抽测
+授权与配额待定 D2`"]
+    rules["`常驻规则 / 任务 · 待建
+固定条件无需模型
+本地或云端待定 · D1`"]
+    agent["`观澜 · Python
+LangGraph 为目标框架
+迁移与持久任务待补 · D6`"]
+    models["`本地 GPU / 云模型待选
+DeepSeek Search 已接
+引擎与外发规则 · D6/D7`"]
+    mail["`邮件网关 · 本地已有
+SMTP → 用户邮箱
+队列与收件验收待补 · D8`"]
+    research["`台账与回测 · 已有
+MySQL / Python
+完整研究库可选 · D4`"]
+    broker["`券商只读同步 · 未接
+获准接口 / 对账单
+独立权限待确认 · D5`"]
+    trade["`交易扩展 · 待外部确认
+默认关闭
+不属于当前执行路径`"]
+
+    ui -->|"HTTP / SSE：配置与确认"| api
+    api -->|"持久化启用后的规则"| rules
+    api -->|"会话或研究任务"| agent
+    api -->|"估值与研究"| research
+    rules -->|"取数"| data
+    data -->|"REST 请求与结果"| service
+    agent -.->|"受控取数"| data
+    agent -.->|"按需调用"| models
+    rules -->|"去重信号 + 通知任务"| mail
+    data -->|"有来源的价格与快照"| research
+    broker -.->|"快照 / 成交 / 对账"| research
+    research -.->|"交易通道须独立评审"| trade
+
+    classDef existing fill:#edf5ef,stroke:#5d8065,color:#173f2b
+    classDef proposed fill:#edf3fa,stroke:#557b9c,color:#173b5a
+    classDef pending fill:#fff5e7,stroke:#b98842,color:#704f21
+    class ui,api,mail,research existing
+    class data,rules,agent proposed
+    class service,models,broker,trade pending

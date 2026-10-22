@@ -16,7 +16,7 @@ import {
   AreaChart, Area, Tooltip, ResponsiveContainer
 } from 'recharts'
 import { getDashboard, getPortfolios } from '@/services/api'
-import { displaySymbol, fmtPriceTs } from '@/lib/format'
+import { displaySymbol, fmtPriceTs, formatSignedAmount } from '@/lib/format'
 import CloudChart from '@/components/CloudChart'
 import ClosedPositions from '@/components/ClosedPositions'
 import { useT } from '@/i18n/I18nContext'
@@ -480,7 +480,7 @@ function DashboardContent() {
                       <td className="px-3 py-3 text-right tabular-nums">{fmtVal(diluted)}</td>
                       <td className="px-3 py-3 text-right font-medium tabular-nums">{fmtVal(mv)}</td>
                       <td className={`px-3 py-3 text-right font-medium tabular-nums ${pnl >= 0 ? positiveClass : negativeClass}`}>
-                        {pnl >= 0 ? '+' : ''}{fmtVal(Math.abs(pnl))}
+                        {formatSignedAmount(pnl, fmtVal)}
                       </td>
                       <td className={`px-6 py-3 text-right font-medium tabular-nums ${s.unrealizedPnlPct >= 0 ? positiveClass : negativeClass}`}>
                         {s.unrealizedPnlPct >= 0 ? '+' : ''}{s.unrealizedPnlPct}%
@@ -520,7 +520,7 @@ function DashboardContent() {
                     <details className="mt-1">
                       <summary className="text-xs text-slate-400 cursor-pointer select-none">{t.common.more}</summary>
                       <div className="mt-2 space-y-1 text-xs text-slate-500">
-                        <div className="flex justify-between"><span>{t.holdings.pnl}</span><span className={`tabular-nums ${pnl >= 0 ? positiveClass : negativeClass}`}>{pnl >= 0 ? '+' : ''}{fmtVal(Math.abs(pnl))}</span></div>
+                        <div className="flex justify-between"><span>{t.holdings.pnl}</span><span className={`tabular-nums ${pnl >= 0 ? positiveClass : negativeClass}`}>{formatSignedAmount(pnl, fmtVal)}</span></div>
                         <div className="flex justify-between"><span>{t.holdings.avgCost}</span><span className="tabular-nums">{fmtVal(cost)}</span></div>
                         <div className="flex justify-between"><span>{t.dashboard.dilutedCost}</span><span className="tabular-nums">{fmtVal(diluted)}</span></div>
                         <div className="flex justify-between"><span>{t.holdings.invested}</span><span className="tabular-nums">{fmtVal(invested)}</span></div>

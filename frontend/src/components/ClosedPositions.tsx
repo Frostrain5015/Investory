@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSettings } from '@/hooks/use-settings'
 import { useT } from '@/i18n/I18nContext'
-import { displaySymbol } from '@/lib/format'
+import { displaySymbol, formatSignedAmount } from '@/lib/format'
 import { X } from 'lucide-react'
 import { BASE } from '@/services/api'
 
@@ -81,7 +81,7 @@ function ClosedPositionsContent({ onClose }: { onClose: () => void }) {
                       <td className="px-3 py-2.5 text-right tabular-nums">{item.total_sold}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(item.sell_proceeds)}</td>
                       <td className={`px-3 py-2.5 text-right font-medium tabular-nums ${realized >= 0 ? positiveClass : negativeClass}`}>
-                        {realized >= 0 ? '+' : ''}{formatCurrency(Math.abs(realized))}
+                        {formatSignedAmount(realized, formatCurrency)}
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-sky-600">{item.dividends > 0 ? formatCurrency(item.dividends) : '—'}</td>
                     </tr>

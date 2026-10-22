@@ -36,6 +36,11 @@ spring.thymeleaf.encoding=UTF-8
 
 # Default AI provider key (DeepSeek). Override via env var if needed.
 ai.default.key=${AI_DEFAULT_KEY:}
+
+# Independent, read-only Hithink Finance API channel (default disabled).
+# See docs/integrations/hithink-data.md; do not put real keys in this example.
+# HITHINK_FINANCE_ENABLED=true
+# HITHINK_FINANCE_API_KEY=... (backend environment only)
 ai.title.enabled=${AI_TITLE_ENABLED:false}
 
 # Frost ID OAuth 2.1 configuration (secrets via env vars, no hardcoded defaults)
@@ -46,3 +51,8 @@ frostid.oauth.token-url=${FROSTID_TOKEN_URL:http://127.0.0.1:4000/oauth/token}
 frostid.oauth.userinfo-url=${FROSTID_USERINFO_URL:http://127.0.0.1:4000/oauth/userinfo}
 frostid.oauth.redirect-url=${FROSTID_REDIRECT_URL:https://116.62.179.231:8443/investory/oauth/frost-id/callback}
 frostid.oauth.scope=openid profile email
+
+# Mail gateway is independently loaded from mail-gateway.properties.
+# Configure MAIL_GATEWAY_ENABLED, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS,
+# SMTP_FROM, SMTP_SECURITY and SMTP_TIMEOUT_MS in the backend environment.
+# Disabled by default. See docs/integrations/email-gateway.md.

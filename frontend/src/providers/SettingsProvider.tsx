@@ -2,6 +2,7 @@ import { SettingsContext, type ColorScheme, type BaseCurrency } from '@/hooks/us
 import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import { getExchangeRates } from '@/services/api'
 import { useAuth } from '@/hooks/use-auth'
+import { formatCurrencyAmount } from '@/lib/format'
 
 const FALLBACK_RATES: Record<BaseCurrency, number> = {
   CNY: 1,
@@ -89,10 +90,7 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
 
   function formatCurrency(value: number): string {
     const converted = convertCurrency(value)
-    return (
-      CURRENCY_SYMBOLS[baseCurrency] +
-      converted.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    )
+    return formatCurrencyAmount(converted, CURRENCY_SYMBOLS[baseCurrency])
   }
 
   const classes = colorScheme === 'cn' ? getCnClasses() : getWesternClasses()
