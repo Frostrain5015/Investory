@@ -1,29 +1,32 @@
 import { BASE } from '@/services/api'
 
-export interface PreloadMarketIndex {
+export interface PreloadMarketQuote {
   name: string
+  symbol: string
+  price: number | null
+  change: number | null
+  changePct: number | null
+  source: string | null
+  state: 'available' | 'stale' | 'unavailable'
+  quoteTime: string | null
+  timestampScope: 'BATCH' | 'EXCHANGE' | 'CLOSE' | 'UNKNOWN'
+  asOfDate: string | null
+  receivedAt: string | null
+  fallbackReason: string | null
+}
+export interface PreloadMarketIndex extends PreloadMarketQuote {
   flag: string
   lat: number
   lng: number
-  price: number
-  change: number
-  changePct: number
-  symbol: string
-  fetchedAt?: string
 }
-
-export interface PreloadMarketIndicator {
-  name: string
-  symbol: string
-  price: number
-  change: number
-  changePct: number
-  fetchedAt?: string
-}
-
+export type PreloadMarketIndicator = PreloadMarketQuote
 export interface PreloadMarketSnapshot {
   indices: PreloadMarketIndex[]
   indicators: PreloadMarketIndicator[]
+  updatedAt: string
+  sources: string[]
+  hithinkStatus: 'active' | 'disabled' | 'not_configured' | 'fallback' | 'partial'
+  hithinkError: string | null
 }
 
 export interface PreloadMarketNewsItem {
@@ -71,6 +74,8 @@ export interface PreloadAdminCrawlHistory {
 let marketPagePromise: Promise<unknown> | null = null
 let adminPagePromise: Promise<unknown> | null = null
 let marketSnapshotPromise: Promise<PreloadMarketSnapshot> | null = null
+let marketSnapshotPending = false
+let marketSnapshotLoadedAt = 0
 let marketNewsPromise: Promise<PreloadMarketNewsItem[]> | null = null
 let worldMapPromise: Promise<unknown> | null = null
 let adminStatusPromise: Promise<PreloadAdminDbStatus> | null = null
@@ -101,12 +106,17 @@ function cachePromise<T>(
 }
 
 export function getPreloadedMarketSnapshot(options: { force?: boolean } = {}) {
-  return cachePromise(
-    marketSnapshotPromise,
-    next => { marketSnapshotPromise = next },
-    () => jsonRequest<PreloadMarketSnapshot>('/api/market/indices'),
-    options.force,
-  )
+  if (marketSnapshotPromise && (marketSnapshotPending || (!options.force && Date.now() - marketSnapshotLoadedAt < 90_000))) return marketSnapshotPromise
+  marketSnapshotPending = true
+  const next = jsonRequest<PreloadMarketSnapshot>('/api/market/indices').then(data => {
+    marketSnapshotLoadedAt = Date.now()
+    return data
+  }).catch((error: unknown) => {
+    if (marketSnapshotPromise === next) marketSnapshotPromise = null
+    throw error
+  }).finally(() => { if (marketSnapshotPromise === next || marketSnapshotPromise === null) marketSnapshotPending = false })
+  marketSnapshotPromise = next
+  return next
 }
 
 export function getPreloadedMarketNews(options: { force?: boolean } = {}) {

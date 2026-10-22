@@ -62,14 +62,25 @@ public class HithinkDataClient {
     public Status status() { return new Status(settings.enabled(), !settings.apiKey().isBlank(), SOURCE); }
 
     public Result<Price> snapshot(List<String> symbols) {
+        return snapshotFor(symbols, false);
+    }
+
+    /** Index endpoints are distinct from equities, even when codes look alike. */
+    public Result<Price> indexSnapshot(List<String> symbols) {
+        return snapshotFor(symbols, true);
+    }
+
+    private Result<Price> snapshotFor(List<String> symbols, boolean index) {
         if (symbols == null || symbols.isEmpty() || symbols.size() > 50) throw new IllegalArgumentException("每次须指定 1–50 个 A 股标的");
         var codes = new LinkedHashSet<String>();
-        for (String symbol : symbols) codes.add(normalizeSymbol(symbol));
-        JsonNode root = get("/api/a-share/prices/snapshot", Map.of("thscodes", String.join(",", codes)));
+        for (String symbol : symbols) codes.add(index ? normalizeIndexSymbol(symbol) : normalizeSymbol(symbol));
+        JsonNode root = get(index ? "/api/a-share-index/prices/snapshot" : "/api/a-share/prices/snapshot", Map.of("thscodes", String.join(",", codes)));
         var prices = new ArrayList<Price>();
         var seen = new LinkedHashSet<String>();
         for (JsonNode row : items(root)) {
-            String code = normalizeReturnedSymbol(row);
+            String code;
+            try { code = index ? normalizeIndexSymbol(text(row, "thscode")) : normalizeReturnedSymbol(row); }
+            catch (IllegalArgumentException error) { throw invalidResponse(); }
             if (!codes.contains(code) || !seen.add(code)) throw invalidResponse();
             prices.add(new Price(code, decimal(row, "last_price"), decimal(row, "prev_price"),
                     decimal(row, "price_change"), decimal(row, "price_change_ratio_pct"),
@@ -128,6 +139,14 @@ public class HithinkDataClient {
         String code = symbol.strip().toUpperCase(Locale.ROOT);
         if (code.matches("[01]\\.\\d{6}")) code = code.substring(2) + (code.startsWith("1.") ? ".SH" : ".SZ");
         if (!code.matches("\\d{6}\\.(SH|SZ|BJ)")) throw new IllegalArgumentException("请使用完整 A 股代码，例如 600519.SH；可先按名称检索");
+        return code;
+    }
+
+    public static String normalizeIndexSymbol(String symbol) {
+        if (symbol == null) throw new IllegalArgumentException("指数代码不能为空");
+        String code = symbol.strip().toUpperCase(Locale.ROOT);
+        if (!code.matches("\\d{6}\\.(SH|SZ|TI)"))
+            throw new IllegalArgumentException("请使用同花顺支持的完整 A 股指数代码，例如 000001.SH");
         return code;
     }
 

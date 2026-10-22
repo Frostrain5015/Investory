@@ -7,7 +7,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
+import com.investory.marketdata.WorldMarketService;
 
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -22,8 +22,8 @@ class MarketIndexControllerTest {
                 Map.of("currency", "HKD", "rate", new BigDecimal("1.09")),
                 Map.of("currency", "CNY", "rate", 2),
                 Map.of("currency", "INVALID", "rate", BigDecimal.ZERO)));
-        ExecutorService executor = mock(ExecutorService.class);
-        var mvc = MockMvcBuilders.standaloneSetup(new MarketIndexController(jdbc, executor)).build();
+        WorldMarketService market = mock(WorldMarketService.class);
+        var mvc = MockMvcBuilders.standaloneSetup(new MarketIndexController(jdbc, market)).build();
         mvc.perform(get("/api/market/exchange-rates"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.base").value("CNY"))
@@ -32,6 +32,6 @@ class MarketIndexControllerTest {
                 .andExpect(jsonPath("$.rates.HKD").value(1.09))
                 .andExpect(jsonPath("$.rates.INVALID").doesNotExist())
                 .andExpect(jsonPath("$.updatedAt").isEmpty());
-        verifyNoInteractions(executor);
+        verifyNoInteractions(market);
     }
 }

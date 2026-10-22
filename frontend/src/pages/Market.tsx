@@ -1,12 +1,14 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import * as echarts from 'echarts'
 import { useSettings } from '@/hooks/use-settings'
-import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
+import { useTimedRefresh } from '@/hooks/use-timed-refresh'
 import { useT } from '@/i18n/I18nContext'
+import InfoTip from '@/components/InfoTip'
 import {
   getPreloadedMarketNews,
   getPreloadedMarketSnapshot,
   getPreloadedWorldMap,
+  type PreloadMarketQuote,
   type PreloadMarketIndex,
   type PreloadMarketIndicator,
   type PreloadMarketNewsItem,
@@ -94,12 +96,36 @@ function fmtNum(n: number, dec: number, lang: string): string {
   })
 }
 
+function hasPrice(quote: PreloadMarketQuote): boolean { return typeof quote.price === 'number' && Number.isFinite(quote.price) && quote.price > 0 }
+function numeric(value: number | null): value is number { return typeof value === 'number' && Number.isFinite(value) }
+function sourceLabel(source: string | null): string {
+  return ({ hithink_finance_api: '同花顺金融 API', yahoo: 'Yahoo Finance', sina: 'Sina', database: '本地收盘记录' } as Record<string, string>)[source ?? ''] ?? '未知来源'
+}
+function signed(value: number | null, lang: string): string {
+  return numeric(value) ? `${value >= 0 ? '+' : '-'}${fmtNum(Math.abs(value), 2, lang)}` : '—'
+}
+function quoteTime(quote: PreloadMarketQuote, locale: string): string {
+  if (quote.asOfDate) return quote.asOfDate
+  if (!quote.quoteTime || !Number.isFinite(Date.parse(quote.quoteTime))) return ''
+  const date = new Date(quote.quoteTime).toLocaleString(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
+  return `${quote.timestampScope === 'BATCH' ? '批次 ' : ''}${date}`
+}
+function quoteDescription(quote: PreloadMarketQuote, locale: string): string {
+  const state = quote.state === 'stale' ? '保留的历史报价' : quote.state === 'unavailable' ? '暂未获取到报价' : '已获取报价'
+  const asOf = quoteTime(quote, locale)
+  return `${sourceLabel(quote.source)}，${state}${asOf ? `，${asOf}` : '，行情时间未提供'}。${quote.timestampScope === 'BATCH' ? '时间来自供应商批次，不代表每只标的的独立更新时间。' : ''}${quote.fallbackReason ? '当前使用备用来源或上次有效结果。' : ''}`
+}
+
 export default function Market() {
   const { t, lang } = useT()
   const { positiveHex, negativeHex, positiveClass, negativeClass } = useSettings()
   const [indices, setIndices] = useState<IndexData[]>([])
   const [indicators, setIndicators] = useState<IndicatorData[]>([])
   const [loading, setLoading] = useState(true)
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null)
+  const [sources, setSources] = useState<string[]>([])
+  const [dataError, setDataError] = useState('')
+  const [providerWarning, setProviderWarning] = useState(false)
   const [news, setNews] = useState<NewsItem[]>([])
   const chartRef = useRef<HTMLDivElement>(null)
   const loadedInitialRef = useRef(false)
@@ -113,8 +139,12 @@ export default function Market() {
       .then(data => {
         setIndices(data.indices || [])
         setIndicators(data.indicators || [])
+        setUpdatedAt(data.updatedAt ?? null)
+        setSources(data.sources ?? [])
+        setProviderWarning(data.hithinkStatus === 'fallback' || data.hithinkStatus === 'partial')
+        setDataError('')
       })
-      .catch(() => {})
+      .catch(() => setDataError('行情更新失败，已保留上次显示的结果'))
       .finally(() => setLoading(false))
     getPreloadedMarketNews({ force: shouldForce })
       .then(data => setNews(Array.isArray(data) ? data : []))
@@ -122,7 +152,7 @@ export default function Market() {
   }, [])
 
   useEffect(() => { loadIndices() }, [loadIndices])
-  const [lastRefresh] = useTimedRefresh(() => loadIndices(true))
+  useTimedRefresh(() => loadIndices(true))
 
   // Country region coloring based on leading index change
   const countryRegions = useMemo(() => {
@@ -131,13 +161,13 @@ export default function Market() {
     const negRgb = hexToRgb(negativeHex)
 
     // Find max abs changePct for intensity scaling (ignore zeros)
-    const validPcts = indices.filter(d => Number(d.price) !== 0).map(d => Math.abs(Number(d.changePct)))
+    const validPcts = indices.filter(d => hasPrice(d) && numeric(d.changePct)).map(d => Math.abs(Number(d.changePct)))
     const maxPct = Math.max(...validPcts, 0.01)
 
     return Object.entries(COUNTRY_MAP).flatMap(([flag, { lead, names }]) => {
       const leader = indices.find(d => d.flag === flag && d.name === lead)
         || indices.find(d => d.flag === flag)
-      if (!leader || Number(leader.price) === 0) return []
+      if (!leader || !hasPrice(leader) || !numeric(leader.changePct)) return []
       const pct = Number(leader.changePct)
       const up = pct >= 0
       const intensity = 0.12 + 0.78 * (Math.abs(pct) / maxPct)
@@ -210,12 +240,12 @@ export default function Market() {
                 <img src="${import.meta.env.BASE_URL}flags/${f}.svg" onerror="this.style.display='none'" style="width:22px;height:15px;border-radius:2px"/>
                 ${countryName}
               </div>${group.map(d => {
-                  const valid = Number(d.price) !== 0
-                  const u = Number(d.change) >= 0
-                  const color = !valid ? '#9ca3af' : u ? positiveHex : negativeHex
+                  const valid = hasPrice(d)
+                  const u = numeric(d.change) && d.change >= 0
+                  const color = !valid || !numeric(d.change) ? '#9ca3af' : u ? positiveHex : negativeHex
                   const priceText = valid ? Number(d.price).toLocaleString() : '—'
-                  const changeText = valid ? `${u ? '+' : ''}${Number(d.change).toFixed(2)} (${u ? '+' : ''}${Number(d.changePct).toFixed(2)}%)` : t.market.noData
-                  const tsText = d.fetchedAt ? new Date(d.fetchedAt).toLocaleTimeString(timeLocale, { hour: '2-digit', minute: '2-digit', hour12: false }) : ''
+                  const changeText = valid ? `${signed(d.change, lang)} (${numeric(d.changePct) ? signed(d.changePct, lang) + '%' : '—'})` : t.market.noData
+                  const tsText = `${sourceLabel(d.source)} ${quoteTime(d, timeLocale)}${d.state === 'stale' ? '，保留报价' : ''}`
                   return `<div style="display:flex;align-items:center;gap:12px;padding:3px 0;font-size:12px">
                     <span style="min-width:56px;color:#475569">${d.name}</span>
                     <span style="font-weight:600;min-width:85px;text-align:right;color:${color}">${priceText}</span>
@@ -237,7 +267,7 @@ export default function Market() {
               type: 'scatter', coordinateSystem: 'geo',
               data: markers.map(group => {
                 const leader = group.find(d => LEADING.includes(d.name)) || group[0]
-                const valid = Number(leader.price) !== 0
+                const valid = hasPrice(leader) && numeric(leader.change)
                 const up = Number(leader.change) >= 0
                 const color = !valid ? '#9ca3af' : up ? positiveHex : negativeHex
                 return {
@@ -328,33 +358,38 @@ export default function Market() {
 
   return (
     <div className="h-full flex flex-col">
-      <div className="px-6 pt-6 pb-1 flex items-center justify-between shrink-0">
+      <div className="px-4 sm:px-6 pt-6 pb-1 flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.market.title}</h2>
-          {lastRefresh && <span className="text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>}
+          {updatedAt && <span className="text-[10px] text-slate-400">{new Date(updatedAt).toLocaleTimeString(timeLocale, { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
         </div>
-        <span className="text-[10px] text-slate-400">{t.market.dataSource}</span>
+        <div className="flex items-center text-[10px] text-slate-400"><span>{t.market.dataSource}：{sources.map(sourceLabel).join(' / ') || '—'}</span><InfoTip label="行情来源">A 股指数优先使用同花顺金融 API。当前开放接口尚未覆盖此页全部海外股指、商品和比特币，它们暂保留原数据源。页面每 5 分钟刷新，后端共享缓存 90 秒。时间来自行情或供应商批次；本地收盘和保留报价会单独标记。黄金卡片对应 COMEX 黄金期货，原油卡片对应 WTI 期货，并非现货。</InfoTip></div>
       </div>
+      {dataError && <p role="alert" className="px-6 pb-2 text-xs text-red-600 dark:text-red-400">{dataError}</p>}
+      {providerWarning && <p role="status" className="px-6 pb-2 text-xs text-amber-700 dark:text-amber-400">部分同花顺指数未更新，已尝试备用来源。</p>}
       {indicators.length > 0 && (
         <div className="px-6 pb-3 flex gap-4 shrink-0 flex-wrap">
           {indicators.map(ind => {
-            const valid = ind.price != null && Number(ind.price) !== 0
-            const up = Number(ind.change) >= 0
-            const cls = valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'
+            const valid = hasPrice(ind)
+            const changeKnown = valid && numeric(ind.change)
+            const cls = changeKnown ? (Number(ind.change) >= 0 ? positiveClass : negativeClass) : 'text-slate-400'
             const priceText = valid ? fmtNum(Number(ind.price), 2, lang) : '—'
-            const chgText = valid ? `${up ? '+' : ''}${fmtNum(Math.abs(Number(ind.change)), 2, lang)}` : '—'
-            const pctText = valid ? `${up ? '+' : ''}${Number(ind.changePct).toFixed(2)}%` : '—'
             return (
-              <a key={ind.symbol} href={`${import.meta.env.BASE_URL}stock?symbol=${encodeURIComponent(ind.symbol)}`}
-                className="flex-1 rounded-xl border border-slate-200 px-4 py-3 hover:bg-slate-50 transition-colors no-underline">
-                <div className="text-[11px] text-slate-400 font-medium mb-0.5">{ind.name}</div>
-                <div className="text-base font-bold text-slate-900 tabular-nums">{priceText}</div>
-                <div className="flex items-baseline gap-2 mt-0.5">
-                  <span className={`text-xs font-medium tabular-nums ${cls}`}>{chgText}</span>
-                  <span className={`text-xs font-medium tabular-nums ${cls}`}>{pctText}</span>
-                  {ind.fetchedAt && <span className="text-[10px] text-slate-400 ml-auto">{new Date(ind.fetchedAt).toLocaleTimeString(timeLocale, { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
-                </div>
-              </a>
+              <div key={ind.symbol} className="relative flex-1 min-w-[145px] rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors">
+                <a href={`${import.meta.env.BASE_URL}stock?symbol=${encodeURIComponent(ind.symbol)}`} className="block px-4 py-3 no-underline">
+                  <div className="text-[11px] text-slate-400 font-medium mb-0.5 pr-5">{ind.name}</div>
+                  <div className="text-base font-bold text-slate-900 tabular-nums">{priceText}</div>
+                  <div className="flex items-baseline gap-2 mt-0.5">
+                    <span className={`text-xs font-medium tabular-nums ${cls}`}>{valid ? signed(ind.change, lang) : '—'}</span>
+                    <span className={`text-xs font-medium tabular-nums ${cls}`}>{valid && numeric(ind.changePct) ? signed(ind.changePct, lang) + '%' : '—'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400">
+                    <span>{ind.state === 'stale' ? '保留报价' : ind.state === 'unavailable' ? '暂缺数据' : quoteTime(ind, timeLocale) || '行情时间未提供'}</span>
+                    {ind.state === 'stale' && <span>{quoteTime(ind, timeLocale)}</span>}
+                  </div>
+                </a>
+                <span className="absolute right-1 top-1"><InfoTip label={`${ind.name}行情`}>{quoteDescription(ind, timeLocale)}</InfoTip></span>
+              </div>
             )
           })}
         </div>

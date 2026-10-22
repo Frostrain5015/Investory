@@ -108,7 +108,7 @@ const zh = {
     clickToViewSource: "点击查看原文 →",
     categoryFinance: "财经",
     categoryGeopolitics: "地缘",
-    dataSource: "数据来源：Sina / Yahoo Finance",
+    dataSource: "数据来源",
     countryNames: {
       cn: "中国", hk: "中国香港", us: "美国", jp: "日本", kr: "韩国",
       gb: "英国", de: "德国", fr: "法国", tw: "中国台湾", sg: "新加坡",
@@ -769,7 +769,7 @@ const en = {
     clickToViewSource: "Click to view source →",
     categoryFinance: "Finance",
     categoryGeopolitics: "Geopolitics",
-    dataSource: "Data source: Sina / Yahoo Finance",
+    dataSource: "Data source",
     countryNames: {
       cn: "China", hk: "Hong Kong", us: "United States", jp: "Japan", kr: "South Korea",
       gb: "United Kingdom", de: "Germany", fr: "France", tw: "Taiwan", sg: "Singapore",
@@ -1429,7 +1429,7 @@ const hk = {
     clickToViewSource: "點擊查看原文 →",
     categoryFinance: "財經",
     categoryGeopolitics: "地緣",
-    dataSource: "數據來源：Sina / Yahoo Finance",
+    dataSource: "數據來源",
     countryNames: {
       cn: "中國", hk: "中國香港", us: "美國", jp: "日本", kr: "韓國",
       gb: "英國", de: "德國", fr: "法國", tw: "中國臺灣", sg: "新加坡",

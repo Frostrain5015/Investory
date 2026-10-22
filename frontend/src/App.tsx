@@ -136,7 +136,7 @@ export default function App() {
               <Route path="/stock" element={<PageTransition><StockDetail /></PageTransition>} />
               <Route path="/pnl-calendar" element={<PnlCalendar />} />
               <Route path="/portfolio" element={<Portfolio />} />
-              <Route path="/settings" element={<Settings />} />
+              <Route path="/settings" element={<PageTransition><Settings /></PageTransition>} />
               <Route path="/quant" element={<Navigate to="/research" replace />} />
               <Route path="/screener" element={<Navigate to="/research" replace />} />
               <Route path="/research" element={<PageTransition><Research /></PageTransition>} />

@@ -9,7 +9,7 @@ import type {
   FactorScoresResponse, ScanResultsResponse, DailyPick,
   AdminStatus, AdminUser, AdminCrawlHistoryItem, StatusResponse,
   WatchlistItem, AiSettings, AiModelSettings, AiChatRequest,
-  MarketIndexItem, MarketNewsItem, ExchangeRatesResponse, PortfolioAnalysisResult,
+  MarketNewsItem, ExchangeRatesResponse, PortfolioAnalysisResult,
 } from '@/types'
 
 export const BASE = import.meta.env.VITE_API_BASE || ''
@@ -300,7 +300,7 @@ export function aiSelectModel(id: number): Promise<AiModelSettings> {
 
 // ── Market ────────────────────────────────────────────────────────────────
 
-export function getMarketIndices(): Promise<{ indices: MarketIndexItem[]; indicators: MarketIndexItem[] }> { return request('/api/market/indices') }
+export function getMarketIndices(): Promise<import('./pagePreload').PreloadMarketSnapshot> { return request('/api/market/indices') }
 export function getExchangeRates(): Promise<ExchangeRatesResponse> { return request('/api/market/exchange-rates') }
 export function getMarketNews(): Promise<MarketNewsItem[]> { return request('/api/market/news') }
 

@@ -2,7 +2,7 @@
 
 设计演进入口：[2026-10-22 技术方案 v0.2](a-investory-technical-proposal-2026-10-22.md)。该方案含拟议改造与待决事项；下文继续记录现有实现，不把新方案写成已完成。
 
-核对日期：2026-10-20。基于本地工作树源码、依赖清单、路由、构建配置与离线测试；没有访问生产服务器或验证生产运行状态。
+主体架构核对日期：2026-10-20；世界市场数据通道更新于 2026-10-22（v6.3.5）。各次验证的范围以集成记录为准。
 
 ## 1. 总体判断
 
@@ -99,6 +99,7 @@ config/                线程池与 StockSage 桥接装配
 - `PnlLedgerService`、`PortfolioValueCalculator`：盈亏台账、组合日净值与回填。
 - `PortfolioAnalysisService`：组合层面的展示/分析数据。
 - `StockSearchIndexService`：股票搜索索引。
+- `marketdata/WorldMarketService`：世界市场快照，共享 90 秒缓存和单次并发刷新；`HithinkDataClient` 优先批量取得三个 A 股指数，`LegacyWorldMarketClient` 暂保留海外行情和故障回退。报价来源、批次或交易所时间、接收时间及保留状态分别传给前端；无数据使用 null。详细覆盖范围见 [同花顺金融 API 集成](integrations/hithink-data.md)。
 - `BacktestExecutionService`：回测占位、入库、进程、进度解析、结果落库与临时文件清理。
 
 回测控制器不再直接拼装 Python 进程和解析输出；`BacktestRequest` 在 HTTP 边界校验类型和日期。每个用户最多一个活动回测，不同用户的状态、日志和订阅分开。终态事件保留供稍晚连接的客户端读取，日志/事件各保留最多 300 条；历史结果以数据库为准。会话状态仍是内存状态，Java 重启后不会恢复执行现场。

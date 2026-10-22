@@ -47,6 +47,20 @@ class HithinkDataClientTest {
         baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
     }
     @AfterEach void stop() { server.stop(0); }
+    @Test void indexQuotesUseTheDedicatedEndpointAndPreserveNullsAndBatchTime() {
+        response = "{\"code\":0,\"data\":{\"timestamp\":1792633654000,\"item\":["
+            + "{\"thscode\":\"000001.SH\",\"last_price\":3683.49,\"price_change\":-29.54,\"price_change_ratio_pct\":-0.795577},"
+            + "{\"thscode\":\"881101.TI\",\"last_price\":null}]}}";
+        var result = client().indexSnapshot(List.of("000001.SH", "881101.TI"));
+        assertEquals("/api/a-share-index/prices/snapshot", path);
+        assertTrue(query.contains("thscodes=000001.SH,881101.TI"));
+        assertEquals("-0.795577", result.items().get(0).changePct().toPlainString());
+        assertNull(result.items().get(1).price());
+        assertEquals("BATCH", result.timestampScope());
+        assertEquals(Instant.ofEpochMilli(1792633654000L), result.providerTimestamp());
+        assertThrows(IllegalArgumentException.class, () -> client().indexSnapshot(List.of("GSPC.US")));
+        assertEquals(1, requests.get());
+    }
     private HithinkDataClient client() { return client(true, "test-secret", 2000); }
     private HithinkDataClient client(boolean enabled, String apiKey, int timeout) {
         return new HithinkDataClient(new HithinkDataProperties(enabled, apiKey, baseUrl, timeout), new ObjectMapper());
