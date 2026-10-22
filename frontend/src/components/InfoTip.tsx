@@ -1,9 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Info } from 'lucide-react'
+import { Info, TriangleAlert } from 'lucide-react'
 
 /** Field help: hover, keyboard focus, or tap. Portalled outside scrolling dialogs. */
-export default function InfoTip({ label, children }: { label: string; children: string }) {
+export default function InfoTip({ label, children, warning = false }: { label: string; children: string; warning?: boolean }) {
   const id = useId()
   const trigger = useRef<HTMLButtonElement>(null)
   const dismissTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -30,8 +30,8 @@ export default function InfoTip({ label, children }: { label: string; children: 
     <button ref={trigger} type="button" aria-label={`${label}说明`} aria-describedby={open ? id : undefined} aria-expanded={open}
       onFocus={show} onBlur={hide} onClick={() => setOpen(true)}
       onKeyDown={event => { if (event.key === 'Escape' && open) { event.stopPropagation(); setOpen(false) } }}
-      className="inline-flex w-7 h-7 items-center justify-center rounded-full text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 cursor-help">
-      <Info aria-hidden="true" className="w-3.5 h-3.5" />
+      className={`inline-flex ${warning ? 'w-5 h-5 text-amber-600 dark:text-amber-400' : 'w-7 h-7 text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'} items-center justify-center rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 cursor-help`}>
+      {warning ? <TriangleAlert aria-hidden="true" className="w-3.5 h-3.5" /> : <Info aria-hidden="true" className="w-3.5 h-3.5" />}
     </button>
     {open && createPortal(<span id={id} role="tooltip" onMouseEnter={show} onMouseLeave={hide}
       className="fixed z-[100] w-72 max-w-[calc(100vw-32px)] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2.5 text-xs font-normal leading-relaxed text-slate-700 dark:text-slate-200 shadow-lg"

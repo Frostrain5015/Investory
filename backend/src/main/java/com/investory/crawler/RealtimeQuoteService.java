@@ -1,220 +1,120 @@
 package com.investory.crawler;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import com.investory.dao.StockDao;
+import com.investory.marketdata.HithinkDataClient;
 import com.investory.model.Quote;
 import com.investory.model.Stock;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
-
 import java.math.BigDecimal;
-import java.net.InetSocketAddress;
-import java.net.ProxySelector;
-import java.net.URI;
-import java.time.DayOfWeek;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.ZonedDateTime;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.util.List;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
-import java.util.logging.Logger;
+import java.time.*;
+import java.util.*;
+import java.util.concurrent.*;
 
-/**
- * Real-time stock price service using a race pattern:
- * fires requests to EastMoney, Tencent (A-shares), and Yahoo (global),
- * returns the first successful response, and cancels the rest.
- * Never writes to the database.
- */
+/** Shared read-only quote path for holdings, watchlists and individual reads. */
 @Service
 public class RealtimeQuoteService {
-
-    private static final Logger log = Logger.getLogger(RealtimeQuoteService.class.getName());
-    // Direct connection for Chinese APIs (EastMoney, Tencent)
-    private final HttpClient http = HttpClient.newHttpClient();
-    // SOCKS proxy for international APIs (Yahoo)
-    private final HttpClient httpWithProxy = buildProxiedClient();
-
-    private static HttpClient buildProxiedClient() {
-        String host = System.getProperty("socksProxyHost");
-        String port = System.getProperty("socksProxyPort", "1080");
-        if (host != null && !host.isBlank()) {
-            return HttpClient.newBuilder()
-                    .proxy(ProxySelector.of(new InetSocketAddress(host, Integer.parseInt(port))))
-                    .build();
-        }
-        return HttpClient.newHttpClient();
-    }
-
-    private final StockDao stockDao;
-    private final ExecutorService quoteExecutor;
+    private static final Duration TTL = Duration.ofSeconds(25);
+    private final HithinkDataClient provider;
+    private final LegacyEquityQuoteClient legacy;
+    private final ExecutorService workers;
+    private final Clock clock;
+    private final Map<String, Entry> cache = new LinkedHashMap<>(128, .75f, true);
+    private Instant retryAfter = Instant.MIN;
+    private long lastRequestNanos;
+    private record Entry(Quote quote, Instant checkedAt) { }
 
     @Autowired
-    public RealtimeQuoteService(StockDao stockDao,
-                                @Qualifier("quoteExecutor") ExecutorService quoteExecutor) {
-        this.stockDao = stockDao;
-        this.quoteExecutor = quoteExecutor;
+    public RealtimeQuoteService(HithinkDataClient provider, LegacyEquityQuoteClient legacy,
+                                @Qualifier("marketIndexExecutor") ExecutorService workers) {
+        this(provider,legacy,workers,Clock.systemUTC());
     }
-
-    /** Returns true if the given stock's market is currently in a trading session (weekday + session hours). */
-    private boolean isMarketOpen(Stock stock) {
-        String market = stock.getMarket();
-        ZonedDateTime now = switch (market) {
-            case "SH", "SZ" -> ZonedDateTime.now(ZoneId.of("Asia/Shanghai"));
-            case "HK"        -> ZonedDateTime.now(ZoneId.of("Asia/Hong_Kong"));
-            case "US"        -> ZonedDateTime.now(ZoneId.of("America/New_York"));
-            default          -> null;
-        };
-        if (now == null) return false;
-        DayOfWeek day = now.getDayOfWeek();
-        if (day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY) return false;
-        int t = now.getHour() * 60 + now.getMinute();
-        return switch (market) {
-            // A-shares: 09:30-11:30, 13:00-15:00 CST
-            case "SH", "SZ" -> (t >= 570 && t <= 690) || (t >= 780 && t <= 900);
-            // HK: 09:30-12:00, 13:00-16:00 HKT
-            case "HK"        -> (t >= 570 && t <= 720) || (t >= 780 && t <= 960);
-            // US: 09:30-16:00 ET
-            case "US"        -> t >= 570 && t <= 960;
-            default          -> false;
-        };
+    RealtimeQuoteService(HithinkDataClient provider, LegacyEquityQuoteClient legacy, ExecutorService workers, Clock clock) {
+        this.provider=provider; this.legacy=legacy; this.workers=workers; this.clock=clock;
     }
+    public Quote getQuote(Stock stock) { return getQuotes(List.of(stock)).get(stock.getSymbol()); }
+    public BigDecimal getPrice(Stock stock) { Quote quote=getQuote(stock); return quote==null ? null : quote.price(); }
 
-    /** Get the best available real-time price with fetch timestamp. Returns null if all sources fail. */
-    public Quote getQuote(Stock stock) {
-        if (!isMarketOpen(stock)) return null;
-        List<Callable<Quote>> tasks = List.of(
-            () -> new Quote(fetchFromSina(stock), Instant.now()),
-            () -> new Quote(fetchFromTencent(stock), Instant.now()),
-            () -> new Quote(fetchFromYahoo(stock), Instant.now())
-        );
+    /** Batches of 50; aliases and concurrent readers share cached successes and failures. */
+    public synchronized Map<String, Quote> getQuotes(List<Stock> stocks) {
+        Instant startedAt=clock.instant();
+        var missing=new LinkedHashMap<String, Stock>();
+        for (Stock stock:stocks) {
+            if (stock==null || stock.getSymbol()==null) continue;
+            String key=key(stock);
+            Entry entry=cache.get(key);
+            if (entry==null || Duration.between(entry.checkedAt(),clock.instant()).compareTo(TTL)>=0) missing.putIfAbsent(key,stock);
+        }
+        var obtained=new HashMap<String, Quote>();
+        var supported=missing.values().stream().filter(s -> aShareCode(s)!=null).toList();
+        var status=provider.status();
+        if (status.enabled() && status.configured() && !clock.instant().isBefore(retryAfter)) {
+            for (int start=0;start<supported.size();start+=50) {
+                var group=supported.subList(start,Math.min(start+50,supported.size()));
+                try {
+                    long wait=TimeUnit.MILLISECONDS.toNanos(250)-(System.nanoTime()-lastRequestNanos);
+                    if (wait>0) TimeUnit.NANOSECONDS.sleep(wait);
+                    lastRequestNanos=System.nanoTime();
+                    var batch=provider.snapshot(group.stream().map(RealtimeQuoteService::aShareCode).distinct().toList());
+                    for (var item:batch.items()) {
+                        if (item.price()==null || item.price().signum()<=0) continue;
+                        Quote quote=new Quote(item.price(),batch.receivedAt(),item.previousClose(),item.change(),item.changePct(),
+                            batch.source(),batch.providerTimestamp(),false);
+                        obtained.put(item.symbol(),quote.withLive(isLive(quote,"SH")));
+                    }
+                } catch (HithinkDataClient.DataException error) {
+                    retryAfter=clock.instant().plusSeconds(60);
+                    break;
+                } catch (InterruptedException error) { Thread.currentThread().interrupt(); break; }
+            }
+        }
+        var fallbacks=new LinkedHashMap<String, Future<Quote>>();
+        for (var entry:missing.entrySet()) if (!obtained.containsKey(entry.getKey()))
+            fallbacks.put(entry.getKey(),workers.submit(() -> legacy.getQuote(entry.getValue())));
+        long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(8);
+        for (var entry:fallbacks.entrySet()) {
+            Quote quote=null;
+            try { quote=entry.getValue().get(Math.max(0,deadline-System.nanoTime()),TimeUnit.NANOSECONDS); }
+            catch (InterruptedException error) { Thread.currentThread().interrupt(); entry.getValue().cancel(true); }
+            catch (Exception error) { entry.getValue().cancel(true); }
+            if (quote==null || quote.price()==null || quote.price().signum()<=0) {
+                Entry old=cache.get(entry.getKey());
+                if (old!=null && old.quote()!=null && old.quote().fetchedAt()!=null
+                    && Duration.between(old.quote().fetchedAt(),clock.instant()).compareTo(Duration.ofHours(24))<0)
+                    quote=old.quote().withLive(false);
+                else quote=null;
+            }
+            obtained.put(entry.getKey(),quote);
+        }
+        for (String key:missing.keySet()) cache.put(key,new Entry(obtained.get(key),startedAt));
+        while (cache.size()>4096) cache.remove(cache.keySet().iterator().next());
+        var result=new HashMap<String,Quote>();
+        for (Stock stock:stocks) {
+            if (stock==null || stock.getSymbol()==null) continue;
+            Entry entry=cache.get(key(stock));
+            if (entry!=null && entry.quote()!=null) {
+                Quote quote=entry.quote();
+                result.put(stock.getSymbol(),quote.withLive(quote.live() && isLive(quote,stock.getMarket())));
+            }
+        }
+        return result;
+    }
+    private boolean isLive(Quote quote,String market) {
+        if (quote.quoteTime()==null || market==null || !List.of("SH","SZ","BJ").contains(market)) return false;
+        var now=clock.instant().atZone(ZoneId.of("Asia/Shanghai"));
+        if (now.getDayOfWeek().getValue()>5) return false;
+        int minute=now.getHour()*60+now.getMinute();
+        Duration age=Duration.between(quote.quoteTime(),clock.instant());
+        return ((minute>=570 && minute<690)||(minute>=780 && minute<900)) && !age.isNegative() && age.compareTo(Duration.ofMinutes(2))<=0;
+    }
+    static String aShareCode(Stock stock) {
+        if (stock.getMarket()==null || !List.of("SH","SZ","BJ").contains(stock.getMarket())) return null;
         try {
-            return quoteExecutor.invokeAny(tasks, 3, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            log.fine("All real-time sources failed for " + stock.getSymbol() + ": " + e.getMessage());
-            return null;
-        }
+            String code=HithinkDataClient.normalizeSymbol(stock.getSymbol());
+            // Only equities: do not send indices or ETFs to the stock endpoint.
+            if (!code.endsWith("."+stock.getMarket())) return null;
+            return code.matches("(6\\d{5}\\.SH|[03]\\d{5}\\.SZ|[489]\\d{5}\\.BJ)") ? code : null;
+        } catch (IllegalArgumentException error) { return null; }
     }
-
-    /** Convenience wrapper — returns only the price, null if all sources fail. */
-    public BigDecimal getPrice(Stock stock) {
-        Quote q = getQuote(stock);
-        return q != null ? q.price() : null;
-    }
-
-    // ── Sina (real-time) ────────────────────────────────────────────────
-
-    private BigDecimal fetchFromSina(Stock stock) throws Exception {
-        if (!"SH".equals(stock.getMarket()) && !"SZ".equals(stock.getMarket())) {
-            throw new Exception("Sina only supports A-shares");
-        }
-        String code = getTicker(stock);
-        String prefix = "SH".equals(stock.getMarket()) ? "sh" : "sz";
-        String url = "https://hq.sinajs.cn/list=" + prefix + code;
-        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                .header("User-Agent", "Mozilla/5.0")
-                .header("Referer", "https://finance.sina.com.cn")
-                .build();
-        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() != 200) throw new Exception("HTTP " + resp.statusCode());
-        String body = resp.body();
-        int q = body.indexOf('"');
-        if (q < 0) throw new Exception("no quote");
-        // var hq_str_sh600519="name,open,prevClose,price,high,low,..."
-        String[] fields = body.substring(q + 1, body.lastIndexOf('"')).split(",");
-        if (fields.length < 4) throw new Exception("not enough fields");
-        return new BigDecimal(fields[3]);
-    }
-
-    // ── Symbol helpers ───────────────────────────────────────────────────
-
-    /** Extract the raw ticker from the symbol, which may be in either
-     *  EastMoney format (\"1.600519\") or human-readable format (\"XPEV.US\"). */
-    private static String getTicker(Stock stock) {
-        String symbol = stock.getSymbol();
-        int dot = symbol.indexOf('.');
-        if (dot < 0) return symbol;
-        // SH/SZ stocks use EastMoney market-prefix format: market_code.ticker
-        if ("SH".equals(stock.getMarket()) || "SZ".equals(stock.getMarket())) {
-            return symbol.substring(dot + 1);
-        }
-        // US/HK stocks use human-readable format: ticker.market
-        return symbol.substring(0, dot);
-    }
-
-    // ── Tencent ──────────────────────────────────────────────────────────
-
-    private BigDecimal fetchFromTencent(Stock stock) throws Exception {
-        // Tencent real-time quote API (China-local, A-shares only)
-        if (!"SH".equals(stock.getMarket()) && !"SZ".equals(stock.getMarket())) {
-            throw new Exception("Tencent does not support non-A-share stocks");
-        }
-        String code = getTicker(stock);
-        String prefix = "SH".equals(stock.getMarket()) ? "sh" : "sz";
-        String url = "https://qt.gtimg.cn/q=" + prefix + code;
-        String body = httpGet(url);
-        // Response format: v_sh600519="1~name~code~price~prevClose~open~..."
-        int quoteIdx = body.indexOf('"');
-        if (quoteIdx < 0) throw new Exception("no quote");
-        String content = body.substring(quoteIdx + 1, body.lastIndexOf('"'));
-        String[] fields = content.split("~");
-        if (fields.length < 4) throw new Exception("not enough fields");
-        // fields[3]=currentPrice, fields[4]=prevClose
-        return new BigDecimal(fields[3]);
-    }
-
-    // ── Yahoo Finance ────────────────────────────────────────────────────
-
-    private static String toYahooSymbol(Stock stock) {
-        String ticker = getTicker(stock);
-        return switch (stock.getMarket()) {
-            case "SH" -> ticker + ".SS";
-            case "SZ" -> ticker + ".SZ";
-            case "HK" -> String.format("%04d", Integer.parseInt(ticker)) + ".HK";
-            default   -> ticker;
-        };
-    }
-
-    private BigDecimal fetchFromYahoo(Stock stock) throws Exception {
-        String yfSymbol = toYahooSymbol(stock);
-        String url = "https://query1.finance.yahoo.com/v8/finance/chart/"
-                + yfSymbol + "?range=1d&interval=5m";
-        String body = httpGetViaProxy(url);
-        JsonObject root = JsonParser.parseString(body).getAsJsonObject();
-        JsonObject chart = root.getAsJsonObject("chart");
-        if (chart == null) throw new Exception("no chart");
-        JsonArray result = chart.getAsJsonArray("result");
-        if (result == null || result.isEmpty()) throw new Exception("no result");
-        JsonObject meta = result.get(0).getAsJsonObject().getAsJsonObject("meta");
-        if (meta == null) throw new Exception("no meta");
-        return meta.get("regularMarketPrice").getAsBigDecimal();
-    }
-
-    // ── HTTP ─────────────────────────────────────────────────────────────
-
-    private String httpGet(String url) throws Exception {
-        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                .header("User-Agent", "Mozilla/5.0")
-                .build();
-        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() != 200) throw new Exception("HTTP " + resp.statusCode());
-        return resp.body();
-    }
-
-    private String httpGetViaProxy(String url) throws Exception {
-        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-                .header("User-Agent", "Mozilla/5.0")
-                .build();
-        HttpResponse<String> resp = httpWithProxy.send(req, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() != 200) throw new Exception("HTTP " + resp.statusCode());
-        return resp.body();
-    }
-
+    private static String key(Stock stock) { String code=aShareCode(stock); return code==null ? stock.getMarket()+"|"+stock.getSymbol() : code; }
 }

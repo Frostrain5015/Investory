@@ -1,3 +1,4 @@
+import QuoteNumber from '@/components/QuoteNumber'
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import * as echarts from 'echarts'
 import { useSettings } from '@/hooks/use-settings'
@@ -110,6 +111,10 @@ function quoteTime(quote: PreloadMarketQuote, locale: string): string {
   const date = new Date(quote.quoteTime).toLocaleString(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
   return `${quote.timestampScope === 'BATCH' ? '批次 ' : ''}${date}`
 }
+function nonRealtime(quote: PreloadMarketQuote): boolean {
+  const time = quote.quoteTime ? Date.parse(quote.quoteTime) : NaN
+  return quote.state !== 'available' || !Number.isFinite(time) || Date.now() - time > 120_000 || time > Date.now()
+}
 function quoteDescription(quote: PreloadMarketQuote, locale: string): string {
   const state = quote.state === 'stale' ? '保留的历史报价' : quote.state === 'unavailable' ? '暂未获取到报价' : '已获取报价'
   const asOf = quoteTime(quote, locale)
@@ -135,7 +140,7 @@ export default function Market() {
   const loadIndices = useCallback((force = false) => {
     const shouldForce = force || loadedInitialRef.current
     loadedInitialRef.current = true
-    getPreloadedMarketSnapshot({ force: shouldForce })
+    const quotes = getPreloadedMarketSnapshot({ force: shouldForce })
       .then(data => {
         setIndices(data.indices || [])
         setIndicators(data.indicators || [])
@@ -149,6 +154,7 @@ export default function Market() {
     getPreloadedMarketNews({ force: shouldForce })
       .then(data => setNews(Array.isArray(data) ? data : []))
       .catch(() => {})
+    return quotes
   }, [])
 
   useEffect(() => { loadIndices() }, [loadIndices])
@@ -245,12 +251,12 @@ export default function Market() {
                   const color = !valid || !numeric(d.change) ? '#9ca3af' : u ? positiveHex : negativeHex
                   const priceText = valid ? Number(d.price).toLocaleString() : '—'
                   const changeText = valid ? `${signed(d.change, lang)} (${numeric(d.changePct) ? signed(d.changePct, lang) + '%' : '—'})` : t.market.noData
-                  const tsText = `${sourceLabel(d.source)} ${quoteTime(d, timeLocale)}${d.state === 'stale' ? '，保留报价' : ''}`
+                  const warning = valid && nonRealtime(d)
                   return `<div style="display:flex;align-items:center;gap:12px;padding:3px 0;font-size:12px">
                     <span style="min-width:56px;color:#475569">${d.name}</span>
                     <span style="font-weight:600;min-width:85px;text-align:right;color:${color}">${priceText}</span>
                     <span style="min-width:95px;text-align:right;color:${color}">${changeText}</span>
-                    ${tsText ? `<span style="color:#94a3b8;font-size:10px;min-width:34px">${tsText}</span>` : ''}
+                    ${warning ? `<span tabindex="0" aria-label="非实时报价" title="${quoteDescription(d, timeLocale)}" style="color:#b45309;font-size:14px">&#9888;</span>` : ''}
                   </div>`
                 }).join('')}`
             },
@@ -363,7 +369,7 @@ export default function Market() {
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.market.title}</h2>
           {updatedAt && <span className="text-[10px] text-slate-400">{new Date(updatedAt).toLocaleTimeString(timeLocale, { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
         </div>
-        <div className="flex items-center text-[10px] text-slate-400"><span>{t.market.dataSource}：{sources.map(sourceLabel).join(' / ') || '—'}</span><InfoTip label="行情来源">A 股指数优先使用同花顺金融 API。当前开放接口尚未覆盖此页全部海外股指、商品和比特币，它们暂保留原数据源。页面每 5 分钟刷新，后端共享缓存 90 秒。时间来自行情或供应商批次；本地收盘和保留报价会单独标记。黄金卡片对应 COMEX 黄金期货，原油卡片对应 WTI 期货，并非现货。</InfoTip></div>
+        <div className="flex items-center text-[10px] text-slate-400"><span>{t.market.dataSource}：{sources.map(sourceLabel).join(' / ') || '—'}</span><InfoTip label="行情来源">A 股指数优先使用同花顺金融 API。当前开放接口尚未覆盖此页全部海外股指、商品和比特币，它们暂保留原数据源。当前页面每 30 秒刷新，后端共享短时缓存。时间来自行情或供应商批次；本地收盘和保留报价会单独标记。黄金卡片对应 COMEX 黄金期货，原油卡片对应 WTI 期货，并非现货。</InfoTip></div>
       </div>
       {dataError && <p role="alert" className="px-6 pb-2 text-xs text-red-600 dark:text-red-400">{dataError}</p>}
       {providerWarning && <p role="status" className="px-6 pb-2 text-xs text-amber-700 dark:text-amber-400">部分同花顺指数未更新，已尝试备用来源。</p>}
@@ -373,22 +379,17 @@ export default function Market() {
             const valid = hasPrice(ind)
             const changeKnown = valid && numeric(ind.change)
             const cls = changeKnown ? (Number(ind.change) >= 0 ? positiveClass : negativeClass) : 'text-slate-400'
-            const priceText = valid ? fmtNum(Number(ind.price), 2, lang) : '—'
             return (
               <div key={ind.symbol} className="relative flex-1 min-w-[145px] rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors">
                 <a href={`${import.meta.env.BASE_URL}stock?symbol=${encodeURIComponent(ind.symbol)}`} className="block px-4 py-3 no-underline">
                   <div className="text-[11px] text-slate-400 font-medium mb-0.5 pr-5">{ind.name}</div>
-                  <div className="text-base font-bold text-slate-900 tabular-nums">{priceText}</div>
+                  <div className="text-base font-bold text-slate-900 tabular-nums"><QuoteNumber value={valid ? Number(ind.price) : null} format={value => fmtNum(value, 2, lang)} /></div>
                   <div className="flex items-baseline gap-2 mt-0.5">
-                    <span className={`text-xs font-medium tabular-nums ${cls}`}>{valid ? signed(ind.change, lang) : '—'}</span>
-                    <span className={`text-xs font-medium tabular-nums ${cls}`}>{valid && numeric(ind.changePct) ? signed(ind.changePct, lang) + '%' : '—'}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1 text-[10px] text-slate-400">
-                    <span>{ind.state === 'stale' ? '保留报价' : ind.state === 'unavailable' ? '暂缺数据' : quoteTime(ind, timeLocale) || '行情时间未提供'}</span>
-                    {ind.state === 'stale' && <span>{quoteTime(ind, timeLocale)}</span>}
+                    <span className={`text-xs font-medium tabular-nums ${cls}`}><QuoteNumber value={valid ? ind.change : null} signed format={value => fmtNum(value, 2, lang)} /></span>
+                    <span className={`text-xs font-medium tabular-nums ${cls}`}><QuoteNumber value={valid ? ind.changePct : null} signed suffix="%" format={value => fmtNum(value, 2, lang)} /></span>
                   </div>
                 </a>
-                <span className="absolute right-1 top-1"><InfoTip label={`${ind.name}行情`}>{quoteDescription(ind, timeLocale)}</InfoTip></span>
+                {valid && nonRealtime(ind) && <span className="absolute right-2 top-2"><InfoTip warning label={`${ind.name}非实时行情`}>{quoteDescription(ind, timeLocale)}</InfoTip></span>}
               </div>
             )
           })}

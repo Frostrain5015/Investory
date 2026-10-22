@@ -70,9 +70,9 @@ public class StockController {
      * @return 包含 snapshots 列表的 Map
      */
     @GetMapping("/holdings")
-    public Map<String, Object> holdings(HttpServletRequest req) {
+    public Map<String, Object> holdings(HttpServletRequest req, @RequestParam(defaultValue="true") boolean quotes) {
         // 通过 HoldingService 聚合计算当前组合的所有持仓快照
-        return Map.of("snapshots", holdingService.getSnapshots(getPortfolioId(req)));
+        return Map.of("snapshots", holdingService.getSnapshots(getPortfolioId(req), quotes));
     }
 
     /**
@@ -139,8 +139,12 @@ public class StockController {
         Quote q = quoteService.getQuote(stock);
         // livePrice：优先使用实时价，无实时价时该字段为 null（前端自行处理降级展示）
         r.put("livePrice", q != null ? q.price() : null);
+        r.put("priceLive", q != null && q.live());
+        r.put("priceSource", q != null ? q.source() : "database");
+        r.put("liveChangePct", q != null ? q.changePct() : null);
+        r.put("livePreviousClose", q != null ? q.previousClose() : null);
         // livePriceTs：实时报价的抓取时间；无实时价时退化为数据库中最新收盘日期字符串
-        r.put("livePriceTs", q != null ? q.fetchedAt().toString() : (stockPriceDao.findLatest(stock.getId()) != null ? stockPriceDao.findLatest(stock.getId()).getTradeDate().toString() : null));
+        r.put("livePriceTs", q != null ? (q.quoteTime() == null ? null : q.quoteTime().toString()) : (stockPriceDao.findLatest(stock.getId()) != null ? stockPriceDao.findLatest(stock.getId()).getTradeDate().toString() : null));
         return r;
     }
 
@@ -172,11 +176,14 @@ public class StockController {
         Stock stock = stockDao.findBySymbol(symbol);
         // 校验规则：股票代码不存在时返回错误
         if (stock == null) return Map.of("error", "Stock not found");
-        BigDecimal price = quoteService.getPrice(stock);
-        // 数据库中最新收盘价，作为实时报价失败时的兜底数据
-        BigDecimal cached = stockPriceDao.findLatestClose(stock.getId());
-        // live 字段标识 price 是否为实时抓取（true）或历史收盘价（false）
-        return Map.of("symbol", symbol, "price", price != null ? price : cached, "live", price != null);
+        Quote quote = quoteService.getQuote(stock);
+        Map<String,Object> result = new LinkedHashMap<>();
+        result.put("symbol",symbol);
+        result.put("price",quote != null ? quote.price() : stockPriceDao.findLatestClose(stock.getId()));
+        result.put("live",quote != null && quote.live());
+        result.put("source",quote != null ? quote.source() : "database");
+        result.put("quoteTime",quote != null ? quote.quoteTime() : null);
+        return result;
     }
 
     /**
@@ -235,11 +242,6 @@ public class StockController {
         if (pid == 0) return Map.of("error", "No portfolio");
         // 获取当前组合的持仓快照列表，作为需要刷新的股票集合
         List<HoldingSnapshot> snaps = holdingService.getSnapshots(pid);
-        // 逐只股票调用实时报价服务，触发抓取并刷新内存缓存
-        for (HoldingSnapshot snap : snaps) {
-            Stock s = stockDao.findBySymbol(snap.getStockSymbol());
-            if (s != null) quoteService.getPrice(s);
-        }
         // count 字段返回实际刷新的持仓数，便于前端展示刷新进度提示
         return Map.of("status", "ok", "count", String.valueOf(snaps.size()));
     }

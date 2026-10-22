@@ -2,7 +2,7 @@ export interface Stock {
   id: number
   symbol: string
   name: string
-  market: 'SH' | 'SZ' | 'HK' | 'US' | 'JP' | 'KR' | 'GB' | 'DE' | 'FR' | 'TW' | 'SG' | 'IN' | 'AU' | 'CA' | 'BR' | 'IDX' | 'CMD' | 'CCY'
+  market: 'SH' | 'SZ' | 'BJ' | 'HK' | 'US' | 'JP' | 'KR' | 'GB' | 'DE' | 'FR' | 'TW' | 'SG' | 'IN' | 'AU' | 'CA' | 'BR' | 'IDX' | 'CMD' | 'CCY'
   currency: string
 }
 
@@ -18,6 +18,10 @@ export interface Holding {
 }
 
 export interface HoldingSnapshot {
+  priceLive?: boolean
+  nativeChangeToday?: number | null
+  priceTimestamp?: string | null
+  priceSource?: string | null
   portfolioId: number
   stockId: number
   stockSymbol: string
@@ -149,6 +153,10 @@ export interface StockDetailResponse {
   transactions: Transaction[]
   dividends: Dividend[]
   livePrice?: number
+  priceLive?: boolean
+  priceSource?: string | null
+  liveChangePct?: number | null
+  livePreviousClose?: number | null
   livePriceTs?: string
 }
 

@@ -1,3 +1,6 @@
+import QuoteNumber from '@/components/QuoteNumber'
+import { useTimedRefresh } from '@/hooks/use-timed-refresh'
+import QuoteWarning from '@/components/QuoteWarning'
 import { useEffect, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
@@ -8,7 +11,7 @@ import type { StockDetailResponse, Transaction, Dividend, PriceData, HoldingCorr
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot, Legend, Line } from 'recharts'
 import type { ValueType, NameType } from 'recharts/types/component/DefaultTooltipContent'
-import { displaySymbol, fmtPriceTs } from '@/lib/format'
+import { displaySymbol } from '@/lib/format'
 
 // Benchmarks per market (proper names, not translated)
 const BENCHMARKS: Record<string, { symbol: string; name: string }[]> = {
@@ -68,7 +71,7 @@ export default function StockDetail() {
     }).catch(() => { /* Keep the last valid data if a refresh fails. */ })
       .finally(() => { if (!cancelled) setLoadedRequest(requestKey) })
     // Check watchlist status
-    fetch(`${BASE}/api/watchlist`, { credentials: 'include' })
+    fetch(`${BASE}/api/watchlist?quotes=false`, { credentials: 'include' })
       .then(r => r.json() as Promise<{ id: number; symbol: string }[]>).then((list) => {
         if (cancelled) return
         const found = list.find((w) => w.symbol === symbol)
@@ -79,6 +82,11 @@ export default function StockDetail() {
     getHoldingsCorrelation(symbol).then(value => { if (!cancelled) setCorrelations(value) }).catch(() => {})
     return () => { cancelled = true }
   }, [symbol, portfolioId, chartParams, benchmark, requestKey])
+
+  useTimedRefresh(async () => {
+    if (!symbol || !portfolioId) return
+    setData(await getStockDetail(symbol))
+  }, `${symbol}:${portfolioId}`)
 
   if (loading) {
     return (
@@ -97,10 +105,10 @@ export default function StockDetail() {
   // prevClose: when live price available, compare against last historical close (yesterday);
   // otherwise fall back to second-to-last so the chart-only case still shows a change %.
   const prevClose = livePrice != null
-    ? lastClose
+    ? data?.livePreviousClose ?? (data?.priceSource === 'hithink_finance_api' ? null : lastClose)
     : priceData.length > 1 ? Number(priceData[priceData.length - 2].close) : null
-  const changePct = currentPrice != null && prevClose != null && prevClose > 0
-    ? ((currentPrice - prevClose) / prevClose * 100) : null
+  const changePct = data?.liveChangePct ?? (currentPrice != null && prevClose != null && prevClose > 0
+    ? ((currentPrice - prevClose) / prevClose * 100) : null)
   const priceUp = changePct != null ? changePct >= 0 : true
   const chartColor = priceUp ? positiveHex : negativeHex
   const transactions = data?.transactions || []
@@ -138,18 +146,14 @@ export default function StockDetail() {
                         || sym === 'HSI.HK' || sym === 'HSCE.HK' || sym === 'HSTECH.HK'
                         || sym === 'GSPC.US' || sym === 'DJI.US' || sym === 'IXIC.US') return ''
                     return stock?.currency === 'CNY' ? '¥' : stock?.currency === 'HKD' ? 'HK$' : '$'
-                  })()}{currentPrice.toFixed(2)}
+                  })()}<QuoteNumber value={currentPrice} />
                 </span>
                 {changePct != null && (
                   <span className={`text-lg font-semibold tabular-nums ${changePct >= 0 ? positiveClass : negativeClass}`}>
-                    {changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%
+                    <QuoteNumber value={changePct} signed suffix="%" />
                   </span>
                 )}
-                {data?.livePriceTs && (
-                  <span className="text-xs text-slate-400 self-end mb-0.5">
-                    {fmtPriceTs(data.livePriceTs)}
-                  </span>
-                )}
+                <QuoteWarning live={data?.priceLive} timestamp={data?.livePriceTs} />
               </>
             )}
           </div>
@@ -172,7 +176,7 @@ export default function StockDetail() {
             const stocks = await searchStocks(sym)
             if (stocks.length > 0) {
               const form = new URLSearchParams({ stockId: stocks[0].id })
-              await fetch(`${BASE}/api/watchlist`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
+              await fetch(`${BASE}/api/watchlist?quotes=false`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form })
               setWatching(true)
             }
           }

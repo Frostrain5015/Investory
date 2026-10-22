@@ -24,7 +24,7 @@ import java.util.*;
  *   <li>加载并缓存汇率表，将多币种资产统一折算为人民币（CNY）进行展示</li>
  * </ul>
  *
- * <p>价格优先级：实时行情（RealtimeQuoteService）> T-1 收盘价 > 持仓均价（兜底）。
+ * <p>价格优先级：最新报价快照（RealtimeQuoteService）> 本地收盘价 > 持仓均价（兜底）。
  */
 @Service
 public class HoldingService {
@@ -91,10 +91,17 @@ public class HoldingService {
      * @param portfolioId 投资组合 ID
      * @return 该组合下所有持仓股票的快照列表；若持仓为空则返回空列表
      */
-    public List<HoldingSnapshot> getSnapshots(long portfolioId) {
+    public List<HoldingSnapshot> getSnapshots(long portfolioId) { return getSnapshots(portfolioId, true); }
+    public List<HoldingSnapshot> getSnapshots(long portfolioId, boolean refreshQuotes) {
         // 第1步：查询该组合下全部持仓记录
         List<Holding> holdings = holdingDao.findByPortfolio(portfolioId);
         List<HoldingSnapshot> snapshots = new ArrayList<>();
+        Map<Long,Stock> stocks = new HashMap<>();
+        for (Holding holding : holdings) {
+            Stock stock = stockDao.findById(holding.getStockId());
+            if (stock != null) stocks.put(stock.getId(), stock);
+        }
+        Map<String,Quote> quotes = refreshQuotes ? quoteService.getQuotes(new ArrayList<>(stocks.values())) : Map.of();
 
         // Load exchange rates to CNY
         // 第2步：加载各币种到人民币的汇率（当日缓存，避免重复查库）
@@ -102,7 +109,7 @@ public class HoldingService {
 
         for (Holding h : holdings) {
             // 第3步：查询股票基本信息（市场、币种等）
-            Stock stock = stockDao.findById(h.getStockId());
+            Stock stock = stocks.get(h.getStockId());
             if (stock == null) continue; // 股票信息缺失，跳过该持仓
 
             BigDecimal rate = toCny.getOrDefault(stock.getCurrency(), BigDecimal.ONE); // 该股票对应的 CNY 换算率
@@ -125,16 +132,20 @@ public class HoldingService {
 
             // Get price (before any conversion)
             // 第6步：优先尝试获取实时行情价格
-            Quote quote = quoteService.getQuote(stock);
-            boolean hasLivePrice = quote != null; // 是否有实时行情
-            BigDecimal price = hasLivePrice ? quote.price() : null;
-            if (hasLivePrice) {
-                snap.setPriceTimestamp(quote.fetchedAt().toString()); // 记录实时价格的抓取时间
+            Quote quote = quotes.get(stock.getSymbol());
+            boolean hasQuote = quote != null; // 是否有实时行情
+            BigDecimal price = hasQuote ? quote.price() : null;
+            if (hasQuote) {
+                snap.setPriceTimestamp(quote.quoteTime() == null ? null : quote.quoteTime().toString());
+                snap.setPriceSource(quote.source());
+                snap.setPriceLive(quote.live());
             } else if (t1 != null) {
                 // 无实时行情时降级到 T-1 收盘价
                 price = t1.getClose();
+                snap.setPriceSource("database");
                 snap.setPriceTimestamp(t1.getTradeDate().toString());
             }
+            if (price == null) snap.setPriceSource("cost");
             price = price != null ? price : h.getAvgCost(); // 最终兜底：用均价代替，防止空指针
 
             // Native values (original currency, before CNY conversion)
@@ -160,11 +171,15 @@ public class HoldingService {
             // - Market closed (no live price):       T-1 close vs T-2 close
             // 第9步：计算当日涨跌金额和涨跌幅
             // 盘中用实时价对比 T-1 收盘；收盘后用 T-1 对比 T-2
-            BigDecimal currentForChange = hasLivePrice ? price : (t1 != null ? t1.getClose() : null); // 用于计算涨跌的"今价"
-            BigDecimal prevClose        = hasLivePrice ? (t1 != null ? t1.getClose() : null)
-                                                       : (t2 != null ? t2.getClose() : null);          // 用于计算涨跌的"昨收"
+            BigDecimal currentForChange = hasQuote ? price : (t1 != null ? t1.getClose() : null); // 用于计算涨跌的"今价"
+            BigDecimal prevClose = hasQuote
+                ? (quote.previousClose() != null ? quote.previousClose()
+                    : "hithink_finance_api".equals(quote.source()) ? null : t1 != null ? t1.getClose() : null)
+                : t2 != null ? t2.getClose() : null;
+            if (hasQuote && quote.change() != null) prevClose = price.subtract(quote.change());
             if (currentForChange != null && prevClose != null && prevClose.compareTo(BigDecimal.ZERO) > 0) {
                 BigDecimal changePerShare = currentForChange.subtract(prevClose); // 每股涨跌额
+                snap.setNativeChangeToday(changePerShare);
                 // 当日持仓盈亏金额 = 每股涨跌 × 持仓股数 × 汇率（转 CNY）
                 snap.setChangeToday(changePerShare.multiply(h.getTotalShares()).multiply(rate).setScale(2, RoundingMode.HALF_UP));
                 // 当日涨跌幅（%）= 每股涨跌 / 昨收 × 100
@@ -172,6 +187,7 @@ public class HoldingService {
                         .multiply(new BigDecimal("100")).setScale(2, RoundingMode.HALF_UP));
             }
 
+            if (hasQuote && quote.changePct() != null) snap.setChangePctToday(quote.changePct());
             snapshots.add(snap);
         }
         return snapshots;

@@ -10,12 +10,13 @@ import java.util.concurrent.*;
 /** One shared bounded refresh; no trading, database writes, or continuous poller. */
 @Service
 public class WorldMarketService {
-    static final Duration CACHE_TTL = Duration.ofSeconds(90);
+    static final Duration CACHE_TTL = Duration.ofSeconds(25);
     private final HithinkDataClient hithink;
     private final LegacyWorldMarketClient legacy;
     private final ExecutorService executor;
     private final Clock clock;
     private Snapshot cache;
+    private Instant lastRefreshStarted=Instant.MIN;
     public record Snapshot(List<WorldMarketQuote> indices, List<WorldMarketQuote> indicators, Instant updatedAt,
                            List<String> sources, String hithinkStatus, String hithinkError) { }
     @Autowired
@@ -27,7 +28,8 @@ public class WorldMarketService {
         this.hithink = hithink; this.legacy = legacy; this.executor = executor; this.clock = clock;
     }
     public synchronized Snapshot snapshot() {
-        if (cache != null && Duration.between(cache.updatedAt(), clock.instant()).compareTo(CACHE_TTL) < 0) return cache;
+        if (cache != null && Duration.between(lastRefreshStarted, clock.instant()).compareTo(CACHE_TTL) < 0) return cache;
+        lastRefreshStarted=clock.instant();
         Map<String, WorldMarketQuote> previous = new HashMap<>();
         if (cache != null) {
             cache.indices().forEach(quote -> previous.put(quote.symbol(), quote));

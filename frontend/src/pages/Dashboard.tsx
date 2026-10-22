@@ -1,3 +1,4 @@
+import QuoteNumber from '@/components/QuoteNumber'
 import { useEffect, useState, useCallback } from 'react'
 import { useCountUp } from '@/hooks/use-count-up'
 import { useTheme } from '@/hooks/use-theme'
@@ -16,8 +17,9 @@ import {
   AreaChart, Area, Tooltip, ResponsiveContainer
 } from 'recharts'
 import { getDashboard, getPortfolios } from '@/services/api'
-import { displaySymbol, fmtPriceTs, formatSignedAmount } from '@/lib/format'
+import { displaySymbol, formatSignedAmount } from '@/lib/format'
 import CloudChart from '@/components/CloudChart'
+import QuoteWarning from '@/components/QuoteWarning'
 import ClosedPositions from '@/components/ClosedPositions'
 import { useT } from '@/i18n/I18nContext'
 import { BASE } from '@/services/api'
@@ -29,7 +31,8 @@ interface Snapshot {
   currentPrice: number; marketValue: number; unrealizedPnl: number; unrealizedPnlPct: number
   changeToday: number; changePctToday: number
   nativePrice: number; nativeAvgCost: number; nativeInvested: number; nativeMarketValue: number; nativeUnrealizedPnl: number
-  priceTimestamp?: string
+  priceLive?: boolean
+  priceTimestamp?: string | null
 }
 
 const COLORS = [
@@ -72,7 +75,7 @@ function DashboardContent() {
 
   const loadDashboard = useCallback(() => {
     if (!portfolioId) return
-    Promise.all([
+    return Promise.all([
       getDashboard(),
       chartAPI.cumulativeReturn(portfolioId, cumParams.days, cumParams.start, cumParams.end),
     ]).then(([dash, cum]) => {
@@ -106,10 +109,7 @@ function DashboardContent() {
 
   useEffect(() => { loadDashboard() }, [loadDashboard])
 
-  const [lastRefresh, markRefreshed] = useTimedRefresh(() => {
-    fetch(`${BASE}/api/portfolio/refresh`, { method: 'POST', credentials: 'include' })
-    loadDashboard()
-  })
+  const [lastRefresh, markRefreshed] = useTimedRefresh(loadDashboard, String(portfolioId))
 
   const animTotalAsset    = useCountUp(totals.totalMarketValue + totals.cashBalance)
   const animMarketValue   = useCountUp(totals.totalMarketValue)
@@ -473,17 +473,17 @@ function DashboardContent() {
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums">{s.totalShares}</td>
                       <td className="px-3 py-3 text-right tabular-nums">
-                        <div>{fmtVal(price)}</div>
-                        {s.priceTimestamp && <div className="text-[10px] text-slate-400">{fmtPriceTs(s.priceTimestamp)}</div>}
+                        <span className="inline-flex items-center gap-1"><QuoteNumber value={price} format={fmtVal} />
+                        <QuoteWarning live={s.priceLive} timestamp={s.priceTimestamp} /></span>
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums">{fmtVal(cost)}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{fmtVal(diluted)}</td>
-                      <td className="px-3 py-3 text-right font-medium tabular-nums">{fmtVal(mv)}</td>
+                      <td className="px-3 py-3 text-right font-medium tabular-nums"><QuoteNumber value={mv} format={fmtVal} /></td>
                       <td className={`px-3 py-3 text-right font-medium tabular-nums ${pnl >= 0 ? positiveClass : negativeClass}`}>
-                        {formatSignedAmount(pnl, fmtVal)}
+                        <QuoteNumber value={pnl} format={value => formatSignedAmount(value, fmtVal)} />
                       </td>
                       <td className={`px-6 py-3 text-right font-medium tabular-nums ${s.unrealizedPnlPct >= 0 ? positiveClass : negativeClass}`}>
-                        {s.unrealizedPnlPct >= 0 ? '+' : ''}{s.unrealizedPnlPct}%
+                        <QuoteNumber value={s.unrealizedPnlPct} signed suffix="%" />
                       </td>
                     </tr>
                   )})}
@@ -510,7 +510,7 @@ function DashboardContent() {
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{s.market}</span>
                       </div>
                       <span className={`text-sm font-semibold tabular-nums ${s.unrealizedPnlPct >= 0 ? positiveClass : negativeClass}`}>
-                        {s.unrealizedPnlPct >= 0 ? '+' : ''}{s.unrealizedPnlPct}%
+                        <QuoteNumber value={s.unrealizedPnlPct} signed suffix="%" />
                       </span>
                     </div>
                     <div className="flex justify-between text-sm text-slate-600 mb-1">
@@ -520,7 +520,7 @@ function DashboardContent() {
                     <details className="mt-1">
                       <summary className="text-xs text-slate-400 cursor-pointer select-none">{t.common.more}</summary>
                       <div className="mt-2 space-y-1 text-xs text-slate-500">
-                        <div className="flex justify-between"><span>{t.holdings.pnl}</span><span className={`tabular-nums ${pnl >= 0 ? positiveClass : negativeClass}`}>{formatSignedAmount(pnl, fmtVal)}</span></div>
+                        <div className="flex justify-between"><span>{t.holdings.pnl}</span><span className={`tabular-nums ${pnl >= 0 ? positiveClass : negativeClass}`}><QuoteNumber value={pnl} format={value => formatSignedAmount(value, fmtVal)} /></span></div>
                         <div className="flex justify-between"><span>{t.holdings.avgCost}</span><span className="tabular-nums">{fmtVal(cost)}</span></div>
                         <div className="flex justify-between"><span>{t.dashboard.dilutedCost}</span><span className="tabular-nums">{fmtVal(diluted)}</span></div>
                         <div className="flex justify-between"><span>{t.holdings.invested}</span><span className="tabular-nums">{fmtVal(invested)}</span></div>

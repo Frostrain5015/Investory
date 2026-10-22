@@ -50,7 +50,7 @@ export function usePortfolioPreload() {
 
     ;(async () => {
       try {
-        const holdRes = await fetch(`${BASE}/api/holdings`, { credentials: 'include', signal: controller.signal })
+        const holdRes = await fetch(`${BASE}/api/holdings?quotes=false`, { credentials: 'include', signal: controller.signal })
         if (!holdRes.ok) { console.error('[preload] holdings fetch failed:', holdRes.status); return }
         const holdData = (await holdRes.json()) as HoldingsResponse
         const snaps = holdData.snapshots || []

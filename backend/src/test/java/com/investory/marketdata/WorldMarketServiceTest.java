@@ -62,6 +62,14 @@ class WorldMarketServiceTest {
         assertEquals("DATA_MISSING_ITEMS", result.indices().get(1).fallbackReason());
         verify(hithink, times(1)).indexSnapshot(anyList());
     }
+    @Test void slowRefreshExpiresFromRequestStartForThirtySecondPolling() {
+        doAnswer(call -> { clock.now=clock.now.plusSeconds(18); return batch("000001.SH", "399001.SZ", "399006.SZ"); })
+            .when(hithink).indexSnapshot(anyList());
+        service.snapshot();
+        clock.now=clock.now.plusSeconds(12);
+        service.snapshot();
+        verify(hithink,times(2)).indexSnapshot(anyList());
+    }
     @Test void keepsLastGoodQuotesAndTheirOriginalTimesOnFailureThenExpiresThem() {
         var first = service.snapshot();
         clock.now = clock.now.plusSeconds(91);

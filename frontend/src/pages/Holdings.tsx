@@ -1,3 +1,4 @@
+import QuoteNumber from '@/components/QuoteNumber'
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
@@ -5,18 +6,19 @@ import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
 import { BASE, searchStocks, chartAPI } from '@/services/api'
 import { Card, CardContent } from '@/components/ui/card'
-import { displaySymbol, fmtPriceTs } from '@/lib/format'
+import { displaySymbol } from '@/lib/format'
+import QuoteWarning from '@/components/QuoteWarning'
 import Sparkline from '@/components/Sparkline'
 import { useT } from '@/i18n/I18nContext'
 import type { StockSearchItem, PriceData, HoldingsResponse, HoldingSnapshot } from '@/types'
 import { Search, X, Plus, GripVertical } from 'lucide-react'
 
-interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number; changeToday?: number; changePctToday?: number; priceTimestamp?: string }
+interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number | null; changeToday?: number | null; changePctToday?: number | null; priceTimestamp?: string | null; priceLive?: boolean }
 
 interface MarketGroup { key: string; label: string; flag: string; items: WatchItem[] }
 
 function marketToGroup(market: string): string {
-  if (market === 'SH' || market === 'SZ') return 'A'
+  if (market === 'SH' || market === 'SZ' || market === 'BJ') return 'A'
   return market
 }
 
@@ -103,12 +105,11 @@ function HoldingsContent() {
 
   const load = useCallback(() => {
     if (!portfolioId) return
-    Promise.all([
+    return Promise.all([
       fetch(`${BASE}/api/holdings`, { credentials: 'include' }).then(r => r.json() as Promise<HoldingsResponse>),
       fetch(`${BASE}/api/watchlist`, { credentials: 'include' }).then(r => r.json() as Promise<WatchItem[]>),
     ]).then(([hData, wData]) => {
-      // 后端快照可能附带 priceTimestamp（未在 HoldingSnapshot 中声明），故按需扩展类型
-      const held = (hData.snapshots || []) as (HoldingSnapshot & { priceTimestamp?: string })[]
+      const held: HoldingSnapshot[] = hData.snapshots || []
       const heldById = new Map(held.map(s => [s.stockId, s]))
       const watchItems = wData || []
 
@@ -118,8 +119,9 @@ function HoldingsContent() {
       for (const s of held) {
         merged.push({
           id: -(s.stockId), stock_id: s.stockId, symbol: s.stockSymbol, name: s.stockName,
-          market: s.market, currency: s.currency || '', price: s.currentPrice || 0,
-          changeToday: s.changeToday ?? 0, changePctToday: s.changePctToday ?? 0,
+          market: s.market, currency: s.currency || '', price: s.nativePrice ?? s.currentPrice,
+          changeToday: s.nativeChangeToday ?? null, changePctToday: s.changePctToday,
+          priceLive: s.priceLive,
           priceTimestamp: s.priceTimestamp,
         })
       }
@@ -130,14 +132,11 @@ function HoldingsContent() {
       }
 
       setItems(merged)
-    }).finally(() => setLoading(false))
+    }).catch(() => {}).finally(() => setLoading(false))
   }, [portfolioId])
 
   useEffect(() => { load() }, [load])
-  const [lastRefresh] = useTimedRefresh(() => {
-    fetch(`${BASE}/api/portfolio/refresh`, { method: 'POST', credentials: 'include' })
-    load()
-  })
+  const [lastRefresh] = useTimedRefresh(load)
 
   useEffect(() => { if (query.length >= 1) searchStocks(query).then(setResults) }, [query])
 
@@ -242,9 +241,12 @@ function HoldingsContent() {
                     <tbody>
                       {group.items.map((item, idx) => {
                         const valid = item.price != null && Number(item.price) !== 0
-                        const chg = Number(item.changeToday ?? 0)
-                        const chgPct = Number(item.changePctToday ?? 0)
+                        const chg = Number(item.changeToday)
+                        const hasChange = item.changeToday != null && Number.isFinite(chg)
+                        const chgPct = Number(item.changePctToday)
+                        const hasPct = item.changePctToday != null && Number.isFinite(chgPct)
                         const up = chg >= 0
+                        const pctUp = chgPct >= 0
                         return (
                           <tr key={`${item.stock_id}-${item.id}`}
                             draggable={managing}
@@ -267,14 +269,13 @@ function HoldingsContent() {
                                 : <div className="w-[60px] h-6 bg-slate-50 rounded" />}
                             </td>
                             <td className="px-3 py-3 text-right tabular-nums">
-                              <div>{valid ? Number(item.price).toFixed(2) : '—'}</div>
-                              {item.priceTimestamp && <div className="text-[10px] text-slate-400">{fmtPriceTs(item.priceTimestamp)}</div>}
+                              <div className="inline-flex items-center gap-1"><QuoteNumber value={valid ? Number(item.price) : null} />{valid && <QuoteWarning live={item.priceLive} timestamp={item.priceTimestamp} />}</div>
                             </td>
-                            <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
-                              {valid ? `${up ? '+' : ''}${chg.toFixed(2)}` : '—'}
+                            <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid && hasChange ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
+                              <QuoteNumber value={valid && hasChange ? chg : null} signed />
                             </td>
-                            <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
-                              {valid ? `${up ? '+' : ''}${chgPct.toFixed(2)}%` : '—'}
+                            <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid && hasPct ? (pctUp ? positiveClass : negativeClass) : 'text-slate-400'}`}>
+                              <QuoteNumber value={valid && hasPct ? chgPct : null} signed suffix="%" />
                             </td>
                             <td className="px-3 py-3 text-right">
                               {managing && (
@@ -292,9 +293,12 @@ function HoldingsContent() {
                 <div className="lg:hidden divide-y divide-slate-50">
                   {group.items.map((item) => {
                     const valid = item.price != null && Number(item.price) !== 0
-                    const chg = Number(item.changeToday ?? 0)
-                    const chgPct = Number(item.changePctToday ?? 0)
+                    const chg = Number(item.changeToday)
+                    const hasChange = item.changeToday != null && Number.isFinite(chg)
+                    const chgPct = Number(item.changePctToday)
+                    const hasPct = item.changePctToday != null && Number.isFinite(chgPct)
                     const up = chg >= 0
+                    const pctUp = chgPct >= 0
                     return (
                       <div key={`${item.stock_id}-${item.id}`} className="px-4 py-3">
                         <div className="flex items-center justify-between mb-1.5">
@@ -302,18 +306,19 @@ function HoldingsContent() {
                             {managing && <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
                             <Link to={`/stock?symbol=${encodeURIComponent(item.symbol)}`}
                               className="font-medium text-slate-900 hover:text-blue-600 truncate max-w-[180px]">{item.name}</Link>
+                            {valid && <QuoteWarning live={item.priceLive} timestamp={item.priceTimestamp} />}
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">{item.market}</span>
                           </div>
-                          <span className={`text-sm font-semibold tabular-nums shrink-0 ${valid ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
-                            {valid ? `${up ? '+' : ''}${chgPct.toFixed(2)}%` : '—'}
+                          <span className={`text-sm font-semibold tabular-nums shrink-0 ${valid && hasPct ? (pctUp ? positiveClass : negativeClass) : 'text-slate-400'}`}>
+                            <QuoteNumber value={valid && hasPct ? chgPct : null} signed suffix="%" />
                           </span>
                         </div>
                         <details className="mt-1">
                           <summary className="text-xs text-slate-400 cursor-pointer select-none">{t.common.more}</summary>
                           <div className="mt-2 space-y-1 text-xs text-slate-500">
-                            <div className="flex justify-between"><span>{t.stockDetail.price}</span><span className="tabular-nums">{valid ? Number(item.price).toFixed(2) : '—'}</span></div>
-                            <div className="flex justify-between"><span>{t.market.change}</span><span className={`tabular-nums ${up ? positiveClass : negativeClass}`}>{valid ? `${up ? '+' : ''}${chg.toFixed(2)}` : '—'}</span></div>
-                            <div className="flex justify-between"><span>{t.market.changePct}</span><span className={`tabular-nums ${up ? positiveClass : negativeClass}`}>{valid ? `${up ? '+' : ''}${chgPct.toFixed(2)}%` : '—'}</span></div>
+                            <div className="flex justify-between"><span>{t.stockDetail.price}</span><span className="tabular-nums"><QuoteNumber value={valid ? Number(item.price) : null} /></span></div>
+                            <div className="flex justify-between"><span>{t.market.change}</span><span className={`tabular-nums ${hasChange ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}><QuoteNumber value={valid && hasChange ? chg : null} signed /></span></div>
+                            <div className="flex justify-between"><span>{t.market.changePct}</span><span className={`tabular-nums ${hasPct ? (pctUp ? positiveClass : negativeClass) : 'text-slate-400'}`}><QuoteNumber value={valid && hasPct ? chgPct : null} signed suffix="%" /></span></div>
                             {managing && (
                               <div className="pt-1"><button onClick={() => removeWatch(item.stock_id)}
                                 className="text-xs text-red-500">{t.common.delete}</button></div>

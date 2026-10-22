@@ -1,40 +1,33 @@
 import { useEffect, useRef, useState } from 'react'
 
-export function useTimedRefresh(fn: () => void): [Date | null, () => void] {
+/** Poll only the mounted, foreground page; never overlap slow refreshes. */
+export function useTimedRefresh(fn: () => void | Promise<unknown>, scope = ''): [Date | null, () => void] {
   const fnRef = useRef(fn)
   useEffect(() => { fnRef.current = fn }, [fn])
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
-
   const markRefreshed = () => setLastRefresh(new Date())
-
   useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null
-    let interval: ReturnType<typeof setInterval> | null = null
-
-    function schedule() {
-      const now = new Date()
-      const m = now.getMinutes()
-      const s = now.getSeconds()
-      const ms = now.getMilliseconds()
-      const mod = m % 5
-      const secondsToNext = (4 - mod) * 60 + (60 - s) - ms / 1000
-      const delayMs = Math.max(200, Math.round(secondsToNext * 1000))
-
-      timer = setTimeout(() => {
-        fnRef.current()
-        setLastRefresh(new Date())
-        interval = setInterval(() => { fnRef.current(); setLastRefresh(new Date()) }, 5 * 60 * 1000)
-      }, delayMs)
+    let pending = false
+    let disposed = false
+    let lastAttempt = Date.now()
+    let timer: ReturnType<typeof setInterval> | undefined
+    async function refresh() {
+      if (disposed || pending || document.visibilityState === 'hidden') return
+      pending = true
+      lastAttempt = Date.now()
+      try { await fnRef.current(); if (!disposed) setLastRefresh(new Date()) }
+      catch { /* Keep the last result; the page owns its error presentation. */ }
+      finally { pending = false }
     }
-
-    schedule()
-
-    return () => {
-      if (timer) clearTimeout(timer)
-      if (interval) clearInterval(interval)
+    function start() { if (timer) clearInterval(timer); timer = setInterval(() => { void refresh() }, 30_000) }
+    function visibility() {
+      if (document.visibilityState === 'hidden') { if (timer) clearInterval(timer); timer = undefined }
+      else { if (Date.now() - lastAttempt >= 30_000) void refresh(); start() }
     }
-  }, [])
-
+    if (document.visibilityState !== 'hidden') start()
+    document.addEventListener('visibilitychange', visibility)
+    return () => { disposed = true; if (timer) clearInterval(timer); document.removeEventListener('visibilitychange', visibility) }
+  }, [scope])
   return [lastRefresh, markRefreshed]
 }
 

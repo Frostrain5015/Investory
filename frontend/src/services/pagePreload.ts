@@ -106,7 +106,7 @@ function cachePromise<T>(
 }
 
 export function getPreloadedMarketSnapshot(options: { force?: boolean } = {}) {
-  if (marketSnapshotPromise && (marketSnapshotPending || (!options.force && Date.now() - marketSnapshotLoadedAt < 90_000))) return marketSnapshotPromise
+  if (marketSnapshotPromise && (marketSnapshotPending || (!options.force && Date.now() - marketSnapshotLoadedAt < 20_000))) return marketSnapshotPromise
   marketSnapshotPending = true
   const next = jsonRequest<PreloadMarketSnapshot>('/api/market/indices').then(data => {
     marketSnapshotLoadedAt = Date.now()
@@ -170,7 +170,6 @@ export function getPreloadedAdminCrawlHistory(options: { force?: boolean } = {})
 
 export function preloadWorldMarketPage() {
   marketPagePromise ||= import('@/pages/Market')
-  void getPreloadedMarketSnapshot().catch(() => {})
   void getPreloadedMarketNews().catch(() => {})
   void getPreloadedWorldMap().catch(() => {})
 }

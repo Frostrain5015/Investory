@@ -82,6 +82,16 @@ public class HoldingSnapshot {
     private BigDecimal changePctToday;
 
     /** 实时价格的抓取时间戳，ISO-8601 UTC 格式，例如 "2026-05-28T09:30:00Z" */
+    private boolean priceLive;
+    private BigDecimal nativeChangeToday;
+    public BigDecimal getNativeChangeToday() { return nativeChangeToday; }
+    public void setNativeChangeToday(BigDecimal change) { nativeChangeToday = change; }
+    private String priceSource;
+    public boolean isPriceLive() { return priceLive; }
+    public void setPriceLive(boolean live) { priceLive = live; }
+    public String getPriceSource() { return priceSource; }
+    public void setPriceSource(String source) { priceSource = source; }
+
     private String priceTimestamp; // ISO-8601 UTC instant when the live price was fetched
 
     /** 无参构造器，供序列化框架及测试使用 */
