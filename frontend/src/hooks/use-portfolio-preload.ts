@@ -10,6 +10,7 @@ interface HoldingSnapshot {
   marketValue?: number
   marketValueCny?: number
   totalInvested?: number
+  priceSource?: string | null
 }
 
 interface HoldingsResponse {
@@ -55,6 +56,9 @@ export function usePortfolioPreload() {
         const holdData = (await holdRes.json()) as HoldingsResponse
         const snaps = holdData.snapshots || []
         if (snaps.length === 0) { console.log('[preload] no holdings, skipping'); return }
+        // Background reads never fetch quotes. A cold cache must not turn cost
+        // estimates into market-value weights or a cached risk assessment.
+        if (snaps.some(h => h.priceSource === 'cost' || h.priceSource === 'unavailable')) return
 
         if (!cancelled) {
           analysingBubbleTimer = setTimeout(() => {

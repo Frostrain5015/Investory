@@ -56,6 +56,9 @@ function RiskSectionContent() {
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
       const holdings = ((await response.json()) as HoldingsResponse).snapshots || []
       if (holdings.length === 0) return { _error: 'no holdings' }
+      if (holdings.some(holding => holding.priceSource === 'cost' || holding.priceSource === 'unavailable')) {
+        return { _error: '部分持仓暂时无法获取报价，请稍后刷新分析。' }
+      }
       const total = holdings.reduce(
         (sum, holding) => sum + (holding.marketValue ?? holding.totalInvested ?? 0),
         0,

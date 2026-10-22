@@ -33,6 +33,7 @@ interface Snapshot {
   nativePrice: number; nativeAvgCost: number; nativeInvested: number; nativeMarketValue: number; nativeUnrealizedPnl: number
   priceLive?: boolean
   priceTimestamp?: string | null
+  priceSource?: string | null
 }
 
 const COLORS = [
@@ -474,7 +475,7 @@ function DashboardContent() {
                       <td className="px-3 py-3 text-right tabular-nums">{s.totalShares}</td>
                       <td className="px-3 py-3 text-right tabular-nums">
                         <span className="inline-flex items-center gap-1"><QuoteNumber value={price} format={fmtVal} />
-                        <QuoteWarning live={s.priceLive} timestamp={s.priceTimestamp} /></span>
+                        <QuoteWarning live={s.priceLive} timestamp={s.priceTimestamp} source={s.priceSource} /></span>
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums">{fmtVal(cost)}</td>
                       <td className="px-3 py-3 text-right tabular-nums">{fmtVal(diluted)}</td>

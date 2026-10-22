@@ -2,7 +2,7 @@
 """
 Resident StockSage engine.
 
-Imports the heavy analysis stack (akshare / baostock / pandas / research / factors)
+Imports the heavy analysis stack (akshare / pandas / research / factors)
 ONCE at process start, then serves the same bridge commands over a local HTTP
 socket. This removes the per-call cold start that the subprocess model paid on
 every factor/regime/scan request.

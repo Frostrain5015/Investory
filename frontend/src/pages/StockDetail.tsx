@@ -100,13 +100,10 @@ export default function StockDetail() {
   const stock = data?.stock
   const holding = data?.holding
   const livePrice = data?.livePrice != null ? Number(data.livePrice) : null
-  const lastClose = priceData.length > 0 ? Number(priceData[priceData.length - 1].close) : null
-  const currentPrice = livePrice ?? lastClose
-  // prevClose: when live price available, compare against last historical close (yesterday);
-  // otherwise fall back to second-to-last so the chart-only case still shows a change %.
-  const prevClose = livePrice != null
-    ? data?.livePreviousClose ?? (data?.priceSource === 'hithink_finance_api' ? null : lastClose)
-    : priceData.length > 1 ? Number(priceData[priceData.length - 2].close) : null
+  const currentPrice = livePrice
+  // Current quote and movement share the provider snapshot. Chart history is
+  // independent and must never fill a missing current quote or previous close.
+  const prevClose = data?.livePreviousClose ?? null
   const changePct = data?.liveChangePct ?? (currentPrice != null && prevClose != null && prevClose > 0
     ? ((currentPrice - prevClose) / prevClose * 100) : null)
   const priceUp = changePct != null ? changePct >= 0 : true
@@ -156,6 +153,7 @@ export default function StockDetail() {
                 <QuoteWarning live={data?.priceLive} timestamp={data?.livePriceTs} />
               </>
             )}
+            {currentPrice == null && <span className="text-3xl font-bold text-slate-400"><QuoteNumber value={null} /></span>}
           </div>
           <p className="text-sm text-slate-500">{stock && displaySymbol(stock.symbol, stock.market)}</p>
         </div>

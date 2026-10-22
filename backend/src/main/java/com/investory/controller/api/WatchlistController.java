@@ -1,7 +1,6 @@
 package com.investory.controller.api;
 
 import com.investory.dao.StockDao;
-import com.investory.dao.StockPriceDao;
 import com.investory.model.Stock;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
@@ -18,7 +17,6 @@ public class WatchlistController {
 
     @Autowired private JdbcTemplate jdbc;
     @Autowired private StockDao stockDao;
-    @Autowired private StockPriceDao stockPriceDao;
     @Autowired private com.investory.crawler.RealtimeQuoteService quoteService;
 
     private long getUserId(HttpServletRequest req) {
@@ -44,10 +42,8 @@ public class WatchlistController {
             long id = ((Number)row.get("stock_id")).longValue();
             Stock stock = stocks.get(id);
             var quote = stock == null ? null : priceQuotes.get(stock.getSymbol());
-            var recent = stockPriceDao.findLatestTwo(id);
-            var close = recent.isEmpty() ? null : recent.get(0);
-            BigDecimal price = quote != null ? quote.price() : close != null ? close.getClose() : null;
-            BigDecimal previous = quote != null ? quote.previousClose() : recent.size()>1 ? recent.get(1).getClose() : null;
+            BigDecimal price = quote != null ? quote.price() : null;
+            BigDecimal previous = quote != null ? quote.previousClose() : null;
             if (quote != null && quote.change() != null) previous = price.subtract(quote.change());
             BigDecimal change = price != null && previous != null ? price.subtract(previous) : null;
             BigDecimal pct = quote != null ? quote.changePct() : null;
@@ -57,8 +53,8 @@ public class WatchlistController {
             row.put("changeToday", change);
             row.put("changePctToday", pct);
             row.put("priceLive", quote != null && quote.live());
-            row.put("priceSource", quote != null ? quote.source() : close != null ? "database" : null);
-            row.put("priceTimestamp", quote != null ? quote.quoteTime() : close != null ? close.getTradeDate() : null);
+            row.put("priceSource", quote != null ? quote.source() : "unavailable");
+            row.put("priceTimestamp", quote != null ? quote.quoteTime() : null);
         }
         return rows;
     }

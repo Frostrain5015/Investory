@@ -13,7 +13,7 @@ import { useT } from '@/i18n/I18nContext'
 import type { StockSearchItem, PriceData, HoldingsResponse, HoldingSnapshot } from '@/types'
 import { Search, X, Plus, GripVertical } from 'lucide-react'
 
-interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number | null; changeToday?: number | null; changePctToday?: number | null; priceTimestamp?: string | null; priceLive?: boolean }
+interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number | null; changeToday?: number | null; changePctToday?: number | null; priceTimestamp?: string | null; priceLive?: boolean; priceSource?: string | null }
 
 interface MarketGroup { key: string; label: string; flag: string; items: WatchItem[] }
 
@@ -122,6 +122,7 @@ function HoldingsContent() {
           market: s.market, currency: s.currency || '', price: s.nativePrice ?? s.currentPrice,
           changeToday: s.nativeChangeToday ?? null, changePctToday: s.changePctToday,
           priceLive: s.priceLive,
+          priceSource: s.priceSource,
           priceTimestamp: s.priceTimestamp,
         })
       }
@@ -269,7 +270,7 @@ function HoldingsContent() {
                                 : <div className="w-[60px] h-6 bg-slate-50 rounded" />}
                             </td>
                             <td className="px-3 py-3 text-right tabular-nums">
-                              <div className="inline-flex items-center gap-1"><QuoteNumber value={valid ? Number(item.price) : null} />{valid && <QuoteWarning live={item.priceLive} timestamp={item.priceTimestamp} />}</div>
+                              <div className="inline-flex items-center gap-1"><QuoteNumber value={valid ? Number(item.price) : null} />{valid && <QuoteWarning live={item.priceLive} timestamp={item.priceTimestamp} source={item.priceSource} />}</div>
                             </td>
                             <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid && hasChange ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}>
                               <QuoteNumber value={valid && hasChange ? chg : null} signed />
@@ -306,7 +307,7 @@ function HoldingsContent() {
                             {managing && <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
                             <Link to={`/stock?symbol=${encodeURIComponent(item.symbol)}`}
                               className="font-medium text-slate-900 hover:text-blue-600 truncate max-w-[180px]">{item.name}</Link>
-                            {valid && <QuoteWarning live={item.priceLive} timestamp={item.priceTimestamp} />}
+                            {valid && <QuoteWarning live={item.priceLive} timestamp={item.priceTimestamp} source={item.priceSource} />}
                             <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">{item.market}</span>
                           </div>
                           <span className={`text-sm font-semibold tabular-nums shrink-0 ${valid && hasPct ? (pctUp ? positiveClass : negativeClass) : 'text-slate-400'}`}>

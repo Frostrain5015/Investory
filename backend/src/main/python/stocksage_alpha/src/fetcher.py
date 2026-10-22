@@ -5,7 +5,7 @@ Data fetching module — wraps akshare with error handling and caching.
 import socket
 import threading
 
-socket.setdefaulttimeout(40)  # 40s cap on all socket ops (akshare HTTP + BaoStock TCP)
+socket.setdefaulttimeout(40)  # Legacy AKShare socket operations
 
 # 在导入 akshare 之前设置代理（akshare 内部 import requests 时即绑定环境变量）
 from common import setup_proxy as _setup_proxy
@@ -18,6 +18,18 @@ from typing import Optional
 import cache
 import traceback as _traceback
 from logger import get_logger as _get_logger
+
+# The same read-only adapter is used by script/ai_agent.py and this engine.
+# Locate the deployed /opt/investory/script or the repository script directory.
+from pathlib import Path as _Path
+import sys as _sys
+for _parent in _Path(__file__).resolve().parents:
+    _script = _parent / "script"
+    if (_script / "hithink_finance.py").is_file():
+        if str(_script) not in _sys.path:
+            _sys.path.append(str(_script))
+        break
+from hithink_finance import get_client as _hithink, HithinkError, SHANGHAI, SOURCE
 
 log = _get_logger("fetcher")
 
@@ -84,46 +96,8 @@ _spot_em_failed_at: float = 0.0
 _SPOT_RETRY_SEC = 300         # retry after 5 min (avoids permanent lock-out on transient failure)
 _HIST_RETRY_SEC = 1800        # retry failed price-history sources after 30 min
 
-# Source failure tracker: {source_key: [failed_bool, failed_at_float]}
-# Using list (mutable) so dict values can be updated without global declarations.
-# Thread-safety: multiple scanner threads can hit get_price_history simultaneously
-# and race on "check stale + reset" pattern. Use _src_fail_lock helpers below.
-_src_fail: dict[str, list] = {
-    "hist_em":  [False, 0.0],   # East Money daily
-    "hist_ts":  [False, 0.0],   # Tushare daily
-    "hist_tx":  [False, 0.0],   # Tencent Finance
-    "hist_bs":  [False, 0.0],   # BaoStock
-    "hist_tdx": [False, 0.0],   # TDX
-    "rt_tdx":   [False, 0.0],   # TDX real-time
-}
-_src_fail_lock = threading.Lock()
-
-
-def _src_skip(k: str, retry_sec: float = 0) -> bool:
-    """检查源 k 是否处于 fail 状态（应跳过）。retry_sec 用于自动重置过期 fail。
-
-    Returns True if source is currently 'failed' (caller should skip this source).
-    Atomically resets the failed flag when the retry window has elapsed.
-    """
-    import time as _t
-    with _src_fail_lock:
-        st = _src_fail.get(k)
-        if not st or not st[0]:
-            return False
-        if retry_sec > 0 and (_t.time() - st[1]) > retry_sec:
-            st[0] = False
-            return False
-        return True
-
-
-def _src_mark_fail(k: str) -> None:
-    """原子标记源 k 失败。"""
-    import time as _t
-    with _src_fail_lock:
-        st = _src_fail.get(k)
-        if st is not None:
-            st[1] = _t.time()
-            st[0] = True
+# The remaining breaker belongs only to the legacy real-time quote adapter.
+_src_fail: dict[str, list] = {"rt_tdx": [False, 0.0]}
 
 _ts_pro = None           # Tushare Pro API handle; initialised lazily from alert_config token
 
@@ -169,88 +143,6 @@ _fin_em_fail_count = 0  # circuit breaker: skip EM financial indicators after N 
 _fin_ths_fail_count = 0 # circuit breaker: skip THS financial indicators after N consecutive failures
 _FIN_FAIL_THRESHOLD = 5
 
-_bs_module = None        # baostock module, None if unavailable
-_bs_lock = threading.Lock()
-_bs_login_failed = False  # fail-fast: once login fails, skip all subsequent attempts for this process
-
-# Rate-limit concurrent East Money price-history requests to avoid triggering
-# the global _src_fail["hist_em"] flag that would force all 5000+ stocks onto BaoStock.
-# 2 concurrent requests × ~0.5s each ≈ 4 req/s — well within EM's tolerance.
-_em_hist_sem = threading.Semaphore(2)   # East Money price-history concurrency cap
-_ts_hist_sem = threading.Semaphore(3)   # Tushare price-history concurrency cap
-
-
-def _get_baostock():
-    """Return the logged-in baostock module, logging in once per process.
-
-    Fail-fast: once a login attempt fails (server unreachable, TCP refused, etc.),
-    subsequent calls return None immediately instead of paying another 5s+ retry.
-    """
-    global _bs_module, _bs_login_failed
-    if _bs_module is not None:
-        return _bs_module
-    if _bs_login_failed:
-        return None
-    # Use a timeout so a stalled daemon thread holding _bs_lock doesn't deadlock us.
-    if not _bs_lock.acquire(timeout=5.0):
-        return None
-    try:
-        if _bs_module is not None:
-            return _bs_module
-        if _bs_login_failed:
-            return None
-        try:
-            import baostock as bs
-            lg = bs.login()
-            if lg.error_code != "0":
-                _bs_login_failed = True
-                log.warning("src_degraded", extra={"source": "baostock_login", "error_code": lg.error_code, "error_msg": getattr(lg, "error_msg", "")[:120]})
-                return None
-            # Best-effort: set a 30s recv timeout on the underlying socket so
-            # rs.next() raises socket.timeout rather than blocking forever when
-            # the server connection becomes stale (e.g. after hours of running).
-            try:
-                # baostock stores its socket as BaoStockSdk.__socket (name-mangled).
-                # The module exposes the singleton's private attrs at module level.
-                for _attr in ("_BaoStockSdk__socket", "_BaoStockSdk__client",
-                              "_socket", "_client"):
-                    _sock_candidate = getattr(bs, _attr, None)
-                    if _sock_candidate is not None and hasattr(_sock_candidate, "settimeout"):
-                        _sock_candidate.settimeout(30.0)
-                        break
-            except Exception:
-                pass  # socket timeout is a best-effort optimisation; proceed without it
-            import atexit
-            atexit.register(bs.logout)
-            _bs_module = bs
-            return bs
-        except Exception:
-            _bs_login_failed = True
-            log.warning("src_degraded", extra={"source": "baostock_login", "error": _traceback.format_exc()[:200]})
-            return None
-    finally:
-        _bs_lock.release()
-
-
-def _reset_baostock() -> None:
-    """Force a fresh BaoStock login on the next _get_baostock() call.
-    Called when a query times out, indicating a stale connection."""
-    global _bs_module
-    # Non-blocking: a stalled daemon thread may be holding _bs_lock.
-    # Always null out _bs_module so the next caller re-logins; logout is best-effort.
-    acquired = _bs_lock.acquire(timeout=2.0)
-    try:
-        if _bs_module is not None:
-            try:
-                _bs_module.logout()
-            except Exception:
-                pass
-        _bs_module = None
-    finally:
-        if acquired:
-            _bs_lock.release()
-
-
 def _call_with_timeout(fn, timeout: float = 20.0, *args, **kwargs):
     """
     Run fn(*args, **kwargs) in a daemon thread and return its result.
@@ -278,24 +170,9 @@ def _call_with_timeout(fn, timeout: float = 20.0, *args, **kwargs):
 
 
 def normalize_code(code: str) -> str:
-    """Normalize stock code to a 6-digit string, stripping exchange prefixes.
-
-    Handles three input shapes:
-      - bare:          '605183'        -> '605183'
-      - letter prefix: 'SH605183'      -> '605183'
-      - DB format:     '1.605183' / '0.301096' (Investory: 1.=沪 0.=深)
-                       and dotted 'sh.605183' -> '605183'
-    """
-    code = code.strip().upper()
-    # DB / dotted format: take the segment after the last dot, keep digits only
-    if "." in code:
-        code = code.rsplit(".", 1)[-1]
-    for prefix in ("SH", "SZ", "SHE", "SSE", "BJ"):
-        if code.startswith(prefix):
-            code = code[len(prefix):]
-    # Keep only digits (guards against stray prefix chars), then pad to 6
-    code = "".join(ch for ch in code if ch.isdigit())
-    return code.zfill(6) if code else ""
+    """Canonical six-digit A-share code; support both exchange prefixes/suffixes."""
+    from hithink_finance import normalize_symbol
+    return normalize_symbol(code).split(".")[0]
 
 
 def _market_from_code(code: str) -> str:
@@ -691,370 +568,65 @@ def get_stock_info(code: str) -> Optional[dict]:
         return {}
 
 
-_PRICE_FETCH_DAYS = 550  # Always fetch this many days so all rolling periods share one cache entry
+_PRICE_FETCH_DAYS = 550  # Minimum calendar window; larger row requests expand it.
 
 def get_price_history(code: str, days: int = 365) -> Optional[pd.DataFrame]:
-    """Fetch daily OHLCV history (qfq adjusted). Cached for 1 hour.
+    """Hithink forward-adjusted daily bars. Never mixes legacy/unadjusted caches.
 
-    Always fetches _PRICE_FETCH_DAYS (550d) so that rolling-period IC tests
-    with different `days` values share a single cache entry per stock.
-
-    Source priority:
-      1. mootdx/通达信                    — TCP binary; fast from any region; unadjusted
-      2. East Money  (stock_zh_a_hist)    — qfq adjusted; HTTP may timeout from non-CN
-      3. Tushare Pro (daily, adj=qfq)     — basic tier, reliable; data available 15:00-16:00
-      4. Tencent Finance (stock_zh_a_hist_tx) — independent server (qq.com), qfq, no BJ
-      5. BaoStock                          — free, no V8; single-socket, Windows-fragile
-      6. 163/Netease (stock_zh_a_daily)   — V8-based
+    `days` retains the engine's row-count contract; fetch a wider calendar
+    window to cover weekends and holidays. Volume is shares, amount is CNY.
+    Hithink's `turnover` means amount, NOT the engine's turnover-rate column.
     """
-    code = normalize_code(code)  # strip sh/sz/bj prefix; idempotent on 6-digit codes
-    import time as _time
-    _now = _time.time()
-    for _k in ("hist_em", "hist_ts", "hist_tx", "hist_bs", "hist_tdx"):
-        if _src_fail[_k][0] and _now - _src_fail[_k][1] > _HIST_RETRY_SEC:
-            _src_fail[_k][0] = False
-    fetch_days = max(days, _PRICE_FETCH_DAYS)
-    cache_key = f"price_{code}_{fetch_days}"
-    cached = cache.get_df(cache_key, cache.smart_price_ttl())
-    if cached is not None:
-        # Caller may ask for fewer rows — slice to requested window
-        if len(cached) > days:
-            return cached.tail(days).reset_index(drop=True)
-        return cached
-
-    # ── Source 1: mootdx / 通达信 (TCP binary, fastest from any region) ──
-    # Unadjusted prices. TCP eliminates HTTP timeout risk from non-CN hosts.
-    if not _src_fail["hist_tdx"][0]:
-        try:
-            from mootdx.quotes import Quotes as _MootdxQuotes
-            _tdx = _MootdxQuotes.factory(market='std')
-            df = _tdx.bars(symbol=code, frequency=9, offset=fetch_days + 50)
-            if df is not None and not df.empty:
-                df = df.reset_index(drop=True)
-                if "vol" in df.columns and "volume" in df.columns:
-                    df = df.drop(columns=["vol"])
-                elif "vol" in df.columns:
-                    df = df.rename(columns={"vol": "volume"})
-                df["date"] = pd.to_datetime(df["datetime"]).dt.normalize()
-                for col in ["open", "high", "low", "close", "volume"]:
-                    if col in df.columns:
-                        df[col] = pd.to_numeric(df[col], errors="coerce")
-                df = df.sort_values("date").reset_index(drop=True)
-                df["change_pct"] = df["close"].pct_change() * 100
-                df["change_amt"] = df["close"].diff()
-                cutoff = pd.Timestamp.now() - pd.Timedelta(days=fetch_days + 10)
-                df = df[df["date"] >= cutoff].reset_index(drop=True)
-                if not df.empty:
-                    cache.set_df(cache_key, df)
-                    if len(df) > days:
-                        return df.tail(days).reset_index(drop=True)
-                    return df
-        except ImportError:
-            _src_fail["hist_tdx"][1] = _time.time(); _src_fail["hist_tdx"][0] = True
-            log.warning("src_degraded", extra={"source": "hist_tdx", "code": code, "reason": "ImportError"})
-        except Exception:
-            _src_fail["hist_tdx"][1] = _time.time(); _src_fail["hist_tdx"][0] = True
-            log.warning("src_degraded", extra={"source": "hist_tdx", "code": code})
-
-    # ── Source 2: East Money ─────────────────────────────────────────────
-    if not _src_fail["hist_em"][0]:
-        with _em_hist_sem:   # max 2 concurrent EM requests — prevents rate-limit cascade
-            try:
-                end = datetime.now()
-                start = end - timedelta(days=fetch_days)
-                df = _call_with_timeout(
-                    ak.stock_zh_a_hist, 25,
-                    symbol=code, period="daily",
-                    start_date=start.strftime("%Y%m%d"),
-                    end_date=end.strftime("%Y%m%d"),
-                    adjust="qfq",
-                )
-                if df is None:
-                    raise RuntimeError("timeout")
-                df.columns = [c.strip() for c in df.columns]
-                df = df.rename(columns={
-                    "日期": "date", "开盘": "open", "收盘": "close",
-                    "最高": "high", "最低": "low", "成交量": "volume",
-                    "成交额": "amount", "振幅": "amplitude",
-                    "涨跌幅": "change_pct", "涨跌额": "change_amt", "换手率": "turnover",
-                })
-                df["date"] = pd.to_datetime(df["date"])
-                df = df.sort_values("date").reset_index(drop=True)
-                cache.set_df(cache_key, df)
-                return df
-            except Exception:
-                _src_fail["hist_em"][1] = _time.time(); _src_fail["hist_em"][0] = True
-                log.warning("src_degraded", extra={"source": "hist_em", "code": code})
-
-    # ── Source 3: Tushare Pro daily (adj=qfq) ────────────────────────────
-    # Basic tier (120pts), 500 calls/min, data available ~15:00-16:00 each day.
-    if not _src_fail["hist_ts"][0]:
-        with _ts_hist_sem:   # max 3 concurrent Tushare requests
-            try:
-                pro = _get_tushare_pro()
-                if pro is None:
-                    _src_fail["hist_ts"][1] = _time.time(); _src_fail["hist_ts"][0] = True
-                else:
-                    ts_code = f"{code}.SH" if _market_from_code(code) == "sh" else f"{code}.SZ"
-                    end_ts = datetime.now()
-                    start_ts = end_ts - timedelta(days=fetch_days + 10)
-                    df = pro.daily(
-                        ts_code=ts_code,
-                        adj="qfq",
-                        start_date=start_ts.strftime("%Y%m%d"),
-                        end_date=end_ts.strftime("%Y%m%d"),
-                        fields="trade_date,open,high,low,close,vol,amount,pct_chg,change",
-                    )
-                    if df is not None and not df.empty:
-                        df = df.rename(columns={
-                            "trade_date": "date", "vol": "volume",
-                            "pct_chg": "change_pct", "change": "change_amt",
-                        })
-                        df["date"] = pd.to_datetime(df["date"])
-                        df = df.sort_values("date").reset_index(drop=True)
-                        for col in ["open", "high", "low", "close", "volume", "change_pct", "change_amt"]:
-                            if col in df.columns:
-                                df[col] = pd.to_numeric(df[col], errors="coerce")
-                        if not df.empty:
-                            cache.set_df(cache_key, df)
-                            if len(df) > days:
-                                return df.tail(days).reset_index(drop=True)
-                            return df
-            except Exception:
-                _src_fail["hist_ts"][1] = _time.time(); _src_fail["hist_ts"][0] = True
-                log.warning("src_degraded", extra={"source": "hist_ts", "code": code})
-
-    # ── Source 4: Tencent Finance (stock_zh_a_hist_tx) ─────────────────────
-    # Fully concurrent (no global lock), independent server (qq.com/gtimg.cn).
-    # Does not support BJ exchange (8xx/43xxxx) stocks.
-    # Moved before BaoStock because BaoStock is serialised by _bs_lock.
-    if not _src_fail["hist_tx"][0]:
-        try:
-            prefix = _market_from_code(code)
-            if prefix in ("sh", "sz"):
-                tx_sym = f"{prefix}{code}"
-                start_tx = (datetime.now() - timedelta(days=fetch_days + 50)).strftime("%Y%m%d")
-                end_tx   = datetime.now().strftime("%Y%m%d")
-                df = _call_with_timeout(
-                    ak.stock_zh_a_hist_tx, 30,
-                    symbol=tx_sym, start_date=start_tx, end_date=end_tx, adjust="qfq",
-                )
-                if df is not None and not df.empty:
-                    df = df.rename(columns={"amount": "volume"})
-                    df["date"] = pd.to_datetime(df["date"])
-                    df = df.sort_values("date").reset_index(drop=True)
-                    for col in ["open", "high", "low", "close", "volume"]:
-                        if col in df.columns:
-                            df[col] = pd.to_numeric(df[col], errors="coerce")
-                    df["change_pct"] = df["close"].pct_change() * 100
-                    df["change_amt"] = df["close"].diff()
-                    if not df.empty:
-                        cache.set_df(cache_key, df)
-                        if len(df) > days:
-                            return df.tail(days).reset_index(drop=True)
-                        return df
-        except Exception:
-            _src_fail["hist_tx"][1] = _time.time(); _src_fail["hist_tx"][0] = True
-            log.warning("src_degraded", extra={"source": "hist_tx", "code": code})
-
-    # ── Source 5: BaoStock (free, no V8, reliable; serialised by _bs_lock) ──
-    # BaoStock's Python client is NOT thread-safe: all concurrent callers share
-    # one TCP socket.  Without _bs_lock here, concurrent rs.next() calls in
-    # different threads consume each other's response bytes, leaving some threads
-    # blocked forever in socket.recv() — which deadlocks the executor across
-    # backtest periods.  Hold _bs_lock for the entire send+receive cycle.
-    #
-    # After long runs the TCP connection can become stale (server-side timeout).
-    # We wrap the query in _call_with_timeout so rs.next() cannot block forever:
-    # on timeout _reset_baostock() forces a fresh login for the next caller.
+    from hithink_finance import normalize_symbol
     try:
-        bs = _get_baostock() if not _src_fail["hist_bs"][0] else None
-        if bs is None and not _src_fail["hist_bs"][0]:
-            # Login failed (server down or module unavailable) — flag so subsequent
-            # stocks skip Source 4 without retrying the login on every call.
-            _src_fail["hist_bs"][1] = _time.time(); _src_fail["hist_bs"][0] = True
-        if bs is not None:
-            prefix = _market_from_code(code)
-            bs_code = f"{prefix}.{code}"
-            end = datetime.now()
-            start = end - timedelta(days=fetch_days)
+        symbol = normalize_symbol(code)
+        days = max(1, min(int(days), 1800))
+        fetch_days = min(3650, max(_PRICE_FETCH_DAYS, days * 2 + 30))
+        today = datetime.now(SHANGHAI).date()
+        cache_key = f"price_hithink_forward_v1_{symbol}_{fetch_days}_{today.isoformat()}"
+        cached = cache.get_df(cache_key, 3600)
+        if cached is None:
+            result = _hithink().history(symbol, today - timedelta(days=fetch_days), today, "forward")
+            if not result["points"]:
+                return None
+            cached = pd.DataFrame(result["points"])
+            cached["date"] = pd.to_datetime(cached["date"])
+            for col in ("open", "high", "low", "close", "volume", "amount"):
+                cached[col] = pd.to_numeric(cached[col], errors="coerce")
+            cached["change_pct"] = cached["close"].pct_change(fill_method=None) * 100
+            cached["change_amt"] = cached["close"].diff()
+            cache.set_df(cache_key, cached)
+        result_df = cached.tail(days).reset_index(drop=True)
+        result_df.attrs.update(source=SOURCE, adjust="forward", volume_unit="shares", amount_unit="CNY")
+        return result_df
+    except (HithinkError, ValueError, TypeError) as error:
+        log.warning("src_degraded", extra={"source": SOURCE, "operation": "history", "reason": str(error) if isinstance(error, HithinkError) else "invalid_argument"})
+        return None
 
-            _bs_rows: list = []
-            _bs_oserror = [False]  # mutable flag — set by _do_bs_query on socket error
 
-            def _do_bs_query():
-                # Use acquire(timeout) instead of `with _bs_lock` so that a stalled
-                # daemon thread (left behind by a previous _call_with_timeout expiry)
-                # cannot hold the lock indefinitely and block all subsequent callers.
-                # 65 s > the 60 s _call_with_timeout budget, so the outer wrapper will
-                # have already given up and called _reset_baostock() before this path
-                # returns — but at least every thread eventually exits rather than
-                # accumulating into a permanent deadlock.
-                if not _bs_lock.acquire(timeout=65.0):
-                    return [], []  # previous stalled thread still owns the lock; skip
-                try:
-                    rs = bs.query_history_k_data_plus(
-                        bs_code,
-                        "date,open,high,low,close,volume,turn,pctChg",
-                        start_date=start.strftime("%Y-%m-%d"),
-                        end_date=end.strftime("%Y-%m-%d"),
-                        frequency="d",
-                        adjustflag="2",  # qfq
-                    )
-                    result = []
-                    while rs.error_code == "0" and rs.next():
-                        result.append(rs.get_row_data())
-                    return result, rs.fields
-                except OSError:
-                    # WinError 10038/10057 — broken/unconnected socket.
-                    # Signal the outer caller so it can set _src_fail["hist_bs"].
-                    _bs_oserror[0] = True
-                    _reset_baostock()
-                    return [], []
-                finally:
-                    _bs_lock.release()
+def get_valuation_snapshot(code: str) -> Optional[pd.DataFrame]:
+    """One current valuation row; historical percentiles are unavailable.
 
-            _bs_result = _call_with_timeout(_do_bs_query, timeout=60.0)
-            if _bs_result is None or _bs_oserror[0]:
-                # Timed out OR Python-level socket error — flag BaoStock as down.
-                _src_fail["hist_bs"][1] = _time.time(); _src_fail["hist_bs"][0] = True
-                _reset_baostock()
-            else:
-                rows, _bs_fields = _bs_result
-                if not rows and not _bs_fields:
-                    # BaoStock returned empty rows AND empty fields: server-side failure
-                    # (BSERR_RECVSOCK_FAIL — send_msg returned None after connection drop).
-                    # Flag it so subsequent stocks skip Source 4 without re-attempting.
-                    _src_fail["hist_bs"][1] = _time.time(); _src_fail["hist_bs"][0] = True
-                elif rows:
-                    df = pd.DataFrame(rows, columns=_bs_fields)
-                    df = df.rename(columns={"turn": "turnover", "pctChg": "change_pct"})
-                    df["date"] = pd.to_datetime(df["date"])
-                    for col in ["open", "high", "low", "close", "volume", "turnover", "change_pct"]:
-                        if col in df.columns:
-                            df[col] = pd.to_numeric(df[col], errors="coerce")
-                    df["change_amt"] = df["close"].diff()
-                    df = df.sort_values("date").reset_index(drop=True)
-                    if not df.empty:
-                        cache.set_df(cache_key, df)
-                        if len(df) > days:
-                            return df.tail(days).reset_index(drop=True)
-                        return df
-    except Exception:
-        log.warning("src_degraded", extra={"source": "hist_bs_outer", "code": code, "error": _traceback.format_exc()[:200]})
-
-    # ── Source 6: 163/Netease via stock_zh_a_daily (V8 — last resort) ───
-    # Note: 163/Netease does not carry BJ exchange stocks; they will 404 silently.
-    # BJ stocks (prefix="bj") should have been served by BaoStock above.
+    Preserve the PE/PB column contract for score_value without inventing a
+    historical series or reading the old BaoStock valuation cache.
+    """
+    from hithink_finance import normalize_symbol, timestamp_day
     try:
-        prefix = _market_from_code(code)
-        sym4 = f"{prefix}{code}"
-        if not _v8_initialised.is_set():
-            with _v8_lock:
-                df = _call_with_timeout(ak.stock_zh_a_daily, 30, symbol=sym4, adjust="qfq")
-                if df is not None:
-                    _v8_initialised.set()
-        else:
-            df = _call_with_timeout(ak.stock_zh_a_daily, 30, symbol=sym4, adjust="qfq")
-        if df is None or df.empty:
-            return None
-        df.columns = [c.strip() for c in df.columns]
-        df["date"] = pd.to_datetime(df["date"])
-        df = df.sort_values("date").reset_index(drop=True)
-        cutoff = pd.Timestamp.now() - pd.Timedelta(days=days)
-        df = df[df["date"] >= cutoff].reset_index(drop=True)
-        if df.empty:
-            return None
-        if "change_pct" not in df.columns:
-            df["change_pct"] = df["close"].pct_change() * 100
-        if "change_amt" not in df.columns:
-            df["change_amt"] = df["close"].diff()
-        if "turnover" in df.columns:
-            df["turnover"] = df["turnover"] * 100
-        cache.set_df(cache_key, df)
+        symbol = normalize_symbol(code)
+        cache_key = f"valuation_hithink_snapshot_v1_{symbol}"
+        value = cache.get(cache_key, 900)
+        if value is None:
+            value = _hithink().valuation(symbol)
+            cache.set(cache_key, value)
+        df = pd.DataFrame([{key: value.get(key) for key in ("pe_ttm", "pb", "ps_ttm", "pcf_ttm")}])
+        for col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        df["date"] = pd.to_datetime(timestamp_day(value["timestamp"])) if value.get("timestamp") is not None else pd.NaT
+        df.attrs.update(source=SOURCE, scope="snapshot", timestamp=value.get("timestamp"), historical_valuation_available=False)
         return df
-    except Exception:
-        log.warning("src_degraded", extra={"source": "hist_163", "code": code, "error": _traceback.format_exc()[:200]})
-
-    log.warning("price_fetch_all_failed", extra={"code": code})
-    return None
-
-
-def get_valuation_history(code: str) -> Optional[pd.DataFrame]:
-    """Fetch historical PE/PB valuation data. Cached until next market open.
-
-    Source priority:
-      1. BaoStock  (peTTM, pbMRQ, psTTM — free, permanent)
-    """
-    code = normalize_code(code)
-    cache_key = f"valuation_{code}"
-    cached = cache.get_df(cache_key, cache.smart_valuation_ttl())
-    if cached is not None:
-        return cached
-
-    # ── Source 1: BaoStock ───────────────────────────────────────────────
-    try:
-        bs = _get_baostock()
-        if bs is not None:
-            prefix = _market_from_code(code)
-            bs_code = f"{prefix}.{code}"
-            end_v = datetime.now()
-            start_v = end_v - timedelta(days=_PRICE_FETCH_DAYS + 10)
-
-            _val_rows: list = []
-
-            def _do_val_query():
-                if not _bs_lock.acquire(timeout=65.0):
-                    return [], []
-                try:
-                    rs = bs.query_history_k_data_plus(
-                        bs_code,
-                        "date,peTTM,pbMRQ,psTTM,pcfNcfTTM",
-                        start_date=start_v.strftime("%Y-%m-%d"),
-                        end_date=end_v.strftime("%Y-%m-%d"),
-                        frequency="d",
-                        adjustflag="3",  # no adjustment needed for valuation
-                    )
-                    result = []
-                    while rs.error_code == "0" and rs.next():
-                        result.append(rs.get_row_data())
-                    return result, rs.fields
-                except OSError:
-                    _reset_baostock()
-                    return [], []
-                finally:
-                    _bs_lock.release()
-
-            _val_result = _call_with_timeout(_do_val_query, timeout=60.0)
-            if _val_result is None:
-                _reset_baostock()
-            else:
-                rows, _fields = _val_result
-                if rows:
-                    df = pd.DataFrame(rows, columns=_fields)
-                    df = df.rename(columns={
-                        "peTTM": "pe_ttm", "pbMRQ": "pb",
-                        "psTTM": "ps_ttm", "pcfNcfTTM": "pcf_ttm",
-                    })
-                    df["date"] = pd.to_datetime(df["date"])
-                    for col in ["pe_ttm", "pb", "ps_ttm", "pcf_ttm"]:
-                        if col in df.columns:
-                            df[col] = pd.to_numeric(df[col], errors="coerce")
-                    df = df.sort_values("date").reset_index(drop=True)
-                    if not df.empty:
-                        cache.set_df(cache_key, df)
-                        return df
-    except Exception:
-        pass
-
-    # ── Stale cache fallback (all sources down) ───────────────────────────
-    # PE/PB changes little day-to-day; using data up to 5 days old is fine
-    # for factor scoring and avoids hard failures during BaoStock outages.
-    stale = cache.get_df(cache_key, 5 * 86400)
-    if stale is not None:
-        return stale
-
-    return None
+    except HithinkError as error:
+        log.warning("src_degraded", extra={"source": SOURCE, "operation": "valuation", "reason": str(error)})
+        return None
 
 
 def get_financial_indicators(code: str) -> Optional[pd.DataFrame]:
@@ -2034,102 +1606,40 @@ def search_stock_by_name(name: str) -> Optional[str]:
 # Trading calendar + suspension
 # ---------------------------------------------------------------------------
 
-_CALENDAR_START_YEARS = 3   # fetch this many years back + 1 year ahead
-
-
 def get_trade_calendar() -> list:
-    """Return sorted list of A-share trading date strings ('YYYY-MM-DD').
-
-    Covers 3 years back to 1 year ahead — enough for any rolling window.
-
-    Source priority:
-      1. BaoStock  query_trade_dates
-      2. AKShare   tool_trade_date_hist_sina (all historical trading days; trimmed to window)
-
-    Cached for 30 days (holiday schedule rarely changes mid-year).
-    """
-    cache_key = "trade_calendar"
-    cached = cache.get(cache_key, 30 * 86400)
+    """Hithink's fixed last-year-through-today window; no future dates inferred."""
+    today = datetime.now(SHANGHAI).date().isoformat()
+    cache_key = f"trade_calendar_hithink_v1_{today}"
+    cached = cache.get(cache_key, 3600)
     if cached is not None:
         return cached
-
-    start = (datetime.now() - timedelta(days=_CALENDAR_START_YEARS * 365)).strftime("%Y-%m-%d")
-    end   = (datetime.now() + timedelta(days=365)).strftime("%Y-%m-%d")
-
-    # ── Source 1: BaoStock ────────────────────────────────────────────────
     try:
-        bs = _get_baostock()
-        if bs is not None:
-            _cal_rows: list = []
-
-            def _do_cal_query():
-                if not _bs_lock.acquire(timeout=65.0):
-                    return []
-                try:
-                    rs = bs.query_trade_dates(start_date=start, end_date=end)
-                    result = []
-                    while rs.error_code == "0" and rs.next():
-                        row = rs.get_row_data()
-                        # row = [calendar_date, is_trading_day]
-                        if len(row) >= 2 and row[1] == "1":
-                            result.append(row[0])  # 'YYYY-MM-DD'
-                    return result
-                except OSError:
-                    _reset_baostock()
-                    return []
-                finally:
-                    _bs_lock.release()
-
-            result = _call_with_timeout(_do_cal_query, timeout=60.0)
-            if result is None:
-                _reset_baostock()
-            elif result:
-                dates = sorted(result)
-                cache.set(cache_key, dates)
-                return dates
-    except Exception:
-        pass
-
-    # ── Source 2: AKShare Sina ────────────────────────────────────────────
-    try:
-        df = _call_with_timeout(ak.tool_trade_date_hist_sina, 30)
-        if df is not None and not df.empty:
-            df.columns = [c.strip() for c in df.columns]
-            col = df.columns[0]
-            dates = sorted(
-                str(d)[:10] for d in df[col].dropna()
-                if start <= str(d)[:10] <= end
-            )
-            if dates:
-                cache.set(cache_key, dates)
-                return dates
-    except Exception:
-        pass
-
-    return []
+        dates = _hithink().calendar()
+        if dates:
+            cache.set(cache_key, dates)
+        return dates
+    except HithinkError as error:
+        log.warning("src_degraded", extra={"source": SOURCE, "operation": "calendar", "reason": str(error)})
+        return []
 
 
 def is_trading_day(date=None) -> bool:
-    """Return True if *date* is an A-share trading day.
-
-    *date* can be a datetime, date, or 'YYYY-MM-DD' string.
-    Defaults to today if omitted.
-    Falls back to weekday check (Mon-Fri) when calendar is unavailable.
-    """
-    if date is None:
-        date = datetime.now()
-    if hasattr(date, "strftime"):
-        date_str = date.strftime("%Y-%m-%d")
-    else:
-        date_str = str(date)[:10]
-
-    cal = get_trade_calendar()
-    if cal:
-        return date_str in cal
-    # Fallback: treat weekdays as trading days
+    """Reject an unknown calendar date instead of treating weekdays as confirmed."""
+    target = date if date is not None else datetime.now(SHANGHAI)
+    date_str = target.strftime("%Y-%m-%d") if hasattr(target, "strftime") else str(target)[:10]
     from datetime import date as _date
-    d = _date.fromisoformat(date_str)
-    return d.weekday() < 5
+    target_day = _date.fromisoformat(date_str)
+    today = datetime.now(SHANGHAI).date()
+    try:
+        start = today.replace(year=today.year - 1)
+    except ValueError:
+        start = today.replace(year=today.year - 1, day=28)
+    if not start <= target_day <= today:
+        raise HithinkError("同花顺交易日历仅覆盖最近一年至今天，目标日期不可确认")
+    calendar = get_trade_calendar()
+    if not calendar:
+        raise HithinkError("交易日历不可用，无法确认是否开市")
+    return date_str in calendar
 
 
 def get_suspension_list(trade_date: str = None) -> pd.DataFrame:

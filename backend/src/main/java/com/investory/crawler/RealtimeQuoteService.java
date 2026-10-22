@@ -35,6 +35,21 @@ public class RealtimeQuoteService {
     public Quote getQuote(Stock stock) { return getQuotes(List.of(stock)).get(stock.getSymbol()); }
     public BigDecimal getPrice(Stock stock) { Quote quote=getQuote(stock); return quote==null ? null : quote.price(); }
 
+    /** Background metadata reads may reuse memory without triggering providers. */
+    public synchronized Map<String, Quote> cachedQuotes(List<Stock> stocks) {
+        var result = new HashMap<String, Quote>();
+        for (Stock stock : stocks) {
+            if (stock == null || stock.getSymbol() == null) continue;
+            Entry entry = cache.get(key(stock));
+            Quote quote = entry == null ? null : entry.quote();
+            if (quote != null && quote.fetchedAt() != null
+                    && Duration.between(quote.fetchedAt(), clock.instant()).compareTo(Duration.ofHours(24)) < 0) {
+                result.put(stock.getSymbol(), quote.withLive(quote.live() && isLive(quote, stock.getMarket())));
+            }
+        }
+        return result;
+    }
+
     /** Batches of 50; aliases and concurrent readers share cached successes and failures. */
     public synchronized Map<String, Quote> getQuotes(List<Stock> stocks) {
         Instant startedAt=clock.instant();

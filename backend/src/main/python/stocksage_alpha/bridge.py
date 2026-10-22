@@ -74,30 +74,9 @@ def _research_cached(code: str, weights) -> dict:
 
     result = research(norm, weights)
     if isinstance(result, dict) and not result.get("error"):
-        _patch_value_factor(norm, result)
         with _research_cache_lock:
             _research_cache[key] = (time.time(), copy.deepcopy(result))
     return result
-
-
-def _patch_value_factor(code: str, r: dict) -> None:
-    """Fix value factor score: research() gets PE/PB from realtime quote (returns 0).
-    Extract from valuation history instead and re-score."""
-    try:
-        import fetcher
-        from factors import score_value
-        import pandas as pd
-        val_df = fetcher.get_valuation_history(code)
-        if val_df is not None and not val_df.empty and "pe_ttm" in val_df.columns:
-            last = val_df.iloc[-1]
-            real_pe = float(last["pe_ttm"]) if pd.notna(last["pe_ttm"]) and last["pe_ttm"] > 0 else 0
-            real_pb = float(last["pb"]) if "pb" in val_df.columns and pd.notna(last["pb"]) and last["pb"] > 0 else 0
-            if real_pe > 0 or real_pb > 0:
-                vf = score_value(real_pe, real_pb, val_df)
-                if vf.get("score", 0) > 0:
-                    r["factors"]["value"] = vf
-    except Exception:
-        pass
 
 
 # ----------------------------------------------------------------
@@ -683,7 +662,7 @@ def _build_stock_report(symbol: str) -> dict:
 
     factors = result.get("factors") or {}
     raw_factor_rows = []
-    missing = []
+    missing = list(result.get("data_limitations", []))
     for name, factor in factors.items():
         if not isinstance(factor, dict):
             continue
@@ -807,7 +786,7 @@ def _build_stock_report(symbol: str) -> dict:
             "factor_count": len(raw_factor_rows),
         },
         "data_sources": [
-            "realtime_quote", "price_history", "valuation_history", "financial_indicators",
+            "realtime_quote", "hithink_forward_price_history", "hithink_valuation_snapshot", "financial_indicators",
             "fund_flow", "margin_data", "market_regime", "event/social best-effort APIs",
         ],
         "audit_trail": {
@@ -1040,7 +1019,7 @@ def _build_stock_report(symbol: str) -> dict:
 
     factors = result.get("factors") or {}
     raw_factor_rows = []
-    missing = []
+    missing = list(result.get("data_limitations", []))
     for name, factor in factors.items():
         if not isinstance(factor, dict):
             continue
@@ -1165,7 +1144,7 @@ def _build_stock_report(symbol: str) -> dict:
         "conflicts": conflicts,
         "regime_adjustment": {"regime": regime, "score": regime_score, "message": regime_message},
         "data_quality": {"missing": missing, "factor_count": len(raw_factor_rows)},
-        "data_sources": ["实时行情", "历史价格", "估值历史", "财务指标", "资金行为", "融资数据", "市场环境", "事件/情绪类公开数据（尽力获取）"],
+        "data_sources": ["实时行情", "历史价格", "同花顺估值快照", "财务指标", "资金行为", "融资数据", "市场环境", "事件/情绪类公开数据（尽力获取）"],
         "audit_trail": {
             "engine": "stocksage_alpha",
             "command": "stocksage_report",
@@ -1513,7 +1492,7 @@ def _build_pick_stocks_report(intent: str, universe: str = "all", top_n: int = 1
         "evidence_against": [],
         "conflicts": [],
         "regime_adjustment": {"regime": regime, "score": regime_score_val, "adaptation": f"{regime_desc}环境权重"},
-        "data_sources": ["stock_prices", "factor_scores", "market_regime", "industry_map"],
+        "data_sources": ["hithink_forward_price_history", "factor_scores", "market_regime", "industry_map"],
         "audit_trail": {
             "engine": "stocksage_alpha",
             "command": "pick_stocks",

@@ -21,7 +21,7 @@ from fetcher import (
     get_realtime_quote,
     get_stock_info,
     get_price_history,
-    get_valuation_history,
+    get_valuation_snapshot,
     get_financial_indicators,
     get_fund_flow,
     get_margin_data,
@@ -105,9 +105,9 @@ from factors import (
 
 
 def is_stock_code(s: str) -> bool:
-    """Return True if the string looks like an A-share code, with optional sh/sz/bj prefix."""
+    """Recognize the code forms accepted by the shared A-share adapter."""
     s = s.strip().lower()
-    return bool(re.match(r"^(sh|sz|bj)?\d{6}$", s))
+    return bool(re.fullmatch(r"(?:(?:sh|sz|bj)\.?\d{6}|\d{6}(?:\.(?:sh|sz|bj))?|[01]\.\d{6})", s))
 
 
 def research(raw_input: str, weights: FactorWeights = DEFAULT_WEIGHTS) -> dict:
@@ -131,7 +131,7 @@ def research(raw_input: str, weights: FactorWeights = DEFAULT_WEIGHTS) -> dict:
         # Core
         f_info      = ex.submit(get_stock_info, code)
         f_price     = ex.submit(get_price_history, code, 365)
-        f_valuation = ex.submit(get_valuation_history, code)
+        f_valuation = ex.submit(get_valuation_snapshot, code)
         f_financial = ex.submit(get_financial_indicators, code)
         f_fundflow  = ex.submit(get_fund_flow, code, 10)
         f_margin    = ex.submit(get_margin_data, code)
@@ -202,22 +202,13 @@ def research(raw_input: str, weights: FactorWeights = DEFAULT_WEIGHTS) -> dict:
     mkt_factor   = score_market_regime(market_df)
     regime_score = mkt_factor.get("score") if mkt_factor else None
 
-    # --- Extract PE/PB from val_history if quote lacks them ---
-    _pe = quote.get("pe_ttm", 0) or 0
-    _pb = quote.get("pb", 0) or 0
-    if (_pe <= 0 or _pb <= 0) and val_history is not None and not val_history.empty:
-        try:
-            last = val_history.iloc[-1]
-            if _pe <= 0 and "pe_ttm" in val_history.columns:
-                _v = float(last["pe_ttm"])
-                if _v > 0:
-                    _pe = _v
-            if _pb <= 0 and "pb" in val_history.columns:
-                _v = float(last["pb"])
-                if _v > 0:
-                    _pb = _v
-        except Exception:
-            pass
+    # Hithink snapshot is the valuation authority. Missing/negative values must
+    # not silently be replaced by a legacy quote provider's positive multiple.
+    _pe, _pb = 0, 0
+    if val_history is not None and not val_history.empty:
+        last = val_history.iloc[-1]
+        _pe = float(last["pe_ttm"]) if pd.notna(last["pe_ttm"]) else 0
+        _pb = float(last["pb"]) if pd.notna(last["pb"]) else 0
     value_factor    = score_value(_pe, _pb,
                                   val_history, industry_stats, price_df, revision_df, financial_df,
                                   regime_score, industry_ret, market_ret)
@@ -369,6 +360,13 @@ def research(raw_input: str, weights: FactorWeights = DEFAULT_WEIGHTS) -> dict:
     from dataclasses import fields as dc_fields
     return {
         "code": code,
+        "data_limitations": [
+            "同花顺仅提供最新估值快照，历史估值分位不可用",
+            "同花顺日线成交额不等于换手率，依赖历史换手率的因子缺少输入",
+        ] + (["同花顺日线不可用，价格类因子缺少输入"] if price_df is None or price_df.empty else [])
+          + (["同花顺估值快照不可用"] if val_history is None or val_history.empty else []),
+        "price_history_source": "hithink_finance_api",
+        "price_adjust": "forward",
         "name": quote.get("name", ""),
         "basic": {
             "industry":                info.get("industry", "Unknown"),
@@ -391,8 +389,11 @@ def research(raw_input: str, weights: FactorWeights = DEFAULT_WEIGHTS) -> dict:
             "div_yield":      quote.get("div_yield"),
         },
         "valuation": {
-            "pe_ttm":          quote.get("pe_ttm"),
-            "pb":              quote.get("pb"),
+            "pe_ttm":          float(last["pe_ttm"]) if val_history is not None and not val_history.empty and pd.notna(last["pe_ttm"]) else None,
+            "pb":              float(last["pb"]) if val_history is not None and not val_history.empty and pd.notna(last["pb"]) else None,
+            "source":          "hithink_finance_api",
+            "scope":           "snapshot",
+            "historical_valuation_available": False,
             **valuation_summary,
             "pe_percentile":   value_factor["details"].get("pe_percentile"),
             "pb_percentile":   value_factor["details"].get("pb_percentile"),

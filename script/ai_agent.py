@@ -401,31 +401,103 @@ def get_db_conn():
     return db_get_conn(cfg)
 
 
+def _quote_uses_hithink(symbol: str) -> bool:
+    from hithink_finance import normalize_symbol, HithinkError
+    import re
+    try:
+        code = normalize_symbol(symbol)
+        return bool(re.fullmatch(r"6\d{5}\.SH|[03]\d{5}\.SZ|[489]\d{5}\.BJ", code))
+    except HithinkError:
+        return False
+
+
+def _latest_quotes(symbols: list[str]) -> dict:
+    """A-share equities use Hithink; unsupported assets retain the explicit legacy path."""
+    from hithink_finance import get_client, HithinkError, SOURCE, timestamp_day
+    symbols = list(dict.fromkeys(symbols))
+    a_shares = [symbol for symbol in symbols if _quote_uses_hithink(symbol)]
+    result = {}
+    if a_shares:
+        error = None
+        try:
+            result.update(get_client().snapshot(a_shares))
+        except HithinkError as failure:
+            error = str(failure)
+        for symbol in a_shares:
+            if symbol not in result:
+                result[symbol] = {"price": None, "source": SOURCE, "live": False,
+                                  "note": error or "同花顺未返回该标的报价"}
+            quote = result[symbol]
+            quote["date"] = timestamp_day(quote["timestamp"]) if quote.get("timestamp") is not None else None
+    other = [symbol for symbol in symbols if symbol not in a_shares]
+    if other:
+        conn = get_db_conn()
+        cur = conn.cursor()
+        try:
+            for symbol in other:
+                cur.execute("""SELECT sp.close, sp.trade_date FROM stock_prices sp
+                    JOIN stocks s ON s.id=sp.stock_id WHERE s.symbol=%s
+                    ORDER BY sp.trade_date DESC LIMIT 2""", (symbol,))
+                rows = cur.fetchall()
+                price = float(rows[0][0]) if rows and rows[0][0] is not None else None
+                previous = float(rows[1][0]) if len(rows) > 1 and rows[1][0] is not None else None
+                change = price - previous if price is not None and previous is not None else None
+                result[symbol] = {"price": price, "previousClose": previous, "change": change,
+                                  "changePct": change / previous * 100 if change is not None and previous and previous > 0 else None,
+                                  "date": str(rows[0][1]) if rows else None, "source": "database", "live": False}
+        finally:
+            cur.close()
+            conn.close()
+    return result
+
+
 def tool_get_portfolio(portfolio_id: int) -> dict:
-    """获取持仓组合概要"""
+    """持仓和成本读业务库；A 股报价读同花顺，缺价时不伪造总资产。"""
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT s.symbol, s.name, s.market, h.total_shares, h.avg_cost, h.total_invested,
-               (SELECT close FROM stock_prices WHERE stock_id=s.id ORDER BY trade_date DESC LIMIT 1) AS price
-        FROM holdings h JOIN stocks s ON h.stock_id=s.id
-        WHERE h.portfolio_id=%s AND h.total_shares>0 ORDER BY h.total_invested DESC
-    """, (portfolio_id,))
-    rows = cur.fetchall()
+    try:
+        cur.execute("""SELECT s.symbol, s.name, s.market, h.total_shares,
+                   h.avg_cost, h.total_invested, s.currency
+            FROM holdings h JOIN stocks s ON h.stock_id=s.id
+            WHERE h.portfolio_id=%s AND h.total_shares>0 ORDER BY h.total_invested DESC""", (portfolio_id,))
+        rows = cur.fetchall()
+        currencies = {row[6] or "CNY" for row in rows}
+        rates = {"CNY": 1.0}
+        if currencies - {"CNY"}:
+            cur.execute("SELECT currency, rate FROM exchange_rates")
+            rates.update({currency: 1 / float(rate) for currency, rate in cur.fetchall() if rate is not None and float(rate) > 0})
+    finally:
+        cur.close()
+        conn.close()
+    quotes = _latest_quotes([row[0] for row in rows])
     holdings = []
-    total_value = 0
-    for r in rows:
-        sym, name, mkt, shares, cost, invested, price = r
-        price = float(price or 0)
-        mv = float(shares) * price if price else float(invested or 0)
-        pnl_pct = (mv/float(invested)-1)*100 if invested and float(invested)>0 else 0
-        total_value += mv
-        holdings.append({"symbol": sym, "name": name, "market": mkt, "shares": int(float(shares)),
-                         "invested": round(float(invested or 0),0), "mv": round(mv,0),
-                         "pnlPct": round(pnl_pct,1), "price": price})
-    cur.close(); conn.close()
-    for h in holdings: h["weight"] = round(h["mv"]/total_value*100,1) if total_value>0 else 0
-    return {"count": len(holdings), "totalValue": round(total_value,0), "holdings": holdings}
+    missing = []
+    total_value = 0.0
+    for symbol, name, market, shares, cost, invested, currency in rows:
+        currency = currency or "CNY"
+        quote = quotes.get(symbol, {})
+        price = quote.get("price")
+        native_mv = float(shares) * price if price is not None else None
+        rate = rates.get(currency)
+        mv = native_mv * rate if native_mv is not None and rate is not None else None
+        if mv is None:
+            missing.append(symbol)
+        else:
+            total_value += mv
+        pnl_pct = (native_mv / float(invested) - 1) * 100 if native_mv is not None and invested and float(invested) > 0 else None
+        holdings.append({"symbol": symbol, "name": name, "market": market, "currency": currency,
+                         "shares": float(shares), "invested": round(float(invested or 0), 2),
+                         "mv": round(mv, 2) if mv is not None else None,
+                         "nativeMarketValue": round(native_mv, 2) if native_mv is not None else None,
+                         "pnlPct": round(pnl_pct, 1) if pnl_pct is not None else None,
+                         "price": price, "priceSource": quote.get("source"),
+                         "priceTimestamp": quote.get("timestamp", quote.get("date")),
+                         "priceLive": quote.get("live", False), "note": quote.get("note")})
+    complete = not missing
+    for holding in holdings:
+        holding["weight"] = round(holding["mv"] / total_value * 100, 2) if complete and total_value > 0 else None
+    return {"count": len(holdings), "totalValue": round(total_value, 2) if complete else None,
+            "currency": "CNY", "valuationComplete": complete, "unpricedSymbols": missing, "holdings": holdings}
 
 
 # ── StockSage engine invocation (resident HTTP, subprocess fallback) ────────
@@ -698,22 +770,17 @@ def tool_search_stocks(query: str) -> dict:
     return {"query": query, "count": len(results), "results": results, "needs_disambiguation": needs_disambig}
 
 def tool_get_stock_price(symbol: str) -> dict:
-    """获取个股最新行情"""
+    """最新报价；A 股不再读取本地收盘价。"""
     conn = get_db_conn()
-    cur = conn.cursor()
-    db_sym = resolve_symbol(conn, symbol)
-    if not db_sym: cur.close(); conn.close(); return {"error": f"未找到 {symbol}"}
-    cur.execute("SELECT id FROM stocks WHERE symbol=%s", (db_sym,))
-    sid = cur.fetchone()[0]
-    cur.execute("SELECT close, trade_date FROM stock_prices WHERE stock_id=%s ORDER BY trade_date DESC LIMIT 2", (sid,))
-    rows = cur.fetchall()
-    cur.close(); conn.close()
-    if len(rows) < 1: return {"symbol": symbol, "price": None, "note": "无价格数据"}
-    price = float(rows[0][0])
-    prev = float(rows[1][0]) if len(rows) > 1 else price
-    chg = price - prev
-    chg_pct = (chg / prev * 100) if prev else 0
-    return {"symbol": symbol, "price": round(price,2), "change": round(chg,2), "changePct": round(chg_pct,2), "date": str(rows[0][1])}
+    try:
+        db_sym = resolve_symbol(conn, symbol)
+    finally:
+        conn.close()
+    if not db_sym:
+        return {"error": f"未找到 {symbol}"}
+    quote = _latest_quotes([db_sym]).get(db_sym, {})
+    return {**quote, "symbol": symbol, "resolvedSymbol": db_sym}
+
 
 def tool_get_pnl_history(portfolio_id: int, days: int = 90) -> dict:
     """获取组合盈亏历史"""
@@ -739,10 +806,30 @@ def tool_get_transactions(portfolio_id: int, limit: int = 20) -> list:
 def tool_get_stock_price_history(symbol: str, days: int = 60) -> dict:
     """获取个股历史K线"""
     conn = get_db_conn()
-    db_sym = resolve_symbol(conn, symbol)
-    if not db_sym:
+    try:
+        db_sym = resolve_symbol(conn, symbol)
+    finally:
         conn.close()
+    if not db_sym:
         return {"error": f"未找到 {symbol}"}
+    # A-share history no longer reads the crawler's stock_prices table.
+    # Keep this raw-price tool unadjusted; factor research explicitly uses qfq.
+    if _is_a_share(db_sym):
+        from datetime import datetime, timedelta
+        from hithink_finance import get_client, HithinkError, SHANGHAI
+        try:
+            limit = min(max(int(days), 1) * 2, MAX_ROWS)
+            today = datetime.now(SHANGHAI).date()
+            result = get_client().history(db_sym, today - timedelta(days=min(3650, limit * 2 + 30)), today, "none")
+            points = result["points"][-limit:]
+            return {"symbol": symbol, "count": len(points), "points": points,
+                    "truncated": len(result["points"]) > limit,
+                    "source": result["source"], "adjust": "none", "currency": "CNY",
+                    "volume_unit": "shares", "timestamp": result["timestamp"],
+                    "note": "数据已截断" if len(result["points"]) > limit else ""}
+        except HithinkError as error:
+            return {"error": str(error), "source": "hithink_finance_api"}
+    conn = get_db_conn()
     cur = conn.cursor()
     cur.execute("SELECT s.id FROM stocks s WHERE s.symbol=%s", (db_sym,))
     sid = cur.fetchone()[0]
@@ -1406,24 +1493,14 @@ def tool_get_portfolio_analysis(portfolio_id: int) -> dict:
     结果通过 [PORTFOLIO_CARD] 在前端渲染为可视化卡片。"""
     import subprocess, json as _json, os
 
-    # Get holdings with weights
-    conn = get_db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT s.symbol, s.name, h.total_shares, h.total_invested,
-               (SELECT close FROM stock_prices WHERE stock_id=s.id ORDER BY trade_date DESC LIMIT 1) AS price
-        FROM holdings h JOIN stocks s ON h.stock_id=s.id
-        WHERE h.portfolio_id=%s AND h.total_shares>0
-    """, (portfolio_id,))
-    rows = cur.fetchall()
-    cur.close(); conn.close()
-
-    if not rows: return {"error": "暂无持仓"}
-
-    total_val = sum(float(r[3] or 0) for r in rows)
-    holdings = [{"symbol": r[0].split(".")[-1] if "." in r[0] else r[0],
-                 "name": r[1], "weight": round(float(r[3] or 0)/total_val*100, 1) if total_val > 0 else 0}
-                for r in rows]
+    # Weights must be current market values, not historical invested amounts.
+    portfolio = tool_get_portfolio(portfolio_id)
+    if not portfolio["holdings"]:
+        return {"error": "暂无持仓"}
+    if not portfolio["valuationComplete"]:
+        return {"error": "部分持仓缺少报价或汇率，无法计算市值权重", "unpricedSymbols": portfolio["unpricedSymbols"]}
+    holdings = [{"symbol": _engine_symbol(row["symbol"]), "name": row["name"], "weight": row["weight"]}
+                for row in portfolio["holdings"]]
 
     # Call engine portfolio_analysis (resident HTTP, subprocess fallback)
     data = _engine("portfolio_analysis", {"holdings": _json.dumps(holdings)}, STOCKSAGE_ENGINE_TIMEOUT_S)
@@ -1730,25 +1807,19 @@ def _report_llm_result(report: dict) -> dict:
     }
 
 
+def _engine_symbol(symbol: str) -> str:
+    from hithink_finance import normalize_symbol
+    if _quote_uses_hithink(symbol):
+        return normalize_symbol(symbol).split(".")[0]
+    return symbol
+
+
 def _portfolio_report_holdings(portfolio_id: int) -> list:
-    conn = get_db_conn()
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT s.symbol, s.name, h.total_invested
-        FROM holdings h JOIN stocks s ON h.stock_id=s.id
-        WHERE h.portfolio_id=%s AND h.total_shares>0
-    """, (portfolio_id,))
-    rows = cur.fetchall()
-    cur.close(); conn.close()
-    total_val = sum(float(r[2] or 0) for r in rows)
-    return [
-        {
-            "symbol": r[0].split(".")[-1] if "." in r[0] else r[0],
-            "name": r[1],
-            "weight": round(float(r[2] or 0) / total_val * 100, 1) if total_val > 0 else 0,
-        }
-        for r in rows
-    ]
+    portfolio = tool_get_portfolio(portfolio_id)
+    if not portfolio["valuationComplete"]:
+        raise ValueError("部分持仓缺少报价或汇率，无法计算市值权重")
+    return [{"symbol": _engine_symbol(row["symbol"]), "name": row["name"], "weight": row["weight"]}
+            for row in portfolio["holdings"]]
 
 
 def tool_get_stock_report(symbol: str) -> dict:
@@ -1772,7 +1843,10 @@ def tool_get_stock_report(symbol: str) -> dict:
 
 def tool_get_portfolio_report(portfolio_id: int) -> dict:
     """Generate an auditable StockSage report for the active portfolio."""
-    holdings = _portfolio_report_holdings(portfolio_id)
+    try:
+        holdings = _portfolio_report_holdings(portfolio_id)
+    except ValueError as error:
+        return {"error": str(error)}
     if not holdings:
         return {"error": "暂无持仓，无法生成 StockSage 组合报告。"}
     report = _engine(
@@ -2450,25 +2524,24 @@ def tool_get_watchlist(user_id: int) -> dict:
         return {"error": "未登录"}
     conn = get_db_conn()
     cur = conn.cursor()
-    cur.execute("""
-        SELECT w.id, w.stock_id, s.symbol, s.name, s.market, s.currency
-        FROM watchlist w JOIN stocks s ON w.stock_id = s.id
-        WHERE w.user_id = %s ORDER BY w.sort_order, w.created_at DESC
-    """, (user_id,))
-    rows = cur.fetchall()
-    cur.close()
+    try:
+        cur.execute("""SELECT w.id, w.stock_id, s.symbol, s.name, s.market, s.currency
+            FROM watchlist w JOIN stocks s ON w.stock_id = s.id
+            WHERE w.user_id = %s ORDER BY w.sort_order, w.created_at DESC""", (user_id,))
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        conn.close()
+    quotes = _latest_quotes([row[2] for row in rows])
     items = []
-    cur2 = conn.cursor()
-    for r in rows:
-        wl_id, sid, sym, name, mkt, curr = r[0], r[1], r[2], r[3], r[4], r[5]
-        item = {"id": wl_id, "stockId": sid, "symbol": sym, "name": name, "market": mkt, "currency": curr}
-        cur2.execute("SELECT close FROM stock_prices WHERE stock_id=%s ORDER BY trade_date DESC LIMIT 1", (sid,))
-        pr = cur2.fetchone()
-        item["price"] = float(pr[0]) if pr else 0
-        items.append(item)
-    cur2.close()
-    conn.close()
+    for wl_id, sid, symbol, name, market, currency in rows:
+        quote = quotes.get(symbol, {})
+        items.append({"id": wl_id, "stockId": sid, "symbol": symbol, "name": name,
+                      "market": market, "currency": currency, "price": quote.get("price"),
+                      "priceSource": quote.get("source"), "priceTimestamp": quote.get("timestamp", quote.get("date")),
+                      "priceLive": quote.get("live", False), "note": quote.get("note")})
     return {"count": len(items), "items": items}
+
 
 def _confirm_watchlist(args: dict) -> dict:
     """Build add-to-watchlist or remove-from-watchlist confirmation.

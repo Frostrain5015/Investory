@@ -72,6 +72,18 @@ class RealtimeQuoteServiceTest {
         clock.now=clock.now.plus(Duration.ofDays(2));
         assertNull(service.getQuote(first));
     }
+    @Test void metadataCacheNeverFetchesAndExpiresRetainedQuotes() {
+        Stock item=stock("600519.SH");
+        assertTrue(service.cachedQuotes(List.of(item)).isEmpty());
+        verify(provider,never()).snapshot(anyList());
+        var quote=service.getQuote(item);
+        assertEquals(quote,service.cachedQuotes(List.of(item)).get(item.getSymbol()));
+        clock.now=clock.now.plusSeconds(180);
+        assertFalse(service.cachedQuotes(List.of(item)).get(item.getSymbol()).live());
+        clock.now=clock.now.plus(Duration.ofDays(2));
+        assertTrue(service.cachedQuotes(List.of(item)).isEmpty());
+        verify(provider,times(1)).snapshot(anyList());
+    }
     @Test void partialDataFallsBackOnlyForMissingRowsAndIndicesAreExcluded() {
         doReturn(batch(List.of("600519.SH"))).when(provider).snapshot(anyList());
         var result=service.getQuotes(List.of(stock("600519.SH"),stock("600000.SH"),stock("000001.SH")));
@@ -112,7 +124,6 @@ class RealtimeQuoteServiceTest {
         HoldingService holdingService=new HoldingService();
         ReflectionTestUtils.setField(holdingService,"holdingDao",holdings);
         ReflectionTestUtils.setField(holdingService,"stockDao",stocks);
-        ReflectionTestUtils.setField(holdingService,"stockPriceDao",prices);
         ReflectionTestUtils.setField(holdingService,"quoteService",service);
         ReflectionTestUtils.setField(holdingService,"jdbc",jdbc);
         var snapshot=holdingService.getSnapshots(1L).get(0);
@@ -123,7 +134,7 @@ class RealtimeQuoteServiceTest {
         when(jdbc.queryForList(anyString(),eq(7L))).thenReturn(List.of(new HashMap<>(Map.of("stock_id",1L))));
         WatchlistController watchlist=new WatchlistController();
         ReflectionTestUtils.setField(watchlist,"jdbc",jdbc); ReflectionTestUtils.setField(watchlist,"stockDao",stocks);
-        ReflectionTestUtils.setField(watchlist,"stockPriceDao",prices); ReflectionTestUtils.setField(watchlist,"quoteService",service);
+        ReflectionTestUtils.setField(watchlist,"quoteService",service);
         var request=new MockHttpServletRequest(); request.getSession().setAttribute("userId",7L);
         var row=watchlist.getWatchlist(request,true).get(0);
         assertEquals(snapshot.getNativePrice(),row.get("price"));
@@ -132,6 +143,7 @@ class RealtimeQuoteServiceTest {
         holdingService.getSnapshots(1L,false);
         watchlist.getWatchlist(request,false);
         verify(provider,times(1)).snapshot(anyList());
+        verifyNoInteractions(prices);
         verify(jdbc,never()).update(anyString(),any(Object[].class));
         verify(holdings,never()).upsert(any());
     }

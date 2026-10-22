@@ -152,12 +152,12 @@ export interface StockDetailResponse {
   holding: Holding | null
   transactions: Transaction[]
   dividends: Dividend[]
-  livePrice?: number
+  livePrice?: number | null
   priceLive?: boolean
   priceSource?: string | null
   liveChangePct?: number | null
   livePreviousClose?: number | null
-  livePriceTs?: string
+  livePriceTs?: string | null
 }
 
 export interface AllocationItem {
@@ -183,7 +183,10 @@ export interface StockSearchItem {
   name: string
   market: string
   currency: string
-  price: number
+  price: number | null
+  priceLive?: boolean
+  priceSource?: string | null
+  priceTimestamp?: string | null
 }
 
 export interface CreateResponse {

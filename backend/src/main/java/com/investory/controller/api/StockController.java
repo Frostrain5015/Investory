@@ -26,7 +26,6 @@ import java.util.*;
 public class StockController {
 
     @Autowired private StockDao stockDao;
-    @Autowired private StockPriceDao stockPriceDao;
     @Autowired private HoldingDao holdingDao;
     @Autowired private HoldingService holdingService;
     @Autowired private TransactionDao transactionDao;
@@ -140,11 +139,10 @@ public class StockController {
         // livePrice：优先使用实时价，无实时价时该字段为 null（前端自行处理降级展示）
         r.put("livePrice", q != null ? q.price() : null);
         r.put("priceLive", q != null && q.live());
-        r.put("priceSource", q != null ? q.source() : "database");
+        r.put("priceSource", q != null ? q.source() : "unavailable");
         r.put("liveChangePct", q != null ? q.changePct() : null);
         r.put("livePreviousClose", q != null ? q.previousClose() : null);
-        // livePriceTs：实时报价的抓取时间；无实时价时退化为数据库中最新收盘日期字符串
-        r.put("livePriceTs", q != null ? (q.quoteTime() == null ? null : q.quoteTime().toString()) : (stockPriceDao.findLatest(stock.getId()) != null ? stockPriceDao.findLatest(stock.getId()).getTradeDate().toString() : null));
+        r.put("livePriceTs", q != null && q.quoteTime() != null ? q.quoteTime().toString() : null);
         return r;
     }
 
@@ -154,7 +152,7 @@ public class StockController {
      * <p>HTTP 方法：GET
      * <p>路径：/api/quote/{symbol}
      * <p>功能说明：仅返回最新价格，不包含完整持仓详情，适合轮询刷新场景。
-     *   优先返回实时报价，失败时降级为数据库最新收盘价。
+     *   使用共享报价快照，无法获取时明确返回空值。
      *
      * <p>请求参数：
      *   - symbol（路径参数）：股票代码
@@ -164,7 +162,7 @@ public class StockController {
      * {
      *   "symbol": String,     // 股票代码
      *   "price":  BigDecimal, // 当前价格（实时或收盘价）
-     *   "live":   boolean     // true 表示为实时价，false 表示为数据库收盘价
+     *   "live":   boolean     // true 表示已确认实时，false 表示非实时或不可用
      * }
      * </pre>
      *
@@ -179,9 +177,9 @@ public class StockController {
         Quote quote = quoteService.getQuote(stock);
         Map<String,Object> result = new LinkedHashMap<>();
         result.put("symbol",symbol);
-        result.put("price",quote != null ? quote.price() : stockPriceDao.findLatestClose(stock.getId()));
+        result.put("price",quote != null ? quote.price() : null);
         result.put("live",quote != null && quote.live());
-        result.put("source",quote != null ? quote.source() : "database");
+        result.put("source",quote != null ? quote.source() : "unavailable");
         result.put("quoteTime",quote != null ? quote.quoteTime() : null);
         return result;
     }

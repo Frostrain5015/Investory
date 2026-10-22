@@ -4,7 +4,9 @@ and regime-adaptive weight sets.
 
 Based on rolling 6-period IC analysis (20d forward, Group A, 705 stocks CSI300+CSI500).
 Last calibrated: 2026-05-07 (ic_value_fix2.json) — 6 periods covering Apr-2026 correction + recovery.
-Data sources: BaoStock PE/PB (fixed fallback) + Tushare daily(qfq).
+Calibration data sources: BaoStock PE/PB (fixed fallback) + Tushare daily(qfq).
+Runtime migrated to Hithink forward prices + valuation snapshots on 2026-10-22.
+The historical IC evidence below has not been revalidated against this new feed.
 Re-run: python factor_analysis.py --rolling 6 --step 20 --group A --universe cs300_500_universe.json
 
 To re-activate an excluded factor: move it from EXCLUDED_FACTORS back to FACTOR_WEIGHTS.

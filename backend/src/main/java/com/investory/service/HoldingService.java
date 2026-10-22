@@ -24,7 +24,7 @@ import java.util.*;
  *   <li>加载并缓存汇率表，将多币种资产统一折算为人民币（CNY）进行展示</li>
  * </ul>
  *
- * <p>价格优先级：最新报价快照（RealtimeQuoteService）> 本地收盘价 > 持仓均价（兜底）。
+ * <p>价格优先级：共享报价快照（含服务内保留报价）> 标记为成本估值的持仓均价。
  */
 @Service
 public class HoldingService {
@@ -33,7 +33,6 @@ public class HoldingService {
     @Autowired private DividendDao dividendDao;           // 分红记录 DAO
     @Autowired private HoldingDao holdingDao;             // 持仓 DAO
     @Autowired private StockDao stockDao;                 // 股票基本信息 DAO
-    @Autowired private StockPriceDao stockPriceDao;       // 历史收盘价 DAO
     @Autowired private RealtimeQuoteService quoteService; // 实时行情服务
     @Autowired private CostCalculationService costCalcService; // 成本计算服务
     @Autowired private JdbcTemplate jdbc;                 // JDBC 模板，用于查询汇率
@@ -75,14 +74,14 @@ public class HoldingService {
      * <p>价格来源优先级：
      * <ol>
      *   <li>实时行情（盘中有效）</li>
-     *   <li>T-1 收盘价（收盘后或无实时行情时兜底）</li>
+     *   <li>报价服务中的有效保留报价</li>
      *   <li>持仓均价（完全无行情时的最终兜底，避免 NPE）</li>
      * </ol>
      *
      * <p>日涨跌逻辑：
      * <ul>
-     *   <li>盘中（有实时价格）：当前实时价 vs T-1 收盘价</li>
-     *   <li>收盘后（无实时价格）：T-1 收盘价 vs T-2 收盘价</li>
+     *   <li>涨跌只使用同一报价携带的昨收、涨跌额和涨跌幅</li>
+     *   <li>缺少报价或昨收时不从行情数据库补齐</li>
      * </ul>
      *
      * <p>所有价格与金额均会通过汇率折算为人民币（CNY）后存入快照，
@@ -101,7 +100,8 @@ public class HoldingService {
             Stock stock = stockDao.findById(holding.getStockId());
             if (stock != null) stocks.put(stock.getId(), stock);
         }
-        Map<String,Quote> quotes = refreshQuotes ? quoteService.getQuotes(new ArrayList<>(stocks.values())) : Map.of();
+        var symbols = new ArrayList<>(stocks.values());
+        Map<String,Quote> quotes = refreshQuotes ? quoteService.getQuotes(symbols) : quoteService.cachedQuotes(symbols);
 
         // Load exchange rates to CNY
         // 第2步：加载各币种到人民币的汇率（当日缓存，避免重复查库）
@@ -124,29 +124,20 @@ public class HoldingService {
             snap.setCurrency(stock.getCurrency());
             snap.setTotalShares(h.getTotalShares());
 
-            // Fetch T-1 and T-2 closes once; reused for both price fallback and change calculation
-            // 第5步：一次性取最近两个交易日收盘价，同时用于价格兜底和涨跌幅计算
-            List<StockPrice> latestTwo = stockPriceDao.findLatestTwo(h.getStockId());
-            StockPrice t1 = latestTwo.size() > 0 ? latestTwo.get(0) : null; // T-1（最新）收盘价记录
-            StockPrice t2 = latestTwo.size() > 1 ? latestTwo.get(1) : null; // T-2（次新）收盘价记录
-
-            // Get price (before any conversion)
-            // 第6步：优先尝试获取实时行情价格
+            // QuoteService owns provider fallback and retained snapshots.
+            // This presentation path never queries the historical price table.
             Quote quote = quotes.get(stock.getSymbol());
-            boolean hasQuote = quote != null; // 是否有实时行情
+            boolean hasQuote = quote != null;
             BigDecimal price = hasQuote ? quote.price() : null;
             if (hasQuote) {
                 snap.setPriceTimestamp(quote.quoteTime() == null ? null : quote.quoteTime().toString());
                 snap.setPriceSource(quote.source());
                 snap.setPriceLive(quote.live());
-            } else if (t1 != null) {
-                // 无实时行情时降级到 T-1 收盘价
-                price = t1.getClose();
-                snap.setPriceSource("database");
-                snap.setPriceTimestamp(t1.getTradeDate().toString());
             }
             if (price == null) snap.setPriceSource("cost");
-            price = price != null ? price : h.getAvgCost(); // 最终兜底：用均价代替，防止空指针
+            // Preserve the existing cost-valuation fallback for aggregate totals.
+            // It is explicitly marked and never used to invent today's movement.
+            price = price != null ? price : h.getAvgCost();
 
             // Native values (original currency, before CNY conversion)
             // 第7步：存储原始币种数值（不转 CNY），供前端双币种展示
@@ -166,25 +157,18 @@ public class HoldingService {
             snap.setTotalInvested(h.getTotalInvested().multiply(rate).setScale(2, RoundingMode.HALF_UP));
             snap.setTotalDividends(h.getTotalDividends().multiply(rate).setScale(2, RoundingMode.HALF_UP));
 
-            // Today's change:
-            // - Market open (live price available): live vs T-1 close
-            // - Market closed (no live price):       T-1 close vs T-2 close
-            // 第9步：计算当日涨跌金额和涨跌幅
-            // 盘中用实时价对比 T-1 收盘；收盘后用 T-1 对比 T-2
-            BigDecimal currentForChange = hasQuote ? price : (t1 != null ? t1.getClose() : null); // 用于计算涨跌的"今价"
-            BigDecimal prevClose = hasQuote
-                ? (quote.previousClose() != null ? quote.previousClose()
-                    : "hithink_finance_api".equals(quote.source()) ? null : t1 != null ? t1.getClose() : null)
-                : t2 != null ? t2.getClose() : null;
-            if (hasQuote && quote.change() != null) prevClose = price.subtract(quote.change());
-            if (currentForChange != null && prevClose != null && prevClose.compareTo(BigDecimal.ZERO) > 0) {
-                BigDecimal changePerShare = currentForChange.subtract(prevClose); // 每股涨跌额
-                snap.setNativeChangeToday(changePerShare);
-                // 当日持仓盈亏金额 = 每股涨跌 × 持仓股数 × 汇率（转 CNY）
-                snap.setChangeToday(changePerShare.multiply(h.getTotalShares()).multiply(rate).setScale(2, RoundingMode.HALF_UP));
-                // 当日涨跌幅（%）= 每股涨跌 / 昨收 × 100
-                snap.setChangePctToday(changePerShare.divide(prevClose, 4, RoundingMode.HALF_UP)
-                        .multiply(new BigDecimal("100")).setScale(2, RoundingMode.HALF_UP));
+            // Derive all movement from one provider snapshot, without mixing
+            // a current API price with an unrelated historical database close.
+            BigDecimal previous = hasQuote ? quote.previousClose() : null;
+            BigDecimal change = hasQuote ? quote.change() : null;
+            if (change == null && previous != null) change = price.subtract(previous);
+            if (change != null) {
+                snap.setNativeChangeToday(change);
+                snap.setChangeToday(change.multiply(h.getTotalShares()).multiply(rate).setScale(2, RoundingMode.HALF_UP));
+                if (previous == null) previous = price.subtract(change);
+                if (previous.signum() > 0) {
+                    snap.setChangePctToday(change.multiply(BigDecimal.valueOf(100)).divide(previous, 2, RoundingMode.HALF_UP));
+                }
             }
 
             if (hasQuote && quote.changePct() != null) snap.setChangePctToday(quote.changePct());

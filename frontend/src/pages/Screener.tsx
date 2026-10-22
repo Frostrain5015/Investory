@@ -230,7 +230,7 @@ export default function Screener({ embedded }: { embedded?: boolean }) {
                     <span className="font-medium text-slate-900">{displaySymbol(r.symbol, r.market)}</span>
                     <span className="ml-2 text-slate-600">{r.name}</span>
                     <span className="ml-2 text-xs text-slate-400">{r.market}</span>
-                    {r.price > 0 && <span className="ml-2 text-xs text-blue-600">¥{r.price.toFixed(2)}</span>}
+                    {r.price != null && r.price > 0 && <span className="ml-2 text-xs text-blue-600">¥{r.price.toFixed(2)}</span>}
                   </button>
                 ))}
               </motion.div>
