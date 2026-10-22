@@ -4,6 +4,7 @@ deploy.py — Safe deploy to Alibaba Cloud server + GitHub desktop release.
 Usage:
     python deploy.py               # build JAR locally then deploy to cloud
     python deploy.py --no-build    # skip Maven build, use existing JAR
+    python deploy.py --no-build --allow-unpushed  # explicit offline cloud release; record pending Git synchronization
     python deploy.py --release     # also publish a desktop client GitHub release
     python deploy.py --release-only  # ONLY publish the desktop release (no cloud)
 
@@ -247,7 +248,8 @@ def main():
     client = ssh_connect()
     try:
         deploy_cloud(client, Path(REPO_ROOT), read_current_version(),
-                     os.environ.get("DEPLOY_HEALTH_URL", "http://127.0.0.1:8443/api/session"))
+                     os.environ.get("DEPLOY_HEALTH_URL", "http://127.0.0.1:8443/api/session"),
+                     allow_unpushed="--allow-unpushed" in sys.argv)
     finally:
         client.close()
     print("Deploy complete.")

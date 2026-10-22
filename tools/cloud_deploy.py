@@ -178,12 +178,15 @@ def wait_health(client, health_url: str, engine: bool) -> None:
     raise RuntimeError("Cloud services did not become ready")
 
 
-def deploy_cloud(client, root: Path, version: str, health_url: str) -> dict:
+def deploy_cloud(client, root: Path, version: str, health_url: str, *, allow_unpushed: bool = False) -> dict:
     if git(root, "status", "--porcelain"):
         raise RuntimeError("Commit the complete release before deploying")
     commit = git(root, "rev-parse", "HEAD")
-    if commit != git(root, "rev-parse", "origin/master"):
+    pushed = commit == git(root, "rev-parse", "origin/master")
+    if not pushed and not allow_unpushed:
         raise RuntimeError("Push this release to origin/master before deploying")
+    if not pushed:
+        print("Explicit offline release: source commit is NOT confirmed pushed to origin/master.", flush=True)
     previous = remote(client, "test ! -f " + APP_ROOT + "/release.json || cat " + APP_ROOT + "/release.json")
     previous_commit = json.loads(previous).get("commit") if previous else None
     if previous_commit is not None:
@@ -191,7 +194,7 @@ def deploy_cloud(client, root: Path, version: str, health_url: str) -> dict:
     files, removed = release_files(root, previous_commit)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     stage = f"{APP_ROOT}/releases/{version}-{commit[:12]}-{stamp}"
-    manifest = {"version": version, "commit": commit, "createdAt": stamp,
+    manifest = {"version": version, "commit": commit, "pushed": pushed, "createdAt": stamp,
                 "files": {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in files.items()},
                 "removed": removed}
     payload = {"root": APP_ROOT, "stage": stage, "hashes": dict(manifest["files"]), "removed": removed}

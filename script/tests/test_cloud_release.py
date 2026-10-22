@@ -7,12 +7,30 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.cloud_deploy import REMOTE_FILES, runtime_path
+from tools.cloud_deploy import REMOTE_FILES, runtime_path, deploy_cloud
 
 
 class CloudReleaseTest(unittest.TestCase):
+    def test_offline_release_requires_explicit_opt_in_and_a_clean_commit(self):
+        with patch("tools.cloud_deploy.git", side_effect=["", "head", "remote-head"]), \
+                patch("tools.cloud_deploy.remote") as remote:
+            with self.assertRaisesRegex(RuntimeError, "Push this release"):
+                deploy_cloud(None, Path("."), "6.3.6", "http://localhost")
+            remote.assert_not_called()
+        with patch("tools.cloud_deploy.git", side_effect=["dirty"]), \
+                patch("tools.cloud_deploy.remote") as remote:
+            with self.assertRaisesRegex(RuntimeError, "Commit the complete release"):
+                deploy_cloud(None, Path("."), "6.3.6", "http://localhost", allow_unpushed=True)
+            remote.assert_not_called()
+        with patch("tools.cloud_deploy.git", side_effect=["", "head", "remote-head"]), \
+                patch("tools.cloud_deploy.remote", side_effect=RuntimeError("remote-read-boundary")) as remote:
+            with self.assertRaisesRegex(RuntimeError, "remote-read-boundary"):
+                deploy_cloud(None, Path("."), "6.3.6", "http://localhost", allow_unpushed=True)
+            self.assertEqual(remote.call_count, 1)
+
     def test_runtime_mapping_excludes_secrets_caches_and_evaluations(self):
         self.assertEqual(runtime_path("script/model_transport.py"), "script/model_transport.py")
         self.assertEqual(runtime_path("backend/src/main/python/stocksage_alpha/src/factors/technical/__init__.py"),
