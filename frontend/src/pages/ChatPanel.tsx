@@ -2,9 +2,9 @@ import type { PortfolioCard, PicksCard, ReportArtifact, ToolCategory, TimelineSt
 import MarkdownBody from '@/features/chat/MarkdownBody'
 import { getChatMessages, useChatMessages } from '@/features/chat/store'
 import type { BrowserSpeechRecognition, SpeechRecognitionWindow } from '@/types/speech-recognition'
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle, Brain, BarChart2, Mic } from 'lucide-react'
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, useId } from 'react'
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
+import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle, Brain, BarChart2, Mic, ChevronDown } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { usePrompt } from '@/hooks/use-prompt'
@@ -17,6 +17,9 @@ import { getCachedSuggestions, getSuggestionsPromise } from '@/services/aiPreloa
 import { BASE } from '@/services/api'
 import { useModels } from '@/hooks/use-models'
 import ModelSelector from '@/features/chat/ModelSelector'
+import { interruptedTurn, restoreMessage } from '@/features/chat/streamFailure'
+import ConversationNotice from '@/features/chat/ConversationNotice'
+import { groupTimeline, toolGroupState, type ToolStep } from '@/features/chat/toolGroups'
 import { useTheme } from '@/hooks/use-theme'
 
 /** A single step in the agent's reasoning trace. Either a chunk of native
@@ -64,6 +67,7 @@ function toolStyle(step: Extract<TimelineStep, { kind: 'tool' }>) {
   const cat: ToolCategory = step.category || 'query'
   const isStockSage = isStockSageTool(step.name)
   const Icon = getToolIcon(step.name, cat)
+  if (step.interrupted) return { label: 'text-amber-600 dark:text-amber-400', dot: 'bg-amber-400', Icon }
   if (step.error) {
     return { label: 'text-red-600', dot: 'bg-red-400', Icon }
   }
@@ -188,7 +192,7 @@ function ToolStepDisplay({ step, idx, lang, isLast, noAnimate }: { step: Extract
   const catColor = stockSage || step.category === 'analysis' ? 'bg-purple-400'
     : step.category === 'mutation' ? 'bg-amber-400'
     : 'bg-slate-400'
-  const dotClass = step.error ? 'bg-red-400' : step.done ? 'bg-emerald-400' : catColor
+  const dotClass = step.interrupted ? 'bg-amber-400' : step.error ? 'bg-red-400' : step.done ? 'bg-emerald-400' : catColor
   return (
     <StepRow idx={idx} live={running} dotClass={dotClass} ringColor={catColor} isLast={isLast} noAnimate={noAnimate}>
       <div className={`flex items-center gap-1.5 text-[11px] ${label}`}>
@@ -221,8 +225,8 @@ function ToolStepDisplay({ step, idx, lang, isLast, noAnimate }: { step: Extract
         )}
         {step.error && (
           <>
-            <span className="text-[10px] text-red-500">{lang === 'en' ? 'failed' : '失败'}</span>
-            <span className="text-[10px] text-red-400 break-words">{step.error}</span>
+            <span className={`text-[10px] ${step.interrupted ? 'text-amber-600 dark:text-amber-400' : 'text-red-500'}`}>{step.interrupted ? (lang === 'en' ? 'interrupted' : '已中断') : (lang === 'en' ? 'failed' : '失败')}</span>
+            <span className={`text-[10px] break-words ${step.interrupted ? 'text-amber-600 dark:text-amber-400' : 'text-red-400'}`}>{step.error}</span>
           </>
         )}
       </div>
@@ -262,13 +266,13 @@ function StepRow({ idx, live, dotClass, ringColor, isLast, noAnimate, children }
       initial={noAnimate ? false : { opacity: 0, x: -6 }}
       animate={{ opacity: 1, x: 0 }}
       transition={noAnimate ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1], delay: Math.min(idx * 0.05, 0.4) }}
-      className="relative pl-6 pb-2 last:pb-0"
+      className="timeline-step relative pl-6 pb-2 last:pb-0"
     >
       {/* Rail segment: from this node's center down to the next node's center. Drawn
           behind the dot (the dot's ring-white masks the overlap) and grows downward
           as the row enters. Omitted on the last node so the rail ends on a data point. */}
       {!isLast && (
-        <span className="timeline-rail absolute left-[7px] top-[7px] h-full w-px bg-slate-200" />
+        <span aria-hidden="true" className="timeline-rail" />
       )}
       {/* Node, centered on the rail (x=7px). ring-white lifts it off the line. */}
       <span className="absolute left-[3px] top-[3px] flex items-center justify-center">
@@ -282,12 +286,33 @@ function StepRow({ idx, live, dotClass, ringColor, isLast, noAnimate, children }
   )
 }
 
-/** Whether a step actually renders a node (empty text / empty thinking render
- * nothing, so they must not count as the rail's terminus). */
-function stepRenders(step: TimelineStep): boolean {
-  if (step.kind === 'text') return stripThinkTags(step.text).trim() !== ''
-  if (step.kind === 'thinking') return step.text.trim() !== ''
-  return true
+/** A disclosure on the main rail; child calls retain their own connected rail. */
+function ToolGroupDisplay({ tools, idx, lang, isLast, noAnimate }: { tools: ToolStep[]; idx: number; lang: 'zh' | 'en' | 'hk'; isLast: boolean; noAnimate?: boolean }) {
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  const reducedMotion = useReducedMotion()
+  const { running, errors, state } = toolGroupState(tools)
+  const title = running ? (lang === 'en' ? 'Running tools' : '正在运行工具') : (lang === 'en' ? `Ran ${tools.length} tools` : `已运行 ${tools.length} 个工具`)
+  const status = errors ? (lang === 'en' ? `${errors} interrupted or failed` : `${errors} 个工具中断或失败`) : title
+  const dotClass = state === 'warning' ? 'bg-amber-400' : state === 'running' ? 'bg-violet-400' : 'bg-emerald-400'
+  return (
+    <StepRow idx={idx} live={running} dotClass={dotClass} ringColor={dotClass} isLast={isLast} noAnimate={noAnimate}>
+      <button type="button" aria-expanded={open} aria-controls={id} aria-label={`${title}${errors ? `，${status}` : ''}`} title={status}
+        onClick={() => setOpen(value => !value)}
+        className="flex min-h-6 items-center gap-1.5 rounded text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400">
+        <span>{title}</span>
+        <ChevronDown aria-hidden="true" size={12} className={`shrink-0 transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`} />
+      </button>
+      <AnimatePresence initial={false}>
+        {open && <motion.div id={id} key="tools" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
+          transition={{ duration: reducedMotion ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden">
+          <div className="mt-1.5 max-h-64 overflow-y-auto overscroll-contain pr-2 pb-1">
+            {tools.map((tool, index) => <ToolStepDisplay key={tool.callId || index} step={tool} idx={index} lang={lang} isLast={index === tools.length - 1} noAnimate />)}
+          </div>
+        </motion.div>}
+      </AnimatePresence>
+    </StepRow>
+  )
 }
 
 /** Renders an array of TimelineSteps as a CONNECTED vertical rail: a continuous
@@ -298,13 +323,16 @@ function stepRenders(step: TimelineStep): boolean {
  * Behavior/order is unchanged — only the visuals. */
 function TimelineRenderer({ steps, done, lang, noAnimate }: { steps: TimelineStep[]; done: boolean; lang: 'zh' | 'en' | 'hk'; noAnimate?: boolean }) {
   if (steps.length === 0) return null
-  // Index of the last step that actually renders — that node ends the rail.
-  let lastIdx = -1
-  for (let i = steps.length - 1; i >= 0; i--) { if (stepRenders(steps[i])) { lastIdx = i; break } }
+  const entries = groupTimeline(steps)
   return (
     <div className="relative mb-2">
-      {steps.map((step, i) => {
-        const isLast = i === lastIdx
+      {entries.map((entry, entryIndex) => {
+        const i = entry.index
+        const isLast = entryIndex === entries.length - 1
+        if (entry.kind === 'tools') return entry.tools.length > 1
+          ? <ToolGroupDisplay key={i} tools={entry.tools} idx={i} isLast={isLast} lang={lang} noAnimate={noAnimate} />
+          : <ToolStepDisplay key={i} step={entry.tools[0]} idx={i} isLast={isLast} lang={lang} noAnimate={noAnimate} />
+        const step = entry.step
         if (step.kind === 'text') {
           const body = stripThinkTags(step.text)
           if (!body.trim()) return null
@@ -352,7 +380,6 @@ function TimelineRenderer({ steps, done, lang, noAnimate }: { steps: TimelineSte
             </StepRow>
           )
         }
-        if (step.kind === 'tool') return <ToolStepDisplay key={i} step={step} idx={i} isLast={isLast} lang={lang} noAnimate={noAnimate} />
         return null  // unknown/legacy step kinds (e.g. old 'skill') — skip gracefully
       })}
     </div>
@@ -376,7 +403,6 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const confirm = useConfirm()
   const modelStore = useModels()
   const { theme } = useTheme()
-  const [requestError, setRequestError] = useState('')
   // 'idle' = collapsed to the floating button; otherwise dock/expanded.
   const [internalMode, setInternalMode] = useState<'dock' | 'expanded'>(defaultMode)
   const mode: ChatMode = open ? internalMode : 'idle'
@@ -455,6 +481,8 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [rememberConfirm, setRememberConfirm] = useState(false)
   const [suggestions, setSuggestions] = useState<string[]>(() => getCachedSuggestions() || [])
   const esRef = useRef<EventSource | null>(null)
+  const requestVersion = useRef(0)
+  const historyReady = useRef<Promise<void>>(Promise.resolve())
   const scrollRef = useRef<HTMLDivElement>(null)
   const hairlineRef = useRef<HTMLDivElement>(null)
   const headerRef = useRef<HTMLDivElement>(null)
@@ -490,34 +518,13 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   // Replay persisted history on mount, if nothing in memory yet
   useEffect(() => {
     if (getChatMessages().length > 0) return
-    fetch(`${BASE}/api/ai/history`, { credentials: 'include' })
+    const version = requestVersion.current
+    historyReady.current = fetch(`${BASE}/api/ai/history`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
+        if (version !== requestVersion.current || getChatMessages().length > 0) return
         if (Array.isArray(d.messages) && d.messages.length > 0) {
-          const restored: Message[] = d.messages.map((m: { role: string; content: string; thinking?: string; artifacts?: ReportArtifact[] }) => {
-            // The backend stores the structured timeline as JSON in the `thinking` field.
-            // Older rows contain a raw thinking string — handle both shapes.
-            let timeline: TimelineStep[] | undefined
-            let thinkingLegacy: string | undefined
-            const raw = m.thinking?.trim()
-            if (raw) {
-              if (raw.startsWith('[')) {
-                try {
-                  const parsed = JSON.parse(raw)
-                  if (Array.isArray(parsed)) timeline = parsed as TimelineStep[]
-                } catch { thinkingLegacy = raw }
-              } else {
-                thinkingLegacy = raw
-              }
-            }
-            return {
-              role: m.role === 'user' ? 'user' : m.role === 'assistant' ? 'assistant' : 'system',
-              content: m.content,
-              ...(timeline ? { timeline } : {}),
-              ...(thinkingLegacy ? { thinking: thinkingLegacy } : {}),
-              ...(m.artifacts?.length ? { artifacts: m.artifacts } : {}),
-            }
-          })
+          const restored: Message[] = d.messages.map(restoreMessage)
           setMessages(restored)
           // Restore the conversation ID so subsequent operations (e.g. delete) work correctly
           if (d.conversationId && d.conversationId > 0) convIdRef.current = d.conversationId
@@ -559,21 +566,25 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     prevLen.current = messages.length
   }, [messages, streaming])
 
-  // Attach all SSE handlers to an EventSource. `baseMessages` is the conversation
-  // the final assistant message is appended to. Extracted so both send() and the
-  // on-reload resume (#8) share one code path.
-  function attachStream(es: EventSource, baseMessages: Message[]) {
-      es.addEventListener('strategy', (e) => { const d = JSON.parse(e.data); pendingStrategy.current = { name: d.name, desc: d.description, code: d.code } })
-      es.addEventListener('portfolio_card', (e) => { pendingCard.current = { type: 'portfolio', data: JSON.parse(e.data) } })
-      es.addEventListener('picks_card', (e) => { pendingCard.current = { type: 'picks', data: JSON.parse(e.data) } })
-      es.addEventListener('artifact', (e) => {
+  // Share handlers for new and resumed turns. Ignore queued events from closed streams.
+  function attachStream(es: EventSource) {
+      let settled = false
+      const listen = (name: string, handler: (event: MessageEvent<string>) => void) => {
+        es.addEventListener(name, event => {
+          if (!settled && esRef.current === es) handler(event as MessageEvent<string>)
+        })
+      }
+      listen('strategy', (e) => { const d = JSON.parse(e.data); pendingStrategy.current = { name: d.name, desc: d.description, code: d.code } })
+      listen('portfolio_card', (e) => { pendingCard.current = { type: 'portfolio', data: JSON.parse(e.data) } })
+      listen('picks_card', (e) => { pendingCard.current = { type: 'picks', data: JSON.parse(e.data) } })
+      listen('artifact', (e) => {
         try {
           const artifact = JSON.parse(e.data) as ReportArtifact
           if (artifact?.title) pendingArtifacts.current = [...pendingArtifacts.current, artifact]
         } catch { /* Ignore malformed or unavailable optional state. */ }
       })
-      es.addEventListener('ask', (e) => { const d = JSON.parse(e.data); setAskData({ question: d.question, options: d.options || [], multiSelect: d.multiSelect || false }); setAskChecked(new Set()); setAskOther('') })
-      es.addEventListener('confirm', (e) => {
+      listen('ask', (e) => { const d = JSON.parse(e.data); setAskData({ question: d.question, options: d.options || [], multiSelect: d.multiSelect || false }); setAskChecked(new Set()); setAskOther('') })
+      listen('confirm', (e) => {
         try {
           const raw = JSON.parse(e.data); const d = raw.data || raw
           const parsed: ConfirmData = typeof d === 'string' ? JSON.parse(d) : d
@@ -585,20 +596,20 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           }
         } catch { /* Ignore malformed or unavailable optional state. */ }
       })
-      es.addEventListener('kb', (e) => {
+      listen('kb', (e) => {
         const d = JSON.parse(e.data) as { topic?: string }
         if (!d.topic) return
         stampClosedElapsed(timelineRef.current)
         timelineRef.current = [...timelineRef.current, { kind: 'kb', topic: d.topic }]
         pushTimeline()
       })
-      es.addEventListener('memory', (e) => {
+      listen('memory', (e) => {
         const d = JSON.parse(e.data) as { count?: string | number }
         stampClosedElapsed(timelineRef.current)
         timelineRef.current = [...timelineRef.current, { kind: 'memory', count: d.count }]
         pushTimeline()
       })
-      es.addEventListener('tool', (e) => {
+      listen('tool', (e) => {
         const d = JSON.parse(e.data) as { name?: string; category?: ToolCategory; callId?: string; detail?: string }
         const name = d.name || ''
         if (!name) return
@@ -608,15 +619,15 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         timelineRef.current = [...timelineRef.current, { kind: 'tool', name, category, done: false, ...(d.callId ? { callId: d.callId } : {}), ...(d.detail ? { detail: d.detail } : {}) }]
         pushTimeline()
       })
-      es.addEventListener('tool_end', (e) => {
+      listen('tool_end', (e) => {
         const d = JSON.parse(e.data) as { name?: string; summary?: string; callId?: string }
         finalizeToolStep(d.callId, d.name || '', { done: true, ...(d.summary ? { summary: d.summary } : {}) })
       })
-      es.addEventListener('tool_fail', (e) => {
+      listen('tool_fail', (e) => {
         const d = JSON.parse(e.data) as { name?: string; error?: string; callId?: string }
         finalizeToolStep(d.callId, d.name || '', { done: true, error: d.error || '工具执行失败' })
       })
-      es.addEventListener('token', (e) => {
+      listen('token', (e) => {
         const d: SseEvent = JSON.parse(e.data)
         const chunk = d.msg || ''
         if (!chunk) return
@@ -634,7 +645,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         }
         pushTimeline()
       })
-      es.addEventListener('reasoning', (e) => {
+      listen('reasoning', (e) => {
         const d: SseEvent = JSON.parse(e.data)
         const chunk = d.msg || ''
         if (!chunk) return
@@ -649,7 +660,9 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         }
         pushTimeline()
       })
-      es.addEventListener('done', () => {
+      listen('done', () => {
+        if (settled) return
+        settled = true
         const raw = streamAccum.current
         // Stamp ALL thinking segments (including the last one — gen is done)
         timelineRef.current.forEach((s, i) => {
@@ -672,7 +685,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             content = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').trim()
           }
         }
-        const msg: Message = { role: 'assistant', content: content.trim() || raw || 'StockSage 报告已生成。', timeline: timelineOut }
+        const msg: Message = { role: 'assistant', content: content.trim() || raw, timeline: timelineOut }
         const s = pendingStrategy.current
         if (s) { msg.hasCode = true; msg.strategyName = s.name; msg.strategyDesc = s.desc; msg.strategyCode = s.code; pendingStrategy.current = null }
         const card = pendingCard.current
@@ -683,25 +696,20 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           const codeMatch = raw.match(/```(?:python)?\s*\n(def decide\(ctx[^)]*\):[\s\S]*?)```/)
           if (codeMatch) { const nameMatch = raw.match(/(?:策略名称|策略)[：:]\s*(.+)/); msg.hasCode = true; msg.strategyName = nameMatch ? nameMatch[1].trim() : ''; msg.strategyCode = codeMatch[1].trim(); msg.strategyDesc = '' }
         }
-        setMessages([...baseMessages, msg]); setStreaming(false); es.close(); esRef.current = null
+        setMessages([...getChatMessages(), msg]); setStreaming(false); es.close(); esRef.current = null
       })
-      es.addEventListener('error', (e) => {
-        pendingStrategy.current = null
-        pendingArtifacts.current = []
+      listen('error', (e) => {
+        if (settled) return
+        settled = true
         let errMsg = t.chat.errorNetwork
+        let kind: 'error' | 'stopped' = 'error'
         try {
           const raw = (e as MessageEvent).data
-          if (raw) { const d: SseEvent = JSON.parse(raw); errMsg = d.msg || t.chat.errorUnknown }
+          if (raw) { const d: SseEvent & { kind?: string } = JSON.parse(raw); errMsg = d.msg || t.chat.errorUnknown; if (d.kind === 'stopped') kind = 'stopped' }
         } catch { /* Ignore malformed or unavailable optional state. */ }
-        setMessages([...baseMessages, { role: 'system', content: `⚠ ${errMsg}` }])
-        setStreaming(false); es.close(); esRef.current = null
+        finishInterrupted(errMsg, kind)
+        es.close(); esRef.current = null
       })
-      es.onerror = () => {
-        if (!streamAccum.current) {
-          setMessages([...baseMessages, { role: 'system', content: `⚠ ${t.chat.errorNetwork}` }])
-        }
-        setStreaming(false); es.close(); esRef.current = null
-      }
   }
 
   // #8 On mount, if a generation is already running server-side (e.g. the user
@@ -709,11 +717,13 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   // whole turn so the live timeline/text resume instead of being lost.
   useEffect(() => {
     let cancelled = false
-    fetch(`${BASE}/api/ai/status`, { credentials: 'include' }).then(r => r.json()).then(d => {
-      if (cancelled || !d?.active || streaming || esRef.current) return
+    const version = requestVersion.current
+    fetch(`${BASE}/api/ai/status`, { credentials: 'include' }).then(r => r.json()).then(async d => {
+      await historyReady.current
+      if (cancelled || version !== requestVersion.current || !d?.active || streaming || esRef.current) return
       setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; pendingArtifacts.current = []
       const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
-      attachStream(es, getChatMessages())
+      attachStream(es)
     }).catch(() => {})
     return () => { cancelled = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -751,23 +761,29 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     if (modelStore.busy || modelStore.loading) return
     if (!selected?.configured) { toast('请先在设置中添加并选择模型', false); return }
     const modelId = selected.id
-    setRequestError('')
+    const version = ++requestVersion.current
     setInput('')
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
     setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; pendingArtifacts.current = []; setAskData(null); setAskChecked(new Set()); setAskOther(''); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
     try {
-      const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, modelId, webSearch, conversationId: convIdRef.current || undefined }) })
-      if (!resp.ok) { setRequestError(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
+      const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages.filter(message => message.role !== 'system' && message.content.trim()).map(({ role, content }) => ({ role, content })), modelId, webSearch, conversationId: convIdRef.current || undefined }) })
+      if (version !== requestVersion.current) {
+        // A stop can precede the POST response; cancel once the server has started.
+        fetch(`${BASE}/api/ai/cancel`, { method: 'POST', credentials: 'include' }).catch(() => {})
+        return
+      }
+      if (!resp.ok) { finishInterrupted(`${t.chat.errorPrefix} HTTP ${resp.status}`); return }
       // Capture the server-assigned conversation id (auto-created on the first turn)
       // so deleting the active conversation later correctly clears this window.
       const data = await resp.json() as { conversationId?: number; error?: string }
-      if (data.error) { setRequestError(`${t.chat.errorPrefix} ${data.error}`); setStreaming(false); return }
+      if (version !== requestVersion.current) return
+      if (data.error) { finishInterrupted(data.error); return }
       if (data.conversationId && data.conversationId > 0) convIdRef.current = data.conversationId
       if (esRef.current) esRef.current.close()
       const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
-      attachStream(es, newMessages)
-    } catch { setRequestError('请求失败，请检查模型服务后重试'); setStreaming(false) }
+      attachStream(es)
+    } catch { if (version === requestVersion.current) finishInterrupted(lang === 'en' ? 'Request failed. Check your connection and try again.' : '请求失败，请检查连接后重试') }
   }
 
   const convIdRef = useRef<number>(0)
@@ -777,7 +793,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   /** Reset local chat state without touching the database.
    *  Does NOT call /api/ai/clear — that endpoint destroys ALL user history. */
   function resetChat() {
-    setRequestError('')
+    requestVersion.current++
     setMessages([])
     setStreamText('')
     convIdRef.current = 0
@@ -806,16 +822,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     fetch(`${BASE}/api/ai/conversations/${id}`, { credentials: 'include' })
       .then(r => r.json() as Promise<{ messages?: { role: string; content: string; thinking?: string; artifacts?: ReportArtifact[] }[] }>)
       .then((d) => {
-        const restored = (d.messages || []).map((m) => {
-          let timeline: TimelineStep[] | undefined
-          let thinkingLegacy: string | undefined
-          const raw = m.thinking?.trim()
-          if (raw) {
-            if (raw.startsWith('[')) { try { const p = JSON.parse(raw); if (Array.isArray(p)) timeline = p } catch { thinkingLegacy = raw } }
-            else thinkingLegacy = raw
-          }
-          return { role: m.role === 'user' ? 'user' as const : m.role === 'assistant' ? 'assistant' as const : 'system' as const, content: m.content, ...(timeline ? { timeline } : {}), ...(thinkingLegacy ? { thinking: thinkingLegacy } : {}), ...(m.artifacts?.length ? { artifacts: m.artifacts } : {}) }
-        })
+        const restored = (d.messages || []).map(restoreMessage)
         setMessages(restored); convIdRef.current = id; setShowConvList(false)
       }).catch(() => {})
   }
@@ -829,31 +836,26 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         loadConvList()
       }).catch(() => {})
   }
-  function stopGeneration() {
-    if (esRef.current) { esRef.current.close(); esRef.current = null }
-    fetch(`${BASE}/api/ai/cancel`, { method: 'POST', credentials: 'include' }).catch(() => {})
-    // Persist whatever partial text + timeline we have so it doesn't disappear
-    const partial = streamAccum.current.trim()
-    timelineRef.current.forEach((s, i) => {
-      if (s.kind === 'thinking' && s._ts != null && s._elapsed == null) {
-        timelineRef.current[i] = { ...s, _elapsed: Date.now() - s._ts }
-      }
-      // Close out any tool still spinning so reloaded history doesn't show an
-      // eternal "调用中…" — mark it done with an aborted note.
-      if (s.kind === 'tool' && !s.done) {
-        timelineRef.current[i] = { ...s, done: true, error: lang === 'en' ? 'stopped' : '已停止' }
-      }
-    })
-    const partialTimeline = [...timelineRef.current]
-    streamAccum.current = ''; timelineRef.current = []
-    setStreamText(''); setStreamTimeline([]); setStreaming(false)
-    if (partial || partialTimeline.length > 0) {
-      setMessages([...messages, {
-        role: 'assistant',
-        content: partial || '（已停止）',
-        timeline: partialTimeline.length > 0 ? partialTimeline : undefined,
-      }])
+  function finishInterrupted(error: string, kind: 'error' | 'stopped' = 'error') {
+    const strategy = pendingStrategy.current
+    const card = pendingCard.current
+    const extra: Partial<Message> = {
+      ...(strategy ? { hasCode: true, strategyName: strategy.name, strategyDesc: strategy.desc, strategyCode: strategy.code } : {}),
+      ...(card?.type === 'portfolio' ? { portfolioCard: card.data } : {}),
+      ...(card?.type === 'picks' ? { picksCard: card.data } : {}),
     }
+    setMessages([...getChatMessages(), ...interruptedTurn(streamAccum.current, timelineRef.current, pendingArtifacts.current, error, Date.now(), kind, extra)])
+    streamAccum.current = ''; timelineRef.current = []
+    pendingArtifacts.current = []; pendingStrategy.current = null; pendingCard.current = null
+    setStreamText(''); setStreamTimeline([]); setStreaming(false)
+    setAskData(null); setConfirmData(null); setConfirmStatus(null)
+  }
+
+  function stopGeneration() {
+    requestVersion.current++
+    if (esRef.current) { esRef.current.close(); esRef.current = null }
+    finishInterrupted(lang === 'en' ? 'You stopped this response.' : '你已停止这次回复。', 'stopped')
+    fetch(`${BASE}/api/ai/cancel`, { method: 'POST', credentials: 'include' }).catch(() => {})
   }
   function handleKeyDown(e: React.KeyboardEvent) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }
 
@@ -964,7 +966,6 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           <Send className="w-4 h-4 text-white" />
         </button>}
       </div>
-      {requestError && <p role="alert" className="px-3 pb-1 text-xs text-red-600 dark:text-red-400">{requestError}</p>}
     </div>
   )
 
@@ -989,6 +990,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           </div>
         )}
         {Array.isArray(messages) && messages.map((m, i) => (
+          m.role === 'system' ? <ConversationNotice key={i} message={m} /> :
           <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
               m.role === 'user'
@@ -1054,7 +1056,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         ))}
         {streaming && (
           <div className="flex justify-start">
-            <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${streamText.startsWith('⚠') ? 'bg-red-50 text-red-700 border border-red-100' : 'bg-slate-50 text-slate-700 border border-slate-100'}`}>
+            <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed bg-slate-50 text-slate-700 border border-slate-100`}>
               {(() => {
                 // The live answer is already interleaved into streamTimeline as
                 // text steps, so there's no separate "after" block — order is exact.

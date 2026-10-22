@@ -1,11 +1,68 @@
 package com.investory.crawler;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.*;
 
 class AiSessionManagerTest {
+    @Test
+    void stopBeforeProcessBindIsRememberedAndDoesNotEraseEarlierEvents() throws Exception {
+        var manager = new AiSessionManager();
+        manager.startSession(42);
+        manager.emitTool(42, "get_stock_report", "analysis", "c1", "");
+        manager.emitToken(42, "已收到的正文");
+        assertTrue(manager.cancel(42));
+        assertTrue(manager.isActive(42));
+        var process = mock(Process.class);
+        manager.bindProcess(42, process);
+        verify(process).destroyForcibly();
+        manager.emitError(42, "后续错误不能覆盖用户停止");
+        assertEquals("stopped", manager.terminalNotice(42).get("kind"));
+        manager.finishSession(42);
+        var mvc = MockMvcBuilders.standaloneSetup(new StreamController(manager)).build();
+        String replay = mvc.perform(get("/events")).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(replay.contains("get_stock_report"));
+        assertTrue(replay.contains("已收到的正文"));
+        assertTrue(replay.contains("stopped"));
+        manager.stopHeartbeats();
+    }
+
+    @RestController
+    static class StreamController {
+        final AiSessionManager manager;
+        StreamController(AiSessionManager manager) { this.manager=manager; }
+        @GetMapping(value="/events", produces=MediaType.TEXT_EVENT_STREAM_VALUE)
+        SseEmitter stream() { return manager.subscribe(42L); }
+    }
+
+    @Test
+    void quietToolsHaveTransportHeartbeatWithoutPollutingReplayBuffer() throws Exception {
+        var manager=new AiSessionManager();
+        manager.startSession(42L);
+        var mvc=MockMvcBuilders.standaloneSetup(new StreamController(manager)).build();
+        var first=mvc.perform(get("/events")).andExpect(request().asyncStarted()).andReturn();
+        assertTrue(first.getResponse().getContentAsString().contains(":connected"));
+        assertFalse(manager.hasReplayEvents(42L));
+        manager.emitTool(42L,"get_stock_report","analysis","call1","");
+        // More heartbeats than MAX_BUFFER: the original tool must still replay.
+        for(int i=0;i<600;i++) manager.sendHeartbeats();
+        assertTrue(first.getResponse().getContentAsString().contains(":keep-alive"));
+        var replay=mvc.perform(get("/events")).andExpect(request().asyncStarted()).andReturn();
+        assertTrue(replay.getResponse().getContentAsString().contains("get_stock_report"));
+        assertFalse(replay.getResponse().getContentAsString().contains(":keep-alive"));
+        manager.emitDone(42L);
+        assertTrue(replay.getResponse().getContentAsString().contains("event:done"));
+    }
 
     @Test
     void finishSessionKeepsReplayEventsForLateStreamSubscribers() {

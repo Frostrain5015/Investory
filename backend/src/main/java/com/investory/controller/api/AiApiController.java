@@ -110,6 +110,12 @@ public class AiApiController {
         List<Map<String, Object>> rawMessages = (List<Map<String, Object>>) body.get("messages");
         if (rawMessages == null || rawMessages.isEmpty()) return Map.of("error", "messages required");
 
+        if (session.isActive(uid)) return Map.of("error", "上一条回复正在收尾，请稍后重试");
+
+        // Status rows belong to the UI, never to model instructions.
+        rawMessages = rawMessages.stream().filter(m -> "user".equals(m.get("role")) || "assistant".equals(m.get("role"))).toList();
+        if (rawMessages.isEmpty()) return Map.of("error", "messages required");
+
         final boolean webSearch = Boolean.TRUE.equals(body.get("webSearch"));
 
         // Multi-conversation: accept optional conversationId, auto-create if absent.
@@ -180,6 +186,11 @@ public class AiApiController {
         session.startSession(uid);
 
         executor.submit(() -> {
+            StringBuilder accumContent = new StringBuilder();
+            List<Map<String, Object>> timeline = new ArrayList<>();
+            final List<Map<String, Object>> pendingArtifacts = new ArrayList<>();
+            Path tmpInput = null;
+            boolean completed = false;
             try {
                 File script = new File("script/ai_agent.py");
                 if (!script.exists()) {
@@ -187,13 +198,12 @@ public class AiApiController {
                 }
                 if (!script.exists()) {
                     session.emitError(uid, "AI 引擎脚本未找到");
-                    session.finishSession(uid);
                     return;
                 }
                 File scriptDir = script.getParentFile();
 
                 // Write messages to temp file
-                Path tmpInput = Files.createTempFile("ai_input_", ".json");
+                tmpInput = Files.createTempFile("ai_input_", ".json");
                 Map<String, Object> input = new LinkedHashMap<>();
                 input.put("messages", messages);
                 Files.writeString(tmpInput, json.writeValueAsString(input));
@@ -220,12 +230,9 @@ public class AiApiController {
                 // Accumulate assistant text + the timeline (interleaved thinking and tool steps).
                 // Timeline stays in chronological order: each new tool call ends the current
                 // thinking segment; the next reasoning chunk starts a fresh one.
-                StringBuilder accumContent = new StringBuilder();
-                List<Map<String, Object>> timeline = new ArrayList<>();
                 // Compact digest of this turn's tool results (#1), emitted by the
                 // agent as a [CONTEXT] line; persisted and replayed next turn.
                 final String[] toolContext = { null };
-                final List<Map<String, Object>> pendingArtifacts = new ArrayList<>();
                 // Pointer to the current open thinking step (so we can keep appending to it).
                 final Map<String, Object>[] openThinking = new Map[]{ null };
                 // Stamp _elapsed on the current open thinking step and close it.
@@ -269,7 +276,7 @@ public class AiApiController {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         if ("[DONE]".equals(line.trim())) {
-                            session.emitDone(uid);
+                            completed = true;
                         } else if (line.startsWith("[ASK]")) {
                             try {
                                 String jsonStr = line.substring(5).trim();
@@ -351,6 +358,8 @@ public class AiApiController {
                             session.emitConfirm(uid, line.substring(9).trim());
                         } else if (line.startsWith("[ERROR]")) {
                             session.emitError(uid, line.substring(7).trim());
+                            p.destroyForcibly();
+                            break;
                         } else if (line.startsWith("[REASONING]")) {
                             String payload = line.substring(11);
                             StringBuilder sb = new StringBuilder(payload.length());
@@ -389,27 +398,10 @@ public class AiApiController {
                 // reloaded history doesn't show 0s.
                 closeThinking.run();
 
-                // Persist assistant turn (content + structured timeline) once generation completes
-                if (uid > 0 && accumContent.length() > 0) {
-                    try {
-                        String content = accumContent.toString();
-                        if (content.length() > 8000) content = content.substring(0, 8000);
-                        jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'assistant', ?)",
-                            uid, convId, content);
-                        // Persist the entire timeline (answer text + thinking + tool steps)
-                        // as JSON in the 'thinking' role row, so we can faithfully replay the
-                        // interleaved trace on history reload. NEVER substring the JSON — a
-                        // truncated blob is invalid JSON and would be dropped on reload. If it
-                        // exceeds the safe cap, skip it: the frontend then falls back to
-                        // rendering the (separately persisted) answer text.
-                        if (!timeline.isEmpty()) {
-                            String tlJson = json.writeValueAsString(timeline);
-                            if (tlJson.length() <= 16000) {
-                                jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'thinking', ?)",
-                                    uid, convId, tlJson);
-                            }
-                        }
-                    } catch (Exception ignored) {}
+                if (finished && p.exitValue() != 0 && session.terminalNotice(uid).isEmpty()) {
+                    session.emitError(uid, "回复意外中断，请稍后重试");
+                } else if (!completed && session.terminalNotice(uid).isEmpty()) {
+                    session.emitError(uid, "回复未完整结束，请稍后重试");
                 }
                 // Persist this turn's tool-result digest (#1) — keep only the most
                 // recent one so the model gets a single, fresh continuity block.
@@ -423,8 +415,17 @@ public class AiApiController {
                     } catch (Exception ignored) {}
                 }
             } catch (Exception e) {
-                session.emitError(uid, e.getMessage());
+                session.emitError(uid, "回复意外中断，请稍后重试");
             } finally {
+                // Saving is independent of success: tool-only and partial turns count.
+                try {
+                    persistTurn(uid, convId, accumContent.toString(), timeline, !pendingArtifacts.isEmpty(), session.terminalNotice(uid));
+                } catch (Exception storageError) {
+                    org.slf4j.LoggerFactory.getLogger(AiApiController.class).error("Could not save AI turn for user {}", uid, storageError);
+                    session.emitError(uid, "对话记录保存失败，请保留当前页面");
+                }
+                if (completed && session.terminalNotice(uid).isEmpty()) session.emitDone(uid);
+                if (tmpInput != null) { try { Files.deleteIfExists(tmpInput); } catch (IOException ignored) {} }
                 session.finishSession(uid);
             }
         });
@@ -499,7 +500,7 @@ public class AiApiController {
         // Load messages for this conversation (reuse history stitching logic)
         List<Map<String, Object>> rows = jdbc.queryForList(
             "SELECT role, content FROM ai_chat_history WHERE user_id = ? AND conversation_id = ? " +
-            "AND role IN ('user','assistant','thinking') ORDER BY id ASC LIMIT 300", uid, id);
+            "AND role IN ('user','assistant','thinking','notice') ORDER BY id ASC LIMIT 300", uid, id);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> r : rows) {
             String role = String.valueOf(r.get("role"));
@@ -507,7 +508,7 @@ public class AiApiController {
             if ("thinking".equals(role) && !out.isEmpty()) {
                 Map<String, Object> last = out.get(out.size() - 1);
                 if ("assistant".equals(last.get("role"))) {
-                    last.put("thinking", content);
+                    last.put("thinking", String.valueOf(last.getOrDefault("thinking", "")) + content);
                     continue;
                 }
             }
@@ -539,7 +540,7 @@ public class AiApiController {
         try {
             convId = jdbc.queryForObject(
                 "SELECT conversation_id FROM ai_chat_history WHERE user_id = ? " +
-                "AND role IN ('user','assistant','thinking') " +
+                "AND role IN ('user','assistant','thinking','notice') " +
                 "ORDER BY id DESC LIMIT 1", Long.class, uid);
         } catch (Exception ignored) {}
 
@@ -568,7 +569,7 @@ public class AiApiController {
             try {
                 convId = jdbc.queryForObject(
                     "SELECT conversation_id FROM ai_chat_history WHERE user_id = ? " +
-                    "AND role IN ('user','assistant','thinking') " +
+                    "AND role IN ('user','assistant','thinking','notice') " +
                     "ORDER BY id DESC LIMIT 1", Long.class, uid);
             } catch (Exception ignored) {}
 
@@ -578,11 +579,11 @@ public class AiApiController {
                 rows = jdbc.queryForList(
                     "SELECT role, content FROM ai_chat_history WHERE user_id = ? " +
                     "AND conversation_id = ? " +
-                    "AND role IN ('user','assistant','thinking') ORDER BY id ASC LIMIT 200", uid, convId);
+                    "AND role IN ('user','assistant','thinking','notice') ORDER BY id ASC LIMIT 200", uid, convId);
             } else {
                 rows = jdbc.queryForList(
                     "SELECT role, content FROM ai_chat_history WHERE user_id = ? " +
-                    "AND role IN ('user','assistant','thinking') ORDER BY id ASC LIMIT 200", uid);
+                    "AND role IN ('user','assistant','thinking','notice') ORDER BY id ASC LIMIT 200", uid);
             }
             // Stitch thinking onto the preceding assistant turn for the client
             List<Map<String, Object>> out = new ArrayList<>();
@@ -592,7 +593,7 @@ public class AiApiController {
                 if ("thinking".equals(role) && !out.isEmpty()) {
                     Map<String, Object> last = out.get(out.size() - 1);
                     if ("assistant".equals(last.get("role"))) {
-                        last.put("thinking", content);
+                        last.put("thinking", String.valueOf(last.getOrDefault("thinking", "")) + content);
                         continue;
                     }
                 }
@@ -710,6 +711,40 @@ public class AiApiController {
         if (done) match.put("done", true);
         if (summary != null && !summary.isEmpty()) match.put("summary", summary);
         if (error != null && !error.isEmpty()) match.put("error", error);
+    }
+
+    /** Append a durable turn even when generation failed before any answer text. */
+    void persistTurn(long uid, long convId, String content, List<Map<String, Object>> timeline,
+                     boolean hasArtifacts, Map<String, String> notice) throws IOException {
+        if (uid <= 0) return;
+        long now = System.currentTimeMillis();
+        for (Map<String, Object> step : timeline) {
+            if ("thinking".equals(step.get("kind")) && !step.containsKey("_elapsed") && step.get("_ts") instanceof Number start)
+                step.put("_elapsed", Math.max(0, now - start.longValue()));
+            if ("tool".equals(step.get("kind")) && !Boolean.TRUE.equals(step.get("done"))) {
+                step.put("done", true);
+                step.put("interrupted", true);
+                step.put("error", notice.getOrDefault("message", "执行结果未返回"));
+            }
+        }
+        if (!content.isEmpty() || !timeline.isEmpty() || hasArtifacts) {
+            jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'assistant', ?)",
+                uid, convId, content.substring(0, Math.min(content.length(), 8000)));
+            // TEXT rows have a byte cap. Store the complete JSON in consecutive chunks
+            // and rejoin BEFORE parsing, so long traces are never silently discarded.
+            String encoded = json.writeValueAsString(timeline);
+            for (int offset = 0; !timeline.isEmpty() && offset < encoded.length();) {
+                int end = Math.min(offset + 12000, encoded.length());
+                if (end < encoded.length() && Character.isHighSurrogate(encoded.charAt(end - 1))) end--;
+                jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'thinking', ?)",
+                    uid, convId, encoded.substring(offset, end));
+                offset = end;
+            }
+        }
+        if (!notice.isEmpty()) {
+            jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'notice', ?)",
+                uid, convId, json.writeValueAsString(notice));
+        }
     }
 
     private long userIdOf(HttpServletRequest req) {

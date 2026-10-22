@@ -1,11 +1,18 @@
 package com.investory.crawler;
 
 import org.springframework.stereotype.Component;
+import org.springframework.context.event.EventListener;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import jakarta.annotation.PreDestroy;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -23,6 +30,9 @@ public class AiSessionManager {
 
     private static final class UserSession {
         volatile boolean active = false;
+        volatile Map<String, String> terminalNotice = Map.of();
+        volatile boolean cancelled = false;
+        volatile ScheduledFuture<?> watchdog;
         // Latest process handle so cancel() can interrupt mid-generation
         final AtomicReference<Process> process = new AtomicReference<>(null);
         // Single ordered event log. Every emitted SSE event (token, reasoning,
@@ -37,6 +47,20 @@ public class AiSessionManager {
     }
 
     private final ConcurrentHashMap<Long, UserSession> sessions = new ConcurrentHashMap<>();
+    // Separate from the default cron scheduler, which can be occupied by crawls.
+    private final ScheduledExecutorService heartbeatWorker = Executors.newSingleThreadScheduledExecutor(task -> {
+        Thread thread = new Thread(task, "ai-stream-heartbeat");
+        thread.setDaemon(true);
+        return thread;
+    });
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void startHeartbeats() {
+        heartbeatWorker.scheduleWithFixedDelay(this::sendHeartbeats, 15, 15, TimeUnit.SECONDS);
+    }
+
+    @PreDestroy
+    public void stopHeartbeats() { heartbeatWorker.shutdownNow(); }
 
     private UserSession get(long userId) {
         return sessions.computeIfAbsent(userId, k -> new UserSession());
@@ -45,6 +69,8 @@ public class AiSessionManager {
     public synchronized void startSession(long userId) {
         UserSession s = get(userId);
         s.active = true;
+        s.cancelled = false;
+        s.terminalNotice = Map.of();
         synchronized (s.eventLog) { s.eventLog.clear(); }
     }
 
@@ -53,6 +79,7 @@ public class AiSessionManager {
         if (s != null) {
             s.active = false;
             s.process.set(null);
+            if (s.watchdog != null) s.watchdog.cancel(false);
             synchronized (s.eventLog) { s.eventLog.clear(); }
         }
     }
@@ -62,11 +89,25 @@ public class AiSessionManager {
         if (s != null) {
             s.active = false;
             s.process.set(null);
+            if (s.watchdog != null) s.watchdog.cancel(false);
         }
     }
 
     public void bindProcess(long userId, Process p) {
-        get(userId).process.set(p);
+        UserSession s = get(userId);
+        synchronized (s) {
+            if (s.cancelled) p.destroyForcibly();
+            else {
+                s.process.set(p);
+                // readLine may block, so waitFor AFTER stdout is not a timeout.
+                s.watchdog = heartbeatWorker.schedule(() -> {
+                    if (s.process.get() == p && p.isAlive()) {
+                        emitError(userId, "AI 对话超时");
+                        p.destroyForcibly();
+                    }
+                }, 10, TimeUnit.MINUTES);
+            }
+        }
     }
 
     /**
@@ -91,14 +132,15 @@ public class AiSessionManager {
     public boolean cancel(long userId) {
         UserSession s = sessions.get(userId);
         if (s == null) return false;
-        Process p = s.process.getAndSet(null);
-        if (p != null && p.isAlive()) {
-            p.destroyForcibly();
-            emitError(userId, "已停止生成");
-            s.active = false;
+        synchronized (s) {
+            if (!s.active) return false;
+            s.cancelled = true;
+            emitNotice(userId, "你已停止这次回复。", "stopped");
+            Process p = s.process.getAndSet(null);
+            if (p != null && p.isAlive()) p.destroyForcibly();
+            // Stay active until the worker saves the partial turn in finally.
             return true;
         }
-        return false;
     }
 
     public void emitToken(long userId, String token) {
@@ -171,7 +213,22 @@ public class AiSessionManager {
     }
 
     public void emitError(long userId, String msg) {
-        emitToAll(get(userId), "error", Map.of("msg", msg));
+        emitNotice(userId, msg, "error");
+    }
+
+    private void emitNotice(long userId, String msg, String kind) {
+        UserSession s = get(userId);
+        synchronized (s) {
+            if (!s.terminalNotice.isEmpty()) return;
+            String message = msg == null || msg.isBlank() ? "回复未完成，请稍后重试" : msg;
+            s.terminalNotice = Map.of("message", message, "kind", kind);
+            emitToAll(s, "error", Map.of("msg", message, "kind", kind));
+        }
+    }
+
+    public Map<String, String> terminalNotice(long userId) {
+        UserSession s = sessions.get(userId);
+        return s == null ? Map.of() : s.terminalNotice;
     }
 
     public SseEmitter subscribe(long userId) {
@@ -181,6 +238,8 @@ public class AiSessionManager {
         emitter.onCompletion(() -> s.subscribers.remove(emitter));
         emitter.onTimeout(() -> s.subscribers.remove(emitter));
         emitter.onError(e -> s.subscribers.remove(emitter));
+        // Commit the stream immediately, even while the engine has no output.
+        sendComment(s, emitter, "connected");
 
         // Replay the full ordered event log for late subscribers / reconnects.
         // This is what makes ask_user, confirm cards, tool steps and the final
@@ -211,6 +270,23 @@ public class AiSessionManager {
         if (s == null) return false;
         synchronized (s.eventLog) {
             return !s.eventLog.isEmpty();
+        }
+    }
+
+    /** Proxy idle timeouts must not turn a quiet tool call into a broken chat. */
+    public void sendHeartbeats() {
+        for (UserSession session : sessions.values()) {
+            for (SseEmitter emitter : session.subscribers) {
+                sendComment(session, emitter, "keep-alive");
+            }
+        }
+    }
+
+    private void sendComment(UserSession session, SseEmitter emitter, String comment) {
+        try {
+            emitter.send(SseEmitter.event().comment(comment));
+        } catch (Exception failure) {
+            session.subscribers.remove(emitter);
         }
     }
 

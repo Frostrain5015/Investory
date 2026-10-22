@@ -37,6 +37,7 @@ export type TimelineStep =
       category?: ToolCategory
       done: boolean
       error?: string
+      interrupted?: boolean
       summary?: string
       callId?: string
       detail?: string
@@ -59,6 +60,7 @@ export interface Message {
   portfolioCard?: PortfolioCard
   picksCard?: PicksCard
   artifacts?: ReportArtifact[]
+  notice?: { kind: 'error' | 'stopped' }
 }
 
 export interface ConfirmBody {

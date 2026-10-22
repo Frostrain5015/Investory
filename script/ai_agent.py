@@ -26,6 +26,7 @@ STOCKSAGE_ENGINE_TIMEOUT_S = 130
 # They are operational constraints for the agent loop rather than investment
 # knowledge, so they must be visible every turn without adding KB timeline noise.
 RUNTIME_EFFICIENCY_RULES = """【运行时效率规则（直接注入，不属于知识库主题）】
+- 近期走势：只问某只股票最近走势或 K 线时，用 get_stock_price 的 days 参数读取历史日线；不调用完整量化报告或市场环境引擎。缺失数据直接说明。
 - 符号免搜索：用户用中文名、常见代码或 DB 格式指定股票时，直接原样传给工具；resolve_symbol 内部完成匹配和格式转换。禁止自己拼 1./0. 前缀，也不要为解析符号先调 search_stocks。
 - 并行不排队：多个互相独立的只读操作必须在同一轮一次性并行调用。引擎并发执行，“每次只能调一个工具”是误解。
 - strategy_id 来源验证：run_backtest 的 strategy_id 必须来自刚保存的策略或 get_strategies 查询结果，禁止凭空编 ID。
@@ -518,8 +519,9 @@ def _bridge_path():
 
 
 def _engine_http(command, params, timeout):
-    """Call the resident engine; return result dict, or None if unreachable."""
+    """Fallback only when not connected; a read timeout is not safe to retry."""
     import urllib.request, urllib.parse, json as _json
+    from urllib.error import HTTPError, URLError
     try:
         if command in _ENGINE_POST_CMDS:
             req = urllib.request.Request(
@@ -530,8 +532,19 @@ def _engine_http(command, params, timeout):
             req = urllib.request.Request(f"{ENGINE_BASE}/{command}?" + urllib.parse.urlencode(params))
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return _json.loads(resp.read().decode("utf-8"))
-    except Exception:
-        return None
+    except HTTPError as error:
+        error.close()
+        return {"error": "量化引擎请求失败，请稍后重试"}
+    except URLError as error:
+        if isinstance(error.reason, ConnectionRefusedError):
+            return None
+        if isinstance(error.reason, TimeoutError):
+            return {"error": "量化引擎执行超时，请稍后重试"}
+        return {"error": "量化引擎连接异常，请稍后重试"}
+    except TimeoutError:
+        return {"error": "量化引擎执行超时，请稍后重试"}
+    except (ValueError, OSError):
+        return {"error": "量化引擎响应异常，请稍后重试"}
 
 
 def _engine_subprocess(command, params, timeout):
@@ -540,7 +553,7 @@ def _engine_subprocess(command, params, timeout):
     bridge = _bridge_path()
     if not bridge:
         return {"error": "因子引擎未找到"}
-    argv = ["python3", bridge, command]
+    argv = [sys.executable, bridge, command]
     tmp_path = None
     if command in ("factor_breakdown", "chip_distribution"):
         argv += ["--symbol", params.get("symbol", "")]
@@ -2178,7 +2191,7 @@ def _trim_result(name: str, result: object) -> object:
                 "recentPoints": points[-30:],
                 "trimmed": True,
             }
-    if name == "get_stock_price_history":
+    if name in ("get_stock_price_history", "get_stock_price") and "points" in result:
         points = result.get("points", [])
         if len(points) > 30:
             return {
@@ -2189,7 +2202,7 @@ def _trim_result(name: str, result: object) -> object:
                     "periodHigh": max(p["high"] for p in points),
                     "periodLow": min(p["low"] for p in points),
                     "totalReturn": round((points[-1]["close"] / points[0]["close"] - 1) * 100, 2) if points[0]["close"] else 0,
-                    "avgVolume": int(sum(p["volume"] for p in points) / len(points)),
+                    "avgVolume": (sum(p["volume"] for p in points) / len(points)) if all(p.get("volume") is not None for p in points) else None,
                 },
                 "recentPoints": points[-30:],
                 "trimmed": True,
@@ -2792,7 +2805,9 @@ def _select_tools(messages: list, expose_web: bool) -> list:
     text = str(last_user.get("content", "")).lower() if last_user else ""
     active_skills = _detect_agent_skills(messages)
 
-    if active_skills:
+    if _is_lightweight_trend(text):
+        keep = {"get_stock_price", "search_stocks", "web_search", "consult_kb"} & all_names
+    elif active_skills:
         keep = set()
         for skill in active_skills:
             keep |= _SKILL_TOOLSETS.get(skill, set())
@@ -2806,6 +2821,17 @@ def _select_tools(messages: list, expose_web: bool) -> list:
     if not expose_web:
         keep.discard("web_search")
     return [t for t in TOOLS if t["function"]["name"] in keep]
+
+
+def _is_lightweight_trend(text: str) -> bool:
+    """A recent price trend does not require the full multi-source factor engine."""
+    low = text.lower()
+    trend = any(word in low for word in ("走势", "趋势", "k线", "近期涨跌", "最近涨跌", "price trend"))
+    deep = any(word in low for word in (
+        "深度", "深入", "完整", "全面", "专业", "审计", "报告", "证据链", "风险拆解",
+        "基本面", "财务", "财报", "估值", "买", "卖", "持有", "为什么", "原因", "异动", "组合", "持仓",
+    ))
+    return trend and not deep
 
 
 def _extract_stock_symbol_for_dag(text: str) -> str:
@@ -2827,6 +2853,8 @@ def _extract_stock_symbol_for_dag(text: str) -> str:
 
 
 def _stock_dag_needs_report(text: str) -> bool:
+    if _is_lightweight_trend(text):
+        return False
     return any(k in text for k in (
         "深入", "深度", "完整", "专业", "证据链", "风险拆解", "买不买", "能买吗", "能不能买",
         "还能持有", "基本面", "技术面", "为什么跌", "跌这么狠", "大跌", "暴跌", "异动", "出什么问题",
@@ -3031,6 +3059,14 @@ def _plan_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_w
     tasks is [] when the DAG should no-op and defer to the normal tool loop.
     """
     empty = {"workflow": None, "tasks": [], "synthesize": "", "symbol": None}
+    text = _latest_user_text(messages)
+    if _is_lightweight_trend(text):
+        symbol = _extract_stock_symbol_for_dag(text)
+        if not symbol:
+            return empty
+        return {"workflow": "stock_trend", "symbol": symbol,
+                "tasks": [("get_stock_price", {"symbol": symbol, "days": 90})],
+                "synthesize": "按实际行情日期描述近期趋势、量价与风险；不补造缺失指标，不调用完整量化引擎。"}
     skill, dag = _select_workflow_dag(messages)
     if not dag:
         return empty

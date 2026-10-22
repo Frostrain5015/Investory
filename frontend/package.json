@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "6.3.7",
+  "version": "6.3.8",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,6 +10,7 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -b",
     "check:imports": "node scripts/check-imports.mjs",
+    "test:chat": "node --test scripts/test-chat-stream.mjs",
     "check": "npm run typecheck && npm run lint && npm run check:imports",
     "preview": "vite preview"
   },
