@@ -167,6 +167,8 @@ public class UserDao extends BaseDao {
         // 删除直接关联 user_id 的数据（不经过 portfolios）
         jdbc.update("DELETE FROM watchlist WHERE user_id = ?", userId);
         jdbc.update("DELETE FROM ai_settings WHERE user_id = ?", userId);
+        jdbc.update("DELETE FROM ai_model_selection WHERE user_id = ?", userId);
+        jdbc.update("DELETE FROM ai_model_profiles WHERE user_id = ?", userId);
         jdbc.update("DELETE FROM backtest_results WHERE user_id = ?", userId);
         jdbc.update("DELETE FROM backtest_strategies WHERE user_id = ?", userId);
         jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ?", userId);

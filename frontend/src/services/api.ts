@@ -8,7 +8,7 @@ import type {
   FactorBreakdown, RegimeStatus,
   FactorScoresResponse, ScanResultsResponse, DailyPick,
   AdminStatus, AdminUser, AdminCrawlHistoryItem, StatusResponse,
-  WatchlistItem, AiSettings, AiChatRequest,
+  WatchlistItem, AiSettings, AiModelSettings, AiChatRequest,
   MarketIndexItem, MarketNewsItem, ExchangeRatesResponse, PortfolioAnalysisResult,
 } from '@/types'
 
@@ -284,12 +284,18 @@ export function aiChat(messages: AiChatRequest['messages'], deepThink?: boolean)
 }
 export function aiClear(): Promise<StatusResponse> { return request('/api/ai/clear', { method: 'POST' }) }
 export function aiStream(): EventSource { return new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }) }
-export function aiGetSettings(): Promise<AiSettings> { return request('/api/ai/settings') }
-export function aiSaveSettings(data: Partial<AiSettings> & { apiKey?: string }): Promise<StatusResponse> {
+export function aiGetSettings(): Promise<AiModelSettings> { return request('/api/ai/settings') }
+export function aiSaveSettings(data: Pick<AiSettings, 'id' | 'provider' | 'model' | 'baseUrl' | 'contextWindow'> & { apiKey?: string }): Promise<AiModelSettings> {
   return request('/api/ai/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
 }
-export function aiListModels(data: { provider: string; baseUrl?: string; apiKey?: string }): Promise<import('@/types').AiModelsResponse> {
+export function aiListModels(data: { id: number; provider: string; baseUrl?: string; apiKey?: string }): Promise<import('@/types').AiModelsResponse> {
   return request('/api/ai/models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) })
+}
+export function aiRemoveModel(id: number): Promise<AiModelSettings> {
+  return request(`/api/ai/settings/${id}`, { method: 'DELETE' })
+}
+export function aiSelectModel(id: number): Promise<AiModelSettings> {
+  return request('/api/ai/settings/active', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) })
 }
 
 // ── Market ────────────────────────────────────────────────────────────────
@@ -311,25 +317,6 @@ export function getBacktestCompare(ids: number[]): Promise<CompareResult[]> {
 // ── Account ───────────────────────────────────────────────────────────────
 
 export function refreshPortfolio(): Promise<StatusResponse> { return request('/api/portfolio/refresh', { method: 'POST' }) }
-
-// ── MCP Tokens ──────────────────────────────────────────────────────────
-
-export interface McpTokenInfo {
-  id: number
-  label: string
-  audience: string | null
-  created_at: string
-  last_used_at: string | null
-  revoked: number
-}
-
-export function getMcpTokens(): Promise<{ tokens: McpTokenInfo[]; count: number }> {
-  return request('/api/mcp/tokens')
-}
-
-export function revokeMcpToken(id: number): Promise<StatusResponse> {
-  return request(`/api/mcp/tokens/${id}`, { method: 'DELETE' })
-}
 
 // ── StockSage Alpha ────────────────────────────────────────────────────────
 

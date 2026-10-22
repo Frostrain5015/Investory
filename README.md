@@ -4,7 +4,7 @@
 
 # 📈 Investory
 
-**A full-stack personal investment platform — portfolio tracking, quantitative analysis, strategy backtesting, and an AI investment assistant that any MCP-capable agent can drive.**
+**A full-stack personal investment platform — portfolio tracking, quantitative analysis, strategy backtesting, and an in-app AI investment assistant.**
 
 Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-currency P&L.
 
@@ -18,7 +18,6 @@ Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-cur
 
 ## ✨ Highlights
 
-- **🤖 MCP server** — exposes **46 tools** at `/mcp` so Claude / Cursor / Cline and any MCP client can read your dashboard, run backtests, and record (confirmed) portfolio transactions. Zero logic rewrite: each tool replays your existing REST API with an injected identity.
 - **🧠 AI assistant "Guanlan" (观澜)** — streaming chat with tool-use and a morph animation system; can analyze your portfolio and generate strategies mid-conversation.
 - **📊 Quantitative engine (StockSage Alpha)** — factor scoring, market-regime detection, portfolio style/risk analysis, and a strategy backtester (SMA/EMA/RSI/MACD/Bollinger/KDJ rules or custom Python), with walk-forward validation and parameter optimization.
 - **🌍 Multi-market, multi-currency** — A-shares, HK, US; CNY / HKD / USD with daily FX refresh and per-currency cash tracking.
@@ -60,11 +59,6 @@ Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-cur
 - Tool use mid-conversation; saves generated strategies to the backtest library
 - Pluggable provider: DeepSeek, OpenAI, Anthropic Claude, Moonshot, Zhipu GLM, Alibaba Bailian, or any OpenAI-compatible endpoint
 
-### MCP Server
-- Streamable-HTTP MCP endpoint at `/mcp` with **46 tools**
-- OAuth 2.1 + PKCE token flow · SHA-256-hashed tokens · two-step confirm for write ops
-- Self-service token management in **Settings → MCP**
-
 ### Settings & Admin
 - Light/dark/system theme · red-up/green-down (A-share) or international color scheme · base currency
 - Admin: live DB status, per-market crawler control (start/pause/resume/stop), crawl audit log, user management
@@ -86,7 +80,6 @@ Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-cur
 | **Frontend** | React 19 · TypeScript · Vite 8 · React Router 7 · Tailwind CSS 4 · Recharts 3 · ECharts 6 · Framer Motion 12 |
 | **Desktop** | Electron 33 · electron-builder · electron-updater (auto-update via GitHub Releases) |
 | **Quant / Data** | Python 3.10+ · StockSage Alpha engine · Yahoo / Sina / East Money data sources · custom AI agent & backtest engine |
-| **Integration** | MCP (Model Context Protocol) server, 46 tools, Streamable HTTP + OAuth 2.1/PKCE |
 
 ---
 
@@ -105,7 +98,7 @@ investory/
 │   ├── src/main/java/com/investory/
 │   │   ├── controller/  (+ api/, McpController, OAuthController)
 │   │   ├── dao/         # @Repository + JdbcTemplate (BaseDao)
-│   │   ├── service/     # auth, cost calc, PnL ledger, MCP tool registry
+│   │   ├── service/     # auth, cost calc, PnL ledger, model configuration
 │   │   ├── crawler/     # @Scheduled market-data sync & FX refresh
 │   │   ├── web/         # LoginInterceptor, CORS, GlobalExceptionHandler
 │   │   └── config/
@@ -133,7 +126,7 @@ Java 17 · Maven 3.9+ · Node.js 22.12+ · Python 3.10+ · MySQL 8
 ```sql
 CREATE DATABASE investory CHARACTER SET utf8mb4;
 ```
-Set credentials via env vars (`DB_USER`, `DB_PASSWORD`, …) — see `application.properties`. Flyway maintains incremental migrations from V2; a new database still needs the initial business schema, as described in [storage boundaries](docs/architecture.md#6-身份mcp-与存储).
+Set credentials via env vars (`DB_USER`, `DB_PASSWORD`, …) — see `application.properties`. Flyway maintains incremental migrations from V2; a new database still needs the initial business schema, as described in [storage boundaries](docs/architecture.md#6-身份与存储).
 
 ### 2. Backend (builds the frontend automatically)
 The Maven build runs `tsc -b && vite build` and copies the output into `static/` before packaging.
@@ -168,24 +161,11 @@ npm run build:exe                             # NSIS installer
 
 ---
 
-## 🔌 Connecting an MCP Agent
+## Model configuration
 
-1. Open the app → **Settings → MCP** → generate a token.
-2. Add to your client (e.g. `.mcp.json` for Claude Code / Cursor):
+Open **Settings → 观澜** and add up to three independent models with API protocol, Base URL, Model ID and context window. Switch the active model at the bottom right of Guanlan; each outgoing message binds its own selected configuration. Cloud APIs and local OpenAI-compatible/Anthropic services use the same form. A local service without authentication may leave its API key empty. The context budget includes reply space and trims older turns; it does not configure the model server's GPU allocation. No shared model or credential fallback is used.
 
-```json
-{
-  "mcpServers": {
-    "investory": {
-      "type": "http",
-      "url": "https://investory.frostrain.tech/mcp",
-      "headers": { "Authorization": "Bearer <your-token>" }
-    }
-  }
-}
-```
-
-3. Reload the client and run `/mcp` — `investory` (46 tools) should appear. The domain uses a valid Let's Encrypt certificate, so **no extra CA setup is needed**.
+External MCP access was removed on 2026-10-22. Existing MCP tokens no longer authenticate requests. Frost ID login remains available.
 
 ---
 
@@ -203,7 +183,6 @@ npm run build:exe                             # NSIS installer
 | Market | `GET /api/market/indices` · `/exchange-rates` · `/news` |
 | Quant / Backtest | `/api/quant/*` · `/api/stocksage/*` · CRUD `/api/backtest/strategies` · `GET /api/backtest/stream` (SSE) |
 | AI | `POST /api/ai/chat` · `GET /api/ai/stream` (SSE) · `/api/ai/settings` |
-| MCP | `POST /mcp` (JSON-RPC) · `/oauth/mcp/*` (OAuth 2.1 + PKCE) |
 | Admin | `/api/admin/status` · `/users` · `/crawl-history` · `/crawl/{market}` |
 
 ---

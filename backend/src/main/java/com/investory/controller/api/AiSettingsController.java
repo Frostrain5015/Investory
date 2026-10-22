@@ -2,212 +2,94 @@ package com.investory.controller.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.investory.service.AiModelConfiguration;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 
 import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.net.http.*;
 import java.time.Duration;
 import java.util.*;
 
 @RestController
 @RequestMapping("/api/ai")
 public class AiSettingsController {
-
-    private static final ObjectMapper json = new ObjectMapper();
-    private static final String DEFAULT_PROVIDER = "openai_compat";
-    private static final String DEFAULT_MODEL = "deepseek-v4-pro";
-    private static final String DEFAULT_OPENAI_COMPAT_BASE_URL = "https://api.deepseek.com";
-    private static final String DEFAULT_ANTHROPIC_BASE_URL = "https://api.anthropic.com";
-    private static final String OPENAI_BASE_URL = "https://api.openai.com/v1";
-
-    private final JdbcTemplate jdbc;
-
-    @Value("${ai.default.key:}")
-    private String defaultKey;
-
-    @Autowired
-    public AiSettingsController(JdbcTemplate jdbc) {
-        this.jdbc = jdbc;
+    private static final ObjectMapper JSON = new ObjectMapper();
+    private final AiModelConfiguration configuration;
+    public AiSettingsController(AiModelConfiguration configuration) {
+        this.configuration = configuration;
     }
-
-    private String str(Object value) {
-        return value == null ? "" : value.toString();
+    @ExceptionHandler(ResponseStatusException.class)
+    public ResponseEntity<Map<String, String>> authorizationError(ResponseStatusException error) {
+        return ResponseEntity.status(error.getStatusCode()).body(Map.of("error", "unauthorized"));
     }
-
-    private boolean isSupportedProvider(String provider) {
-        return DEFAULT_PROVIDER.equals(provider) || "anthropic".equals(provider);
+    private long userId(HttpServletRequest request) {
+        HttpSession session = request.getSession(false);
+        if (session != null && session.getAttribute("userId") instanceof Number id && id.longValue() > 0)
+            return id.longValue();
+        throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
     }
-
-    private String stripTrailingSlash(String value) {
-        String s = value == null ? "" : value.trim();
-        while (s.endsWith("/")) s = s.substring(0, s.length() - 1);
-        return s;
-    }
-
-    private long getUserId(HttpServletRequest req) {
-        HttpSession s = req.getSession(false);
-        if (s == null) return 0;
-        Object uid = s.getAttribute("userId");
-        return uid instanceof Number ? ((Number) uid).longValue() : 0;
-    }
-
     @GetMapping("/settings")
-    public Map<String, Object> getSettings(HttpServletRequest req) {
-        long userId = getUserId(req);
-        if (userId == 0) return Map.of("error", "not authenticated");
-
-        List<Map<String, Object>> rows = jdbc.queryForList(
-            "SELECT provider, model, base_url, LENGTH(api_key) > 0 AS has_key FROM ai_settings WHERE user_id = ?", userId);
-        if (rows.isEmpty()) {
-            return Map.of(
-                "provider", DEFAULT_PROVIDER,
-                "model", DEFAULT_MODEL,
-                "baseUrl", DEFAULT_OPENAI_COMPAT_BASE_URL,
-                "hasKey", false
-            );
-        }
-
-        Map<String, Object> row = rows.get(0);
-        return Map.of(
-            "provider", str(row.get("provider")),
-            "model", str(row.get("model")),
-            "baseUrl", str(row.get("base_url")),
-            "hasKey", row.getOrDefault("has_key", false)
-        );
+    public AiModelConfiguration.Settings getSettings(HttpServletRequest request) {
+        return configuration.settings(userId(request));
     }
-
-    @PostMapping("/models")
-    public Map<String, Object> listModels(@RequestBody Map<String, Object> body, HttpServletRequest req) {
-        long userId = getUserId(req);
-        if (userId == 0) return Map.of("error", "not authenticated");
-
-        String provider = str(body.get("provider")).trim();
-        String baseUrl = str(body.get("baseUrl")).trim();
-        String apiKey = str(body.get("apiKey")).trim();
-
-        if (!isSupportedProvider(provider)) return Map.of("error", "请选择 API 格式");
-
-        if (apiKey.isBlank()) {
-            List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT api_key FROM ai_settings WHERE user_id = ?", userId);
-            if (!rows.isEmpty()) apiKey = str(rows.get(0).get("api_key")).trim();
-        }
-        if (apiKey.isBlank()) apiKey = defaultKey == null ? "" : defaultKey.trim();
-        if (apiKey.isBlank()) return Map.of("error", "请先填写 API Key");
-
-        try {
-            List<String> models = "anthropic".equals(provider)
-                ? fetchAnthropicModels(baseUrl, apiKey)
-                : fetchOpenAiCompatibleModels(baseUrl, apiKey);
-            if (models.isEmpty()) return Map.of("error", "未获取到可用模型");
-            return Map.of("status", "ok", "models", models, "count", models.size());
-        } catch (Exception e) {
-            return Map.of("error", e.getMessage() == null ? "模型列表获取失败" : e.getMessage());
-        }
-    }
-
-    private List<String> fetchOpenAiCompatibleModels(String baseUrl, String apiKey) throws Exception {
-        String base = stripTrailingSlash(baseUrl.isBlank() ? OPENAI_BASE_URL : baseUrl);
-        HttpRequest req = HttpRequest.newBuilder(URI.create(base + "/models"))
-            .timeout(Duration.ofSeconds(20))
-            .header("Authorization", "Bearer " + apiKey)
-            .header("Accept", "application/json")
-            .GET()
-            .build();
-        return fetchModels(req);
-    }
-
-    private List<String> fetchAnthropicModels(String baseUrl, String apiKey) throws Exception {
-        String base = stripTrailingSlash(baseUrl.isBlank() ? DEFAULT_ANTHROPIC_BASE_URL : baseUrl);
-        String url = base.endsWith("/v1") ? base + "/models" : base + "/v1/models";
-        HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-            .timeout(Duration.ofSeconds(20))
-            .header("x-api-key", apiKey)
-            .header("anthropic-version", "2023-06-01")
-            .header("Accept", "application/json")
-            .GET()
-            .build();
-        return fetchModels(req);
-    }
-
-    private List<String> fetchModels(HttpRequest req) throws Exception {
-        HttpClient client = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(10))
-            .build();
-        HttpResponse<String> resp = client.send(req, HttpResponse.BodyHandlers.ofString());
-        if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
-            return switch (resp.statusCode()) {
-                case 401, 403 -> throwError("API Key 无效或没有模型列表权限");
-                default -> throwError("模型列表请求失败: HTTP " + resp.statusCode());
-            };
-        }
-
-        JsonNode root = json.readTree(resp.body());
-        LinkedHashSet<String> ids = new LinkedHashSet<>();
-        collectModelIds(root.path("data"), ids);
-        collectModelIds(root.path("models"), ids);
-        if (root.isArray()) collectModelIds(root, ids);
-
-        List<String> models = new ArrayList<>(ids);
-        models.sort(String.CASE_INSENSITIVE_ORDER);
-        return models;
-    }
-
-    private List<String> throwError(String message) {
-        throw new IllegalStateException(message);
-    }
-
-    private void collectModelIds(JsonNode node, Set<String> ids) {
-        if (node == null || node.isMissingNode() || !node.isArray()) return;
-        for (JsonNode item : node) {
-            if (item.isTextual()) {
-                ids.add(item.asText());
-            } else if (item.hasNonNull("id")) {
-                ids.add(item.get("id").asText());
-            } else if (item.hasNonNull("model")) {
-                ids.add(item.get("model").asText());
-            }
-        }
-    }
-
-    @DeleteMapping("/settings")
-    public Map<String, Object> resetSettings(HttpServletRequest req) {
-        long userId = getUserId(req);
-        if (userId == 0) return Map.of("error", "not authenticated");
-        jdbc.update("DELETE FROM ai_settings WHERE user_id = ?", userId);
-        return Map.of("status", "ok");
-    }
-
     @PostMapping("/settings")
-    public Map<String, Object> saveSettings(@RequestBody Map<String, Object> body, HttpServletRequest req) {
-        long userId = getUserId(req);
-        if (userId == 0) return Map.of("error", "not authenticated");
-
-        String provider = str(body.get("provider")).trim();
-        String model = str(body.get("model")).trim();
-        String baseUrl = str(body.get("baseUrl")).trim();
-        String apiKey = str(body.get("apiKey")).trim();
-
-        if (!isSupportedProvider(provider)) return Map.of("error", "请选择 API 格式");
-        if (model.isBlank()) return Map.of("error", "model required");
-
-        // Upsert: when apiKey is blank, explicitly clear it so that switching
-        // back to "default" mode removes a previously saved custom key.
-        // Column is NOT NULL DEFAULT '' — use empty string, not null.
-        String key = apiKey.isBlank() ? "" : apiKey;
-        jdbc.update(
-            "INSERT INTO ai_settings (user_id, provider, model, base_url, api_key) VALUES (?, ?, ?, ?, ?) " +
-            "ON DUPLICATE KEY UPDATE provider=VALUES(provider), model=VALUES(model), base_url=VALUES(base_url), api_key=VALUES(api_key)",
-            userId, provider, model, baseUrl, key);
-
-        return Map.of("status", "ok");
+    public AiModelConfiguration.Settings saveSettings(@RequestBody AiModelConfiguration.SaveRequest body, HttpServletRequest request) {
+        return configuration.save(userId(request), body);
     }
-
+    @DeleteMapping("/settings/{id}")
+    public AiModelConfiguration.Settings removeSettings(@PathVariable int id, HttpServletRequest request) {
+        return configuration.remove(userId(request), id);
+    }
+    public record Selection(Integer id) {}
+    @PostMapping("/settings/active")
+    public AiModelConfiguration.Settings selectModel(@RequestBody Selection body, HttpServletRequest request) {
+        return configuration.select(userId(request), body.id());
+    }
+    @PostMapping("/models")
+    public Map<String, Object> listModels(@RequestBody AiModelConfiguration.ModelsRequest body, HttpServletRequest request) {
+        long id = userId(request);
+        String provider = AiModelConfiguration.validateProvider(body.provider());
+        String base = AiModelConfiguration.normalizeBase(body.baseUrl());
+        String key = configuration.resolveKey(id, body.id(), provider, base, body.apiKey());
+        String path = "anthropic".equals(provider) && !base.endsWith("/v1") ? "/v1/models" : "/models";
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(base + path))
+            .timeout(Duration.ofSeconds(15)).header("Accept", "application/json").GET();
+        if ("anthropic".equals(provider)) {
+            builder.header("anthropic-version", "2023-06-01");
+            if (!key.isBlank()) builder.header("x-api-key", key);
+        } else if (!key.isBlank()) builder.header("Authorization", "Bearer " + key);
+        try {
+            HttpResponse<String> response = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5))
+                .followRedirects(HttpClient.Redirect.NEVER).build()
+                .send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300)
+                return Map.of("error", "模型列表请求失败（HTTP " + response.statusCode() + "），也可手动填写 Model ID");
+            JsonNode root = JSON.readTree(response.body());
+            SortedSet<String> ids = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+            collect(root.path("data"), ids);
+            collect(root.path("models"), ids);
+            collect(root, ids);
+            if (ids.isEmpty()) return Map.of("error", "服务未返回模型列表，请手动填写 Model ID");
+            return Map.of("models", ids, "count", ids.size());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Map.of("error", "模型列表请求已取消");
+        } catch (Exception e) {
+            // Upstream errors may contain credentials; never forward raw messages or bodies.
+            return Map.of("error", "无法获取模型列表，请检查接口地址、密钥和服务状态，或手动填写 Model ID");
+        }
+    }
+    private static void collect(JsonNode nodes, Set<String> ids) {
+        if (!nodes.isArray()) return;
+        for (JsonNode item : nodes) {
+            if (ids.size() >= 1000) break;
+            String id = item.isTextual() ? item.asText() : item.path("id").asText(item.path("model").asText(""));
+            if (!id.isBlank() && id.length() <= 255) ids.add(id);
+        }
+    }
 }

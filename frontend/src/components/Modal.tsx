@@ -46,12 +46,12 @@ export default function Modal({ open, onClose, title, children }: Props) {
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             transition={{ duration: 0.2, ease: 'easeOut' }}
             onClick={onClose}
-            className="fixed inset-0 z-50 bg-slate-950/30 dark:bg-black/40 cursor-pointer"
+            className="fixed inset-0 z-[70] bg-slate-950/30 dark:bg-black/40 cursor-pointer"
             style={{ backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' }}
           />
 
           {/* Panel / Sheet — independent scale+slide, never touches the blur */}
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center pointer-events-none">
+          <div className="fixed inset-0 z-[70] flex items-end sm:items-center justify-center pointer-events-none">
             <motion.div
               ref={ref}
               variants={isMobile ? sheet : panel}
@@ -67,14 +67,14 @@ export default function Modal({ open, onClose, title, children }: Props) {
             >
               {/* Header */}
               <div className="sticky top-0 z-10 flex items-center justify-between px-5 py-4
-                              bg-white/90 dark:bg-slate-900/90 backdrop-blur-sm
+                              bg-white dark:bg-slate-900
                               border-b border-slate-100 dark:border-slate-800">
                 <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 tracking-tight">
                   {title}
                 </h3>
                 <button
                   onClick={onClose}
-                  className="flex items-center justify-center w-8 h-8 rounded-lg
+                  className="flex items-center justify-center w-11 h-11 rounded-lg
                              text-slate-400 hover:text-slate-600 dark:hover:text-slate-300
                              hover:bg-slate-100 dark:hover:bg-slate-800
                              transition-colors cursor-pointer"

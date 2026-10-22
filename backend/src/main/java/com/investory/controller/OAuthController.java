@@ -225,13 +225,6 @@ public class OAuthController {
                 return desktopHandoffPage("investory://auth?token=" + urlEncode(handoff));
             }
 
-            // 若此前是从 MCP OAuth 授权页跳来登录的，登录成功后回到该授权请求继续发码。
-            Object pending = session.getAttribute("mcp_pending_authorize");
-            if (pending instanceof String pendingUrl && !pendingUrl.isBlank()) {
-                session.removeAttribute("mcp_pending_authorize");
-                return redirectScript(pendingUrl);
-            }
-
             Object returnTo = session.getAttribute("frostid_return_to");
             if (returnTo instanceof String returnToUrl && !returnToUrl.isBlank()) {
                 session.removeAttribute("frostid_return_to");

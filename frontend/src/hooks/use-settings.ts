@@ -17,8 +17,6 @@ export interface Settings {
   setBaseCurrency: (c: BaseCurrency) => void
   formatCurrency: (value: number) => string
   convertCurrency: (cnyValue: number) => number
-  showRiskMetrics: boolean
-  toggleRiskMetrics: () => void
 }
 
 export const SettingsContext = createContext<Settings | null>(null)

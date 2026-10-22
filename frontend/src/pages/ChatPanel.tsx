@@ -15,6 +15,9 @@ import { useT } from '@/i18n/I18nContext'
 import { localizeToolName, MAPS } from '@/i18n/toolNames'
 import { getCachedSuggestions, getSuggestionsPromise } from '@/services/aiPreload'
 import { BASE } from '@/services/api'
+import { useModels } from '@/hooks/use-models'
+import ModelSelector from '@/features/chat/ModelSelector'
+import { useTheme } from '@/hooks/use-theme'
 
 /** A single step in the agent's reasoning trace. Either a chunk of native
  * reasoning_content, or a tool call (with its eventual completion status). */
@@ -371,6 +374,9 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const { t, lang } = useT()
   const toast = useToast()
   const confirm = useConfirm()
+  const modelStore = useModels()
+  const { theme } = useTheme()
+  const [requestError, setRequestError] = useState('')
   // 'idle' = collapsed to the floating button; otherwise dock/expanded.
   const [internalMode, setInternalMode] = useState<'dock' | 'expanded'>(defaultMode)
   const mode: ChatMode = open ? internalMode : 'idle'
@@ -741,20 +747,27 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   async function send(textOverride?: string) {
     const text = (textOverride !== undefined ? textOverride : input).trim()
     if (!text || streaming) return
+    const selected = modelStore.settings.models.find(model => model.id === modelStore.settings.activeModelId)
+    if (modelStore.busy || modelStore.loading) return
+    if (!selected?.configured) { toast('请先在设置中添加并选择模型', false); return }
+    const modelId = selected.id
+    setRequestError('')
     setInput('')
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
     setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; pendingArtifacts.current = []; setAskData(null); setAskChecked(new Set()); setAskOther(''); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
     try {
-      const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, webSearch, conversationId: convIdRef.current || undefined }) })
-      if (!resp.ok) { setStreamText(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
+      const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages, modelId, webSearch, conversationId: convIdRef.current || undefined }) })
+      if (!resp.ok) { setRequestError(`${t.chat.errorPrefix} HTTP ${resp.status}`); setStreaming(false); return }
       // Capture the server-assigned conversation id (auto-created on the first turn)
       // so deleting the active conversation later correctly clears this window.
-      try { const data = await resp.json() as { conversationId?: number }; if (data.conversationId && data.conversationId > 0) convIdRef.current = data.conversationId } catch { /* non-JSON / ignore */ }
+      const data = await resp.json() as { conversationId?: number; error?: string }
+      if (data.error) { setRequestError(`${t.chat.errorPrefix} ${data.error}`); setStreaming(false); return }
+      if (data.conversationId && data.conversationId > 0) convIdRef.current = data.conversationId
       if (esRef.current) esRef.current.close()
       const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
       attachStream(es, newMessages)
-    } catch (e: unknown) { setStreamText(`${t.chat.errorPrefix} ${e instanceof Error ? e.message : String(e)}`); setStreaming(false) }
+    } catch { setRequestError('请求失败，请检查模型服务后重试'); setStreaming(false) }
   }
 
   const convIdRef = useRef<number>(0)
@@ -764,6 +777,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   /** Reset local chat state without touching the database.
    *  Does NOT call /api/ai/clear — that endpoint destroys ALL user history. */
   function resetChat() {
+    setRequestError('')
     setMessages([])
     setStreamText('')
     convIdRef.current = 0
@@ -930,32 +944,27 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   )
 
   const inputBar = (
-    <div className="flex items-end gap-2">
-      <div className="flex items-center gap-0.5 pb-1">
-        {/* Deep-think toggle removed — thinking is now auto-enabled for real
-            requests via server-side smart routing, so tools fire reliably
-            without a manual switch. */}
-        <button onClick={toggleVoiceInput} disabled={streaming}
-          className={`p-1.5 rounded-md transition-colors ${listening ? 'text-purple-500 animate-pulse' : 'text-slate-400 hover:text-slate-500'} disabled:opacity-40`}
+    <div className="flex flex-col gap-1">
+      <textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+        placeholder={t.chat.placeholder} rows={1} disabled={streaming}
+        className="w-full resize-none min-h-[40px] max-h-[200px] rounded-xl bg-transparent px-3 py-2.5 text-sm leading-snug focus:outline-none disabled:opacity-60 placeholder:text-slate-400 overflow-y-auto" />
+      <div className="flex items-center justify-end gap-1">
+        <ModelSelector />
+        <button type="button" onClick={toggleVoiceInput} disabled={streaming}
+          className={`w-11 h-11 flex items-center justify-center rounded-xl transition-colors ${listening ? 'text-purple-500 animate-pulse motion-reduce:animate-none' : 'text-slate-400 hover:text-slate-600'} disabled:opacity-40`}
           title={listening ? (lang === 'en' ? 'Listening…' : '语音输入中…') : (lang === 'en' ? 'Voice input' : '语音输入')}>
           <Mic className="w-4 h-4" />
         </button>
-      </div>
-      <textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-        placeholder={t.chat.placeholder} rows={1} disabled={streaming}
-        className="flex-1 resize-none min-h-[40px] max-h-[200px] rounded-xl bg-transparent px-3 py-2.5 text-sm leading-snug focus:outline-none disabled:opacity-60 placeholder:text-slate-400 overflow-y-auto" />
-      {streaming ? (
-        <button onClick={stopGeneration} title={t.chat.stop}
-          className="w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0 bg-slate-700 hover:bg-slate-800">
+        {streaming ? <button type="button" onClick={stopGeneration} title={t.chat.stop}
+          className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 bg-slate-700 hover:bg-slate-800">
           <Square className="w-3.5 h-3.5 text-white fill-white" />
-        </button>
-      ) : (
-        <button onClick={() => send()} disabled={!input.trim()}
-          className="w-10 h-10 rounded-xl flex items-center justify-center transition-all shrink-0 disabled:opacity-30"
+        </button> : <button type="button" onClick={() => send()} aria-label="发送消息" disabled={!input.trim() || modelStore.busy || modelStore.loading}
+          className="w-11 h-11 rounded-full flex items-center justify-center transition-colors shrink-0 disabled:opacity-30"
           style={input.trim() ? gradientStyle : { background: '#e2e8f0', color: '#94a3b8' }}>
           <Send className="w-4 h-4 text-white" />
-        </button>
-      )}
+        </button>}
+      </div>
+      {requestError && <p role="alert" className="px-3 pb-1 text-xs text-red-600 dark:text-red-400">{requestError}</p>}
     </div>
   )
 
@@ -1234,7 +1243,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const shellR = isIdle ? '9999px' : isExpanded ? '24px' : '20px'
   const shellBgVal = isIdle
     ? 'linear-gradient(135deg, #863bff, #47bfff)'
-    : 'rgba(255,255,255,0.96)'
+    : theme === 'dark' ? 'rgba(25,25,29,0.98)' : 'rgba(255,255,255,0.96)'
 
   // Bottom-left anchoring stays valid for all three shapes. Expanded mode is
   // centered by moving its bottom edge to half of the remaining viewport height.
@@ -1278,7 +1287,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         onClick={isIdle ? () => setMode(defaultMode) : undefined}
         animate={{ background: shellBgVal }}
         transition={{
-          background: { duration: 380, ease: 'easeInOut', delay: isIdle ? 0 : 0.22 },
+          background: { duration: 0.24, ease: 'easeInOut', delay: isIdle ? 0 : 0.22 },
         }}
         style={{
           width: shellW, height: shellH, borderRadius: shellR,

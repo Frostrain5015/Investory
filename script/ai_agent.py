@@ -16,6 +16,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from model_transport import get_proxy, needs_proxy as _needs_proxy
 from agent_message import AgentMessage, to_openai_messages, to_anthropic_messages
+from context_budget import ContextBudgetError, active_user, fit_messages, output_budget
 
 KB_FILE = SCRIPT_DIR / "ai_knowledge_base.json"
 AGENT_SKILLS_DIR = SCRIPT_DIR / "agent_skills"
@@ -3050,10 +3051,10 @@ def _emit_context(gathered: dict) -> None:
         pass
 
 
-def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0, web_search: bool = False, prefetched_tools: set = None):
+def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0, web_search: bool = False, prefetched_tools: set = None, *, context_window: int):
     from openai import OpenAI
     import httpx
-    kwargs = {"api_key": api_key}
+    kwargs = {"api_key": api_key or "local-no-auth"}
     if api_base: kwargs["base_url"] = api_base
     # Proxy support for overseas API access
     proxy_url = os.getenv("PROXY_URL", get_proxy())
@@ -3064,12 +3065,12 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     is_deepseek = bool(api_base and "deepseek" in api_base)
 
     # ── Model routing ──────────────────────────────────────────────────────
-    # v4-flash does NOT support thinking/reasoning — always disable it.
-    want_thinking = False  # v4-flash has no thinking mode
-    max_tokens = 8192
+    # Optional provider-specific thinking is not assumed for arbitrary model IDs.
+    want_thinking = False
+    max_tokens = output_budget(context_window)
     extra_body = {}
 
-    effective_model = model  # Always use the configured model (v4-flash)
+    effective_model = model  # Preserve the exact user-supplied Model ID.
 
     # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
@@ -3078,7 +3079,8 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         effective_tools = [t for t in effective_tools if t["function"]["name"] not in prefetched_tools]
 
     def _stream(msgs):
-        kwargs = dict(model=effective_model, messages=msgs, tools=effective_tools,
+        bounded = fit_messages(msgs, effective_tools, context_window, max_tokens, protected_message=protected_user)
+        kwargs = dict(model=effective_model, messages=bounded, tools=effective_tools,
                       stream=True, max_tokens=max_tokens)
         if is_deepseek and want_thinking:
             # DeepSeek thinking mode ignores temperature/top_p; control depth via
@@ -3093,6 +3095,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     # Converge on the unified AgentMessage model, then emit OpenAI wire format.
     # (DeepSeek auto-caches repeated input prefixes server-side — no cache_control.)
     formatted = to_openai_messages([AgentMessage.from_wire(m) for m in messages])
+    protected_user = active_user(formatted)
 
     content_buf = []
     def _emit_delta(delta):
@@ -3295,11 +3298,11 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     print("\n[DONE]", flush=True)
 
 
-def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id: int = 0, user_id: int = 0, deep_think: bool = False, web_search: bool = False, prefetched_tools: set = None):
+def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id: int = 0, user_id: int = 0, deep_think: bool = False, web_search: bool = False, prefetched_tools: set = None, *, api_base: str, context_window: int):
     import anthropic, httpx
-    client_kwargs = {"api_key": api_key}
+    client_kwargs = {"api_key": api_key or "local-no-auth", "base_url": api_base.removesuffix("/").removesuffix("/v1")}
     proxy_url = os.getenv("PROXY_URL", get_proxy())
-    if proxy_url:
+    if proxy_url and _needs_proxy(api_base):
         client_kwargs["http_client"] = httpx.Client(proxy=proxy_url)
     client = anthropic.Anthropic(**client_kwargs)
 
@@ -3310,6 +3313,8 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
     system_prompt, formatted = to_anthropic_messages(
         [AgentMessage.from_wire(m) for m in messages]
     )
+
+    protected_user = active_user(formatted)
 
     # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
@@ -3334,11 +3339,12 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
 
     while True:
         got_text = False  # any answer text this turn — detect silent empty completion
-        max_tokens = 8192 if deep_think else 4096
-        stream_kwargs = {"model": model, "messages": formatted, "max_tokens": max_tokens, "tools": anthropic_tools}
+        max_tokens = output_budget(context_window)
+        bounded = fit_messages(formatted, anthropic_tools, context_window, max_tokens, system=system_block, protected_message=protected_user)
+        stream_kwargs = {"model": model, "messages": bounded, "max_tokens": max_tokens, "tools": anthropic_tools}
         if system_block:
             stream_kwargs["system"] = system_block
-        if deep_think:
+        if deep_think and max_tokens > 2048:
             stream_kwargs["thinking"] = {"type": "enabled", "budget_tokens": 2048}
             stream_kwargs["temperature"] = 1
 
@@ -3450,43 +3456,15 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
 
 # ── Main ─────────────────────────────────────────────────────────────────
 
-def generate_suggestions(api_key: str, model: str, api_base: str):
-    """Call LLM once (non-streaming) to return 3 varied investment question suggestions."""
-    import re
-    from openai import OpenAI
-    import httpx
-    kwargs = {"api_key": api_key}
-    if api_base: kwargs["base_url"] = api_base
-    proxy_url = os.getenv("PROXY_URL", get_proxy())
-    if proxy_url and _needs_proxy(api_base):
-        kwargs["http_client"] = httpx.Client(proxy=proxy_url)
-    client = OpenAI(**kwargs)
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[{"role": "user", "content":
-            "生成3条风格各异的中文投资问题，用于引导用户使用AI助手。"
-            "分别覆盖：①组合/持仓分析 ②个股深度 ③量化策略。"
-            "每条不超过16个字，要简练有吸引力。"
-            "只返回JSON数组，格式：[\"问题1\",\"问题2\",\"问题3\"]"}],
-        max_tokens=120, temperature=1.1,
-    )
-    text = resp.choices[0].message.content.strip()
-    m = re.search(r'\[.*?\]', text, re.DOTALL)
-    if m:
-        suggestions = json.loads(m.group())
-        print(json.dumps(suggestions[:3], ensure_ascii=False), flush=True)
-    else:
-        print(json.dumps(["我的组合风险怎么样？", "分析一下我的持仓风格", "帮我写一个均线策略"]), flush=True)
-
-
 def main():
     # Ensure UTF-8 output on Windows (other scripts do this, ai_agent was missing it)
     sys.stdout.reconfigure(encoding='utf-8')
     sys.stderr.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description="Investory 观澜 AI Agent")
-    parser.add_argument("--mode", default="chat", choices=["chat", "suggestions", "populate-picks", "title"])
+    parser.add_argument("--mode", default="chat", choices=["chat", "populate-picks", "title"])
     parser.add_argument("--provider", default="openai", choices=["openai", "anthropic", "openai_compat"])
-    parser.add_argument("--model", default="deepseek-v4-flash")
+    parser.add_argument("--model", default="")
+    parser.add_argument("--context-window", type=int)
     parser.add_argument("--api-key", default=os.environ.get("AI_API_KEY", ""))
     parser.add_argument("--api-base", default="")
     parser.add_argument("--deep-think", action="store_true")
@@ -3496,9 +3474,13 @@ def main():
     parser.add_argument("--input", default=None)
     args = parser.parse_args()
 
-    if args.mode == "suggestions":
-        generate_suggestions(args.api_key, args.model, args.api_base)
-        return
+    if args.mode != "populate-picks":
+        if not args.model.strip() or not args.api_base.strip():
+            parser.error("请手动配置模型名称和接口地址")
+        try:
+            output_budget(args.context_window)
+        except ContextBudgetError as error:
+            parser.error(str(error))
 
     if args.mode == "title":
         # Summarise a user message into a conversation title (3-8 words).
@@ -3511,31 +3493,20 @@ def main():
         if not msg:
             print("无标题", flush=True)
             return
-        import requests as _requests
         try:
-            kwargs = {"api_key": args.api_key}
-            base = args.api_base or "https://api.deepseek.com"
-            if "deepseek" in base:
-                model = "deepseek-v4-flash"  # cheap/fast for title summarisation
-            elif "anthropic" in args.provider:
-                model = "claude-sonnet-4-6"
-            elif args.model and args.model != "gpt-4o-mini":
-                model = args.model
+            messages = [{"role": "user", "content": "用3-8个中文字总结对话主题，只输出标题：" + msg[:500]}]
+            bounded = fit_messages(messages, [], args.context_window, 64)
+            if args.provider == "anthropic":
+                from anthropic import Anthropic
+                client = Anthropic(api_key=args.api_key or "local-no-auth", base_url=args.api_base.rstrip("/").removesuffix("/v1"), timeout=12)
+                response = client.messages.create(model=args.model, messages=bounded, max_tokens=64)
+                title = "".join(block.text for block in response.content if block.type == "text")
             else:
-                model = "deepseek-v4-flash"
-            title_body = {
-                "model": model,
-                "messages": [{"role": "user", "content": f"用3-8个中文字总结这段对话的主题，只输出标题，不要引号、标点或额外解释：\n{msg[:500]}"}],
-                "max_tokens": 20, "temperature": 0.3
-            }
-            # A 3-8 char title needs no chain-of-thought — disable DeepSeek thinking
-            # so we don't burn reasoning tokens (and latency) on a one-liner.
-            if "deepseek" in base:
-                title_body["thinking"] = {"type": "disabled"}
-            r = _requests.post(f"{base}/chat/completions", json=title_body,
-                               headers={"Authorization": f"Bearer {args.api_key}"}, timeout=15)
-            title = r.json()["choices"][0]["message"]["content"].strip().strip('"').strip("'").strip("。")
-            print(title[:30] if title else "无标题", flush=True)
+                from openai import OpenAI
+                client = OpenAI(api_key=args.api_key or "local-no-auth", base_url=args.api_base, timeout=12)
+                response = client.chat.completions.create(model=args.model, messages=bounded, max_tokens=64)
+                title = response.choices[0].message.content or ""
+            print(title.strip()[:30] or "无标题", flush=True)
         except Exception:
             print("无标题", flush=True)
         return
@@ -3613,12 +3584,14 @@ def main():
 
     try:
         if args.provider == "anthropic":
-            call_anthropic_stream(args.api_key, args.model, full_messages, args.portfolio_id, args.user_id, args.deep_think, args.web_search, prefetched_tools)
+            call_anthropic_stream(args.api_key, args.model, full_messages, args.portfolio_id, args.user_id, args.deep_think, args.web_search, prefetched_tools, api_base=args.api_base, context_window=args.context_window)
         else:
-            call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think, args.user_id, args.web_search, prefetched_tools)
+            call_openai_with_tools(args.api_key, args.model, full_messages, args.api_base, args.portfolio_id, args.deep_think, args.user_id, args.web_search, prefetched_tools, context_window=args.context_window)
     except Exception as e:
         msg = str(e)
-        if "401" in msg or "Unauthorized" in msg or "Authentication" in msg:
+        if isinstance(e, ContextBudgetError):
+            print(f"[ERROR] {msg}", flush=True)
+        elif "401" in msg or "Unauthorized" in msg or "Authentication" in msg:
             print(f"[ERROR] API Key 无效或未授权", flush=True)
         elif "timeout" in msg.lower() or "timed out" in msg.lower():
             print(f"[ERROR] 请求超时", flush=True)

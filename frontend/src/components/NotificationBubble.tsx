@@ -45,7 +45,7 @@ export function NotificationBubbleProvider({ children }: { children: ReactNode }
   return (
     <ctx.Provider value={{ show, dismiss }}>
       {children}
-      <div className="fixed bottom-20 right-6 z-50 flex flex-col gap-3 items-end pointer-events-none">
+      <div className="fixed bottom-20 right-6 z-40 flex flex-col gap-3 items-end pointer-events-none">
         <AnimatePresence>
           {bubbles.map(b => {
             const style = STYLES[b.variant || 'default']

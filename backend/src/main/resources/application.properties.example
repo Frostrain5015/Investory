@@ -35,7 +35,6 @@ spring.thymeleaf.cache=false
 spring.thymeleaf.encoding=UTF-8
 
 # Default AI provider key (DeepSeek). Override via env var if needed.
-ai.default.key=${AI_DEFAULT_KEY:}
 
 # Independent, read-only Hithink Finance API channel (default disabled).
 # See docs/integrations/hithink-data.md; do not put real keys in this example.

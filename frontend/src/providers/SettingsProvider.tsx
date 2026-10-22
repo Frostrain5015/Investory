@@ -46,9 +46,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   const [baseCurrency, setBaseCurrency] = useState<BaseCurrency>(() => {
     return (localStorage.getItem('baseCurrency') as BaseCurrency) || 'CNY'
   })
-  const [showRiskMetrics, setShowRiskMetrics] = useState<boolean>(() => {
-    return localStorage.getItem('showRiskMetrics') === 'true'
-  })
   const [rates, setRates] = useState<Record<BaseCurrency, number>>(FALLBACK_RATES)
 
   const fetchRates = useCallback(() => {
@@ -70,18 +67,11 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('baseCurrency', baseCurrency)
   }, [baseCurrency])
   useEffect(() => {
-    localStorage.setItem('showRiskMetrics', String(showRiskMetrics))
-  }, [showRiskMetrics])
-  useEffect(() => {
     if (authenticated) fetchRates()
   }, [fetchRates, authenticated])
 
   function toggleColorScheme() {
     setColorScheme((prev) => (prev === 'cn' ? 'western' : 'cn'))
-  }
-
-  function toggleRiskMetrics() {
-    setShowRiskMetrics((prev) => !prev)
   }
 
   function convertCurrency(cnyValue: number): number {
@@ -105,8 +95,6 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
         setBaseCurrency,
         formatCurrency,
         convertCurrency,
-        showRiskMetrics,
-        toggleRiskMetrics,
       }}
     >
       {children}

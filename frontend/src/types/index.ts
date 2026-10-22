@@ -520,10 +520,19 @@ export interface WatchlistItem {
 // ── AI ────────────────────────────────────────────────────────────────────
 
 export interface AiSettings {
+  id: number
   provider: string
   model: string
   baseUrl: string
   hasKey: boolean
+  contextWindow: number | null
+  configured: boolean
+}
+
+export interface AiModelSettings {
+  models: AiSettings[]
+  activeModelId: number | null
+  maxModels: number
 }
 
 export interface AiModelsResponse {

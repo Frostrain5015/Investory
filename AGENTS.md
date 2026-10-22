@@ -103,3 +103,5 @@ Credentials are in memory file `server_credentials.md`. Never restart the servic
 - DAOs extend `BaseDao` which provides `JdbcTemplate` via `@Autowired`
 - Frontend uses `useSettings()` for currency formatting, color scheme, and unit conversion
 - TypeScript: no `any`, always define proper interfaces
+- 前端文案应直接说明功能或状态，不得使用“个人量化工具 · Agent接入”这类标签拼接式宣传文案；不得随意用“·”连接标题、副标题或功能描述。优先使用自然短句、逗号或独立标签。
+- 字段的补充说明优先放在选项栏或标题旁的 ⓘ 提示中，悬停、键盘聚焦及手机点击均可查看；不要在表单中铺成长段说明。错误、必填和影响操作结果的状态仍须直接可见。

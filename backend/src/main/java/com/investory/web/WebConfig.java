@@ -97,8 +97,6 @@ public class WebConfig implements WebMvcConfigurer {
                 .addPathPatterns("/**")
                 .excludePathPatterns("/", "/login", "/register", "/logout", "/error",
                         "/oauth/frost-id/login", "/oauth/frost-id/callback", "/oauth/frost-id/exchange",
-                        "/mcp", "/.well-known/**",
-                        "/oauth/mcp/authorize", "/oauth/mcp/token", "/oauth/mcp/register",
                         "/api/session", "/api/session/test-login", "/api/stock/search",
                         "/api/stocksage/regime", "/api/stocksage/scan-results",
                         "/api/stocksage/portfolio-analysis",

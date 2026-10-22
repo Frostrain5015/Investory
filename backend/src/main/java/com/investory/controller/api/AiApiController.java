@@ -3,6 +3,7 @@ package com.investory.controller.api;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.investory.crawler.AiSessionManager;
 import com.investory.util.ProcessRunner;
+import com.investory.service.AiModelConfiguration;
 import org.springframework.jdbc.core.JdbcTemplate;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -29,35 +30,27 @@ public class AiApiController {
     private final ExecutorService executor;
     private final AiSessionManager session;
     private final JdbcTemplate jdbc;
+    private final AiModelConfiguration modelConfiguration;
 
     @Value("${python.executable:python3}")
     private String pythonExecutable;
 
-    @Value("${ai.default.key:}")
-    private String defaultKey;
-
     @Value("${ai.title.enabled:false}")
     private boolean aiTitleEnabled;
 
-    private static final String DEFAULT_PROVIDER = "openai_compat";
-    private static final String DEFAULT_MODEL   = "deepseek-v4-flash";
-    private static final String DEFAULT_BASE_URL = "https://api.deepseek.com";
     private static final List<String> STATIC_SUGGESTIONS = List.of(
         "\u6211\u7684\u7ec4\u5408\u98ce\u9669\u600e\u4e48\u6837\uff1f",
         "\u5206\u6790\u4e00\u4e0b\u6211\u7684\u6301\u4ed3\u98ce\u683c",
         "\u5e2e\u6211\u5199\u4e00\u4e2a\u5747\u7ebf\u7b56\u7565"
     );
 
-    private boolean isSupportedProvider(String provider) {
-        return DEFAULT_PROVIDER.equals(provider) || "anthropic".equals(provider);
-    }
-
     @Autowired
     public AiApiController(AiSessionManager session, JdbcTemplate jdbc,
-                           @Qualifier("aiExecutor") ExecutorService executor) {
+                           @Qualifier("aiExecutor") ExecutorService executor, AiModelConfiguration modelConfiguration) {
         this.session = session;
         this.jdbc = jdbc;
         this.executor = executor;
+        this.modelConfiguration = modelConfiguration;
     }
 
     /**
@@ -86,48 +79,24 @@ public class AiApiController {
         }
         if (userId <= 0) return Map.of("error", "not authenticated");
 
-        // Resolve AI config: user's saved settings > defaults
-        String aiKey = defaultKey;
-        String aiProvider = DEFAULT_PROVIDER;
-        String aiModel = DEFAULT_MODEL;
-        String aiBaseUrl = DEFAULT_BASE_URL;
-
-        if (userId > 0) {
-            List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT provider, model, base_url, api_key FROM ai_settings WHERE user_id = ?", userId);
-            if (!rows.isEmpty()) {
-                Map<String, Object> row = rows.get(0);
-                String savedKey = (String) row.get("api_key");
-                if (savedKey != null && !savedKey.isBlank()) {
-                    String savedProvider = row.getOrDefault("provider", DEFAULT_PROVIDER).toString();
-                    if (!isSupportedProvider(savedProvider)) {
-                        return Map.of("error", "请先在设置页重新选择 API 格式");
-                    }
-                    aiKey = savedKey;
-                    aiProvider = savedProvider;
-                    aiModel = row.getOrDefault("model", DEFAULT_MODEL).toString();
-                    aiBaseUrl = row.getOrDefault("base_url", DEFAULT_BASE_URL).toString();
-                }
+        final AiModelConfiguration.Model config;
+        try {
+            Object requestedModel = body.get("modelId");
+            Integer modelId = null;
+            if (requestedModel != null) {
+                if (!(requestedModel instanceof Number number) || number.doubleValue() != number.intValue())
+                    throw new IllegalArgumentException("请选择有效的模型");
+                modelId = AiModelConfiguration.validateId(number.intValue());
             }
+            config = modelConfiguration.require(userId, modelId);
         }
-        if (aiKey == null || aiKey.isBlank()) {
-            return Map.of("error", "AI API key not configured");
-        }
-
-        final String provider = "anthropic".equals(aiProvider) ? "anthropic" : "openai_compat";
-        final String key = aiKey;
-        final String baseUrl = aiBaseUrl;
+        catch (IllegalArgumentException error) { return Map.of("error", error.getMessage()); }
+        final String provider = config.provider();
+        final String key = config.apiKey();
+        final String baseUrl = config.baseUrl();
+        final String model = config.model();
+        final int contextWindow = config.contextWindow();
         final boolean deepThink = Boolean.TRUE.equals(body.get("deepThink"));
-
-        // All calls use v4-flash — no deep-think tier switching.
-        // Also rewrites legacy names (deepseek-chat / deepseek-reasoner) that may still be cached in the client.
-        String resolvedModel = aiModel;
-        boolean isDeepseek = baseUrl != null && baseUrl.contains("deepseek");
-        if (isDeepseek) {
-            if ("deepseek-chat".equals(resolvedModel)) resolvedModel = "deepseek-v4-flash";
-            else if ("deepseek-reasoner".equals(resolvedModel)) resolvedModel = "deepseek-v4-flash";
-        }
-        final String model = resolvedModel;
 
         long portfolioId = 0;
         if (s != null) {
@@ -202,7 +171,7 @@ public class AiApiController {
                         userId, convId, content.length() > 4000 ? content.substring(0, 4000) : content);
                     // Summarise conversation title via LLM after the first turn (only if still the default).
                     if (convId > 0) {
-                        summarizeTitleAsync(convId, content, userId);
+                        summarizeTitleAsync(convId, content, userId, config);
                     }
                 } catch (Exception ignored) {}
             }
@@ -233,6 +202,7 @@ public class AiApiController {
                 cmd.add(pythonExecutable); cmd.add("-u"); cmd.add(script.getAbsolutePath());
                 cmd.add("--provider"); cmd.add(provider);
                 cmd.add("--model"); cmd.add(model);
+                cmd.add("--context-window"); cmd.add(String.valueOf(contextWindow));
                 cmd.add("--portfolio-id"); cmd.add(String.valueOf(pid));
                 cmd.add("--user-id"); cmd.add(String.valueOf(uid));
                 cmd.add("--input"); cmd.add(tmpInput.toString());
@@ -466,75 +436,8 @@ public class AiApiController {
     }
 
     @GetMapping("/suggestions")
-    public Map<String, Object> suggestions(HttpServletRequest req) {
-        if (STATIC_SUGGESTIONS != null) return Map.of("suggestions", STATIC_SUGGESTIONS);
-        jakarta.servlet.http.HttpSession s = req.getSession(false);
-        long userId = s != null && s.getAttribute("userId") instanceof Number
-            ? ((Number) s.getAttribute("userId")).longValue() : 0;
-
-        String aiKey = defaultKey, aiProvider = DEFAULT_PROVIDER, aiModel = DEFAULT_MODEL, aiBaseUrl = DEFAULT_BASE_URL;
-        if (userId > 0) {
-            List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT provider, model, base_url, api_key FROM ai_settings WHERE user_id = ?", userId);
-            if (!rows.isEmpty()) {
-                Map<String, Object> row = rows.get(0);
-                String savedKey = (String) row.get("api_key");
-                if (savedKey != null && !savedKey.isBlank()) {
-                    String savedProvider = row.getOrDefault("provider", DEFAULT_PROVIDER).toString();
-                    if (isSupportedProvider(savedProvider)) {
-                        aiKey = savedKey;
-                        aiProvider = savedProvider;
-                        aiModel = row.getOrDefault("model", DEFAULT_MODEL).toString();
-                        aiBaseUrl = row.getOrDefault("base_url", DEFAULT_BASE_URL).toString();
-                    }
-                }
-            }
-        }
-
-        // Use fast model on DashScope for suggestions
-        final String provider = "anthropic".equals(aiProvider) ? "anthropic" : "openai_compat";
-        // Rewrite legacy DeepSeek model names (deepseek-chat / deepseek-reasoner are being deprecated)
-        String resolvedModel = aiModel;
-        if (aiBaseUrl != null && aiBaseUrl.contains("deepseek")) {
-            if ("deepseek-chat".equals(resolvedModel)) resolvedModel = "deepseek-v4-flash";
-            else if ("deepseek-reasoner".equals(resolvedModel)) resolvedModel = "deepseek-v4-pro";
-        }
-        final String model = resolvedModel;
-        final String key = aiKey;
-        final String baseUrl = aiBaseUrl;
-
-        try {
-            File script = new File("script/ai_agent.py");
-            if (!script.exists()) script = new File("../script/ai_agent.py").getCanonicalFile();
-            if (!script.exists()) return Map.of("suggestions", List.of("我的组合风险怎么样？", "分析一下我的持仓风格", "帮我写一个均线策略"));
-
-            List<String> cmd = new java.util.ArrayList<>(List.of(
-                pythonExecutable, "-u", script.getAbsolutePath(),
-                "--mode", "suggestions",
-                "--provider", provider,
-                "--model", model
-            ));
-            if (!baseUrl.isBlank()) { cmd.add("--api-base"); cmd.add(baseUrl); }
-
-            ProcessBuilder pb = new ProcessBuilder(cmd);
-            pb.directory(script.getParentFile());
-            pb.redirectErrorStream(false);
-            pb.environment().put("PYTHONUNBUFFERED", "1");
-            pb.environment().put("AI_API_KEY", key);
-
-            Process p = pb.start();
-            String out = new String(p.getInputStream().readAllBytes(), "UTF-8").trim();
-            boolean finished = p.waitFor(5, TimeUnit.MINUTES);
-            if (!finished) { p.destroyForcibly(); }
-
-            if (out.startsWith("[")) {
-                @SuppressWarnings("unchecked")
-                List<String> suggestions = json.readValue(out, List.class);
-                return Map.of("suggestions", suggestions);
-            }
-        } catch (Exception ignored) {}
-
-        return Map.of("suggestions", List.of("我的组合风险怎么样？", "分析一下我的持仓风格", "帮我写一个均线策略"));
+    public Map<String, Object> suggestions() {
+        return Map.of("suggestions", STATIC_SUGGESTIONS);
     }
 
     @GetMapping("/stream")
@@ -817,7 +720,7 @@ public class AiApiController {
     }
 
     /** Summarise a conversation title via LLM (async, fire-and-forget). */
-    private void summarizeTitleAsync(long convId, String userMessage, long userId) {
+    private void summarizeTitleAsync(long convId, String userMessage, long userId, AiModelConfiguration.Model config) {
         if (!aiTitleEnabled || convId <= 0 || userId <= 0) return;
         executor.submit(() -> {
             Path tmpInput = null;
@@ -828,23 +731,7 @@ public class AiApiController {
                 // Build temp input with the user message
                 tmpInput = Files.createTempFile("ai_title_", ".json");
                 Files.writeString(tmpInput, json.writeValueAsString(Map.of("message", userMessage)));
-                // Load user's AI settings
-                String key = defaultKey, model = DEFAULT_MODEL, base = DEFAULT_BASE_URL, provider = DEFAULT_PROVIDER;
-                try {
-                    List<Map<String, Object>> rows = jdbc.queryForList(
-                        "SELECT provider, model, base_url, api_key FROM ai_settings WHERE user_id = ?", userId);
-                    if (!rows.isEmpty()) {
-                        var r = rows.get(0);
-                        provider = String.valueOf(r.getOrDefault("provider", DEFAULT_PROVIDER));
-                        model = String.valueOf(r.getOrDefault("model", DEFAULT_MODEL));
-                        key = String.valueOf(r.getOrDefault("api_key", key));
-                        String b = String.valueOf(r.getOrDefault("base_url", ""));
-                        if (!b.isBlank()) base = b;
-                    }
-                } catch (Exception ignored) {}
-                if (key == null || key.isBlank()) {
-                    return;
-                }
+                String key = config.apiKey(), model = config.model(), base = config.baseUrl(), provider = config.provider();
                 try {
                     String currentTitle = jdbc.queryForObject(
                         "SELECT title FROM ai_conversations WHERE id = ? AND user_id = ?",
@@ -857,6 +744,7 @@ public class AiApiController {
                 ProcessBuilder pb = new ProcessBuilder(pythonExecutable, "-u",
                     script.getAbsolutePath(), "--mode", "title",
                     "--model", model, "--provider", provider, "--api-base", base,
+                    "--context-window", String.valueOf(config.contextWindow()),
                     "--input", tmpInput.toString());
                 pb.directory(script.getParentFile());
                 pb.environment().put("AI_API_KEY", key);

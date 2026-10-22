@@ -27,6 +27,11 @@ import java.util.logging.Logger;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler({org.springframework.web.servlet.NoHandlerFoundException.class,
+                       org.springframework.web.servlet.resource.NoResourceFoundException.class})
+    public ResponseEntity<Map<String, String>> handleNotFound(Exception error) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("error", "not found"));
+    }
 
     /** JUL 日志记录器，用于将数据库错误和未知异常记录到应用日志。 */
     private static final Logger log = Logger.getLogger(GlobalExceptionHandler.class.getName());

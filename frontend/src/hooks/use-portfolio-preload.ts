@@ -60,7 +60,7 @@ export function usePortfolioPreload() {
           analysingBubbleTimer = setTimeout(() => {
             if (cancelled || analysisDone) return
             notifyOutsideResearch({
-              title: '观澜 · 分析中',
+              title: '观澜，分析中',
               message: '正在生成你的风控报告，稍后会把组合风险、优势持仓和薄弱点整理好。',
             })
           }, 2600)
@@ -98,7 +98,7 @@ export function usePortfolioPreload() {
           const tone = score >= 60 ? '状态不错' : score >= 40 ? '还算稳' : '需要留意'
           const topName = result.top_holdings?.[0]?.name || '暂无'
           notifyOutsideResearch({
-            title: '观澜 · 风控简报',
+            title: '观澜，风控简报',
             message: `组合评分 ${score.toFixed(0)} 分，${tone}。评分最高的是 ${topName}，可以查看完整分析。`,
             actionLabel: '查看风控报告',
             actionHref: '/research',

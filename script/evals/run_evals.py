@@ -103,6 +103,7 @@ def build_live_trace(case: dict, base: dict) -> dict:
     cmd = [sys.executable, str(SCRIPT_DIR / "ai_agent.py"),
            "--mode", "chat", "--provider", "anthropic" if provider == "anthropic" else "openai",
            "--model", model, "--api-key", api_key, "--api-base", api_base,
+           "--context-window", os.environ.get("EVAL_CONTEXT_WINDOW", "65536"),
            "--portfolio-id", str(case.get("portfolio_id", 1)),
            "--user-id", str(case.get("user_id", 1)), "--input", input_path]
     try:

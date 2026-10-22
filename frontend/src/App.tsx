@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { AuthProvider } from '@/providers/AuthProvider'
 import { useAuth } from '@/hooks/use-auth'
 import { SettingsProvider } from '@/providers/SettingsProvider'
+import { ModelsProvider } from '@/providers/ModelsProvider'
 import { ThemeProvider } from '@/providers/ThemeProvider'
 import { ToastProvider } from '@/components/Toast'
 import { NotificationBubbleProvider } from '@/components/NotificationBubble'
@@ -111,6 +112,7 @@ export default function App() {
       {isElectron && <TitleBar />}
       <div className="flex-1 min-h-0">
         <AuthProvider>
+          <ModelsProvider>
           <SettingsProvider>
           <ThemeProvider>
           <I18nProvider>
@@ -150,6 +152,7 @@ export default function App() {
           </I18nProvider>
           </ThemeProvider>
           </SettingsProvider>
+          </ModelsProvider>
         </AuthProvider>
       </div>
     </div>

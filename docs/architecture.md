@@ -17,7 +17,7 @@ Investory 是一个以投资组合台账为核心的多进程应用：**React �
 | 行情与数据采集 | Java `crawler`，`script/fetch_*.py` | 实时行情、历史价格、基本面、新闻、汇率、定时采集、管理员控制 | 外部数据源 → MySQL/缓存 → REST/SSE |
 | 量化研究与回测 | StockSage Alpha，`analyze_quant.py`、`backtest_engine.py` 等 | 因子、市场状态、选股、组合风格、相关性、策略、回测、滚动验证、调参 | `/api/quant/*`、`stocksage/*`、`backtest/*` |
 | AI 助手 | `AiApiController`、`AiSessionManager`、`script/ai_agent.py` | 模型适配、工具编排、会话历史、产物、记忆、用户确认/回答 | `/api/ai/*`、Python stdin/stdout 协议、模型供应商 API |
-| 身份与外部集成 | `AuthService`、`web`、OAuth/MCP 控制器 | 本地认证、Frost ID、Session、Bearer token、MCP 工具、确认令牌 | 登录/回调、`/mcp`、`/oauth/mcp/*` |
+| 身份认证 | `AuthService`、`web`、OAuth 控制器 | 本地认证、Frost ID、应用 Session | 登录/回调 |
 | 桌面宿主 | `desktop/main.js`、`preload.js` | 本地静态页面、窗口 IPC、系统浏览器、深链接、更新 | `127.0.0.1:18256`、`investory://` |
 | 存储与交付基础设施 | MySQL、Flyway、`pom.xml`、Vite、`deploy.py` | 持久化、数据库增量迁移、编译、打包与人工发布工具 | JAR、前端静态资源、Windows 安装包 |
 
@@ -37,11 +37,9 @@ flowchart TD
     Engine[StockSage 常驻服务 127.0.0.1:8200]
     Data[行情 / 新闻 / 财务数据源]
     Model[配置的模型推理 API]
-    MCP[外部 MCP 客户端]
 
     Electron --> Static --> Browser
     Browser -->|JSON / SSE| Java
-    MCP -->|JSON-RPC / Bearer| Java
     Java --> Auth --> Core --> DB
     Java --> Agent --> Model
     Java --> Quant --> DB
@@ -84,9 +82,9 @@ Provider 与消费 Hook 已拆开，避免组件文件同时导出 Hook/Context 
 ## 4. Java 业务层
 
 ```text
-controller/            HTTP、OAuth、MCP、SPA 入口
+controller/            HTTP、OAuth、SPA 入口
 controller/api/        REST 参数、身份和响应边界
-service/               成本/持仓/盈亏/组合分析、认证、回测执行、MCP 编排
+service/               成本/持仓/盈亏/组合分析、认证、回测执行、模型配置
 dao/                   JdbcTemplate SQL 与行映射
 model/                 业务对象和回测请求
 crawler/               调度器、行情服务、长任务与 SSE 会话
@@ -145,20 +143,22 @@ Java 启动 AI 子进程后读取 stdout 上的协议事件，`AiSessionManager`
 
 两套 Python 位置的区别是“应用任务编排”和“分析引擎”，不建议为了目录整齐把它们机械合并。它们目前仍有数据/指标概念重叠；后续统一应以数据口径测试为先。
 
-## 6. 身份、MCP 与存储
+## 6. 身份与存储
 
 认证以 Spring Session JDBC 和拦截器为主；本地账号及 Frost ID 使用同一业务身份。桌面登录通过系统浏览器完成，再经 `investory://` 深链接拿到一次性 token，交回后端兑换应用自己的 session cookie。测试登录控制器限制在 `test`/`dev` profile。
 
-MCP 在 `McpToolRegistry` 中注册 46 个工具。大部分工具以调用者身份转发现有 REST，写操作先暂存，再通过确认令牌落地。部分工具只返回说明，并不是所有工具都有与内置 AI 完全相同的能力。这里的 create/delete transaction 操作影响**应用台账**，没有券商订单通道。
+2026-10-22 起，外部访问 Investory 的 MCP 服务、工具注册、OAuth 授权及 Bearer 身份注入已移除。用户通过应用入口登录；内置观澜继续使用应用的业务能力，Frost ID 登录不受影响。旧 MCP 表仅保留迁移历史，不再有读取或认证入口。
 
-MySQL 主要承载：账号/组合、股票/价格/基本面、持仓/交易/分红、日净值、策略/回测结果、分析缓存、AI 设置/会话/产物/记忆、MCP token/OAuth 数据、Session、采集历史。StockSage 与 Java/Python 各层也有内存/数据库缓存；因此刷新行为不能仅按前端缓存理解。
+MySQL 主要承载：账号/组合、股票/价格/基本面、持仓/交易/分红、日净值、策略/回测结果、分析缓存、AI 设置/会话/产物/记忆、Session、采集历史。StockSage 与 Java/Python 各层也有内存/数据库缓存；因此刷新行为不能仅按前端缓存理解。
 
 显示币种通过 `/api/market/exchange-rates` 读取数据库的外币/CNY 比率，再乘以人民币金额。原汇率表没有更新时间字段，因此接口不声称这些值是实时行情，`updatedAt` 为 null；前端缺值时仍使用原有的备用比率。
 
 迁移存在两个目录：
 
-- `resources/db/migration/V2..V7` 是版本化 Flyway 迁移。
+- `resources/db/migration/V2..V8` 是版本化 Flyway 迁移。
 - `resources/db/migrations/2026-*.sql` 是历史增量脚本，不能因为后缀是 SQL 就认定会被默认 Flyway 自动执行。
+
+观澜模型由 `AiModelConfiguration` 统一读取用户配置，不再使用共享模型/密钥，也不改写 Model ID。V8 新增三槽位模型配置表及当前选择，旧配置须由用户补填上下文窗口后保存；Python 在每次请求（含工具续轮）前执行保守预算检查。
 
 当前缺少完整 V1 初始业务 schema，示例又采用 baseline-version=1。**只新建一个空数据库并不能保证首次启动成功**。此外，部分表结构由 Java/Python 运行时维护。此次没有修改既有迁移编号、执行 DDL 或改写实际数据库；新环境初始化需要单独以现有 schema 和迁移历史为依据梳理。
 
