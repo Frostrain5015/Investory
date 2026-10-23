@@ -432,23 +432,10 @@ def _latest_quotes(symbols: list[str]) -> dict:
             quote["date"] = timestamp_day(quote["timestamp"]) if quote.get("timestamp") is not None else None
     other = [symbol for symbol in symbols if symbol not in a_shares]
     if other:
-        conn = get_db_conn()
-        cur = conn.cursor()
-        try:
-            for symbol in other:
-                cur.execute("""SELECT sp.close, sp.trade_date FROM stock_prices sp
-                    JOIN stocks s ON s.id=sp.stock_id WHERE s.symbol=%s
-                    ORDER BY sp.trade_date DESC LIMIT 2""", (symbol,))
-                rows = cur.fetchall()
-                price = float(rows[0][0]) if rows and rows[0][0] is not None else None
-                previous = float(rows[1][0]) if len(rows) > 1 and rows[1][0] is not None else None
-                change = price - previous if price is not None and previous is not None else None
-                result[symbol] = {"price": price, "previousClose": previous, "change": change,
-                                  "changePct": change / previous * 100 if change is not None and previous and previous > 0 else None,
-                                  "date": str(rows[0][1]) if rows else None, "source": "database", "live": False}
-        finally:
-            cur.close()
-            conn.close()
+        from market_history import latest
+        external = latest(other)
+        for symbol in other:
+            result[symbol] = external.get(symbol, {"price": None, "live": False, "note": "历史收盘价暂不可用"})
     return result
 
 
@@ -825,34 +812,17 @@ def tool_get_stock_price_history(symbol: str, days: int = 60) -> dict:
         conn.close()
     if not db_sym:
         return {"error": f"未找到 {symbol}"}
-    # A-share history no longer reads the crawler's stock_prices table.
-    # Keep this raw-price tool unadjusted; factor research explicitly uses qfq.
-    if _is_a_share(db_sym):
-        from datetime import datetime, timedelta
-        from hithink_finance import get_client, HithinkError, SHANGHAI
-        try:
-            limit = min(max(int(days), 1) * 2, MAX_ROWS)
-            today = datetime.now(SHANGHAI).date()
-            result = get_client().history(db_sym, today - timedelta(days=min(3650, limit * 2 + 30)), today, "none")
-            points = result["points"][-limit:]
-            return {"symbol": symbol, "count": len(points), "points": points,
-                    "truncated": len(result["points"]) > limit,
-                    "source": result["source"], "adjust": "none", "currency": "CNY",
-                    "volume_unit": "shares", "timestamp": result["timestamp"],
-                    "note": "数据已截断" if len(result["points"]) > limit else ""}
-        except HithinkError as error:
-            return {"error": str(error), "source": "hithink_finance_api"}
-    conn = get_db_conn()
-    cur = conn.cursor()
-    cur.execute("SELECT s.id FROM stocks s WHERE s.symbol=%s", (db_sym,))
-    sid = cur.fetchone()[0]
-    limit = min(days * 2, MAX_ROWS)
-    cur.execute("SELECT trade_date, open, close, high, low, volume FROM stock_prices WHERE stock_id=%s ORDER BY trade_date DESC LIMIT %s", (sid, limit))
-    rows = cur.fetchall()
-    cur.close(); conn.close()
-    points = [{"date": str(r[0]), "open": round(float(r[1] or 0),2), "close": round(float(r[2] or 0),2), "high": round(float(r[3] or 0),2), "low": round(float(r[4] or 0),2), "volume": int(float(r[5] or 0))} for r in rows]
-    truncated = len(points) >= limit
-    return {"symbol": symbol, "count": len(points), "points": list(reversed(points)), "truncated": truncated, "note": "数据已截断" if truncated else ""}
+    from datetime import datetime, timedelta
+    from market_history import history, HistoryError, SHANGHAI
+    limit = min(max(int(days), 1) * 2, MAX_ROWS)
+    today = datetime.now(SHANGHAI).date()
+    try:
+        result = history(db_sym, today - timedelta(days=min(3650, limit * 2 + 30)), today, "none")
+        points = result["points"][-limit:]
+        return {**result, "symbol": symbol, "points": points, "count": len(points),
+                "truncated": len(result["points"]) > limit, "volume_unit": "shares"}
+    except HistoryError as error:
+        return {"error": str(error)}
 
 # B: Computational tools
 def tool_compute_correlation(portfolio_id: int, symbols: list = None) -> dict:
@@ -868,10 +838,12 @@ def tool_compute_correlation(portfolio_id: int, symbols: list = None) -> dict:
     for sym in symbols:
         db_sym = resolve_symbol(conn, sym)
         if not db_sym: continue
-        cur.execute("SELECT id FROM stocks WHERE symbol=%s", (db_sym,))
-        sid = cur.fetchone()[0]
-        cur.execute("SELECT trade_date, close FROM stock_prices WHERE stock_id=%s ORDER BY trade_date DESC LIMIT %s", (sid, MAX_MULTI_ROWS))
-        for d, c in cur.fetchall(): closes.setdefault(str(d), {})[sym] = float(c)
+        from datetime import datetime, timedelta
+        from market_history import history, SHANGHAI
+        today = datetime.now(SHANGHAI).date()
+        data = history(db_sym, today - timedelta(days=MAX_MULTI_ROWS * 2 + 30), today, "forward")
+        for point in data["points"][-MAX_MULTI_ROWS:]:
+            closes.setdefault(point["date"], {})[sym] = point["close"]
     cur.close(); conn.close()
     dates = sorted(closes.keys())
     pairs = []
@@ -883,7 +855,8 @@ def tool_compute_correlation(portfolio_id: int, symbols: list = None) -> dict:
                 dd = closes[d]
                 if s1 in dd and s2 in dd: vals1.append(dd[s1]); vals2.append(dd[s2])
             if len(vals1) > 30:
-                r = float(np.corrcoef(vals1, vals2)[0,1])
+                r = float(np.corrcoef(np.diff(vals1) / vals1[:-1], np.diff(vals2) / vals2[:-1])[0,1])
+                if not np.isfinite(r): continue
                 pairs.append({"s1": s1, "s2": s2, "correlation": round(r, 3), "overlap": len(vals1)})
     return {"pairs": sorted(pairs, key=lambda x: -abs(x["correlation"])), "note": "r>0.7高度正相关，分散化效果弱"}
 
@@ -894,7 +867,7 @@ def tool_compute_sector_breakdown(portfolio_id: int) -> dict:
     conn = get_db_conn(); cur = conn.cursor()
     cur.execute("""
         SELECT h.stock_id, s.symbol, s.name, s.market, h.total_shares,
-               (SELECT close FROM stock_prices WHERE stock_id=s.id ORDER BY trade_date DESC LIMIT 1) AS price
+               NULL AS price
         FROM holdings h JOIN stocks s ON h.stock_id=s.id
         WHERE h.portfolio_id=%s AND h.total_shares>0
     """, (portfolio_id,))
@@ -906,6 +879,10 @@ def tool_compute_sector_breakdown(portfolio_id: int) -> dict:
     cur.execute(f"SELECT stock_id, beta_1y, volatility_1y FROM stock_metric_cache WHERE stock_id IN ({id_list})")
     metric_map = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
     cur.close(); conn.close()
+    prices = _latest_quotes([r[1] for r in rows])
+    if any(prices.get(r[1], {}).get("price") is None for r in rows):
+        return {"error": "部分标的缺少价格，无法计算完整权重"}
+    rows = [(*r[:5], prices[r[1]]["price"]) for r in rows]
     by_style, by_market, total = {}, {}, 0
     for r in rows:
         sid, sym, name, mkt, shares, price = r
@@ -931,13 +908,12 @@ def tool_benchmark_compare(portfolio_id: int, benchmark: str = "000001.SH", days
     pv_rows = cur.fetchall()
     # Benchmark prices
     db_bm = resolve_symbol(conn, benchmark) or benchmark
-    cur.execute("SELECT id FROM stocks WHERE symbol=%s", (db_bm,))
-    bm = cur.fetchone()
-    bm_close = {}
-    if bm:
-        cur.execute("SELECT trade_date, close FROM stock_prices WHERE stock_id=%s AND trade_date>=DATE_SUB(CURDATE(),INTERVAL %s DAY) ORDER BY trade_date", (bm[0], min(days,500)))
-        bm_close = {str(d): float(c) for d, c in cur.fetchall()}
     cur.close(); conn.close()
+    from datetime import datetime, timedelta
+    from market_history import history, SHANGHAI
+    today = datetime.now(SHANGHAI).date()
+    data = history(db_bm, today - timedelta(days=min(days, 500)), today, "none")
+    bm_close = {p["date"]: p["close"] for p in data["points"]}
     if len(pv_rows) < 30: return {"error": "组合净值数据不足（需至少30天）"}
     p_vals, b_vals = [], []
     for d, v in pv_rows:
@@ -2083,29 +2059,20 @@ _GLOBAL_INDICES = [
 ]
 
 def tool_get_global_indices() -> dict:
-    conn = get_db_conn()
-    cur = conn.cursor()
+    conn = get_db_conn(); cur = conn.cursor()
+    try:
+        cur.execute("SELECT id, symbol FROM stocks")
+        identities = {row[1]: row[0] for row in cur.fetchall()}
+    finally:
+        cur.close(); conn.close()
+    prices = _latest_quotes([row[0] for row in _GLOBAL_INDICES])
     results = []
     for symbol, name, country in _GLOBAL_INDICES:
-        cur.execute("""
-            SELECT s.id, sp.close, sp.trade_date
-            FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id
-            WHERE s.symbol = %s ORDER BY sp.trade_date DESC LIMIT 2
-        """, (symbol,))
-        rows = cur.fetchall()
-        if len(rows) >= 1:
-            price = float(rows[0][1] or 0)
-            if len(rows) >= 2:
-                prev = float(rows[1][1] or 0)
-                chg = price - prev
-                chg_pct = (chg / prev) * 100 if prev else 0
-            else:
-                chg = 0; chg_pct = 0
-            results.append({"stockId": rows[0][0], "symbol": symbol, "name": name, "country": country,
-                "price": round(price, 2), "change": round(chg, 2),
-                "changePct": round(chg_pct, 2), "date": str(rows[0][2])})
-    cur.close(); conn.close()
-    return {"indices": results, "note": f"共{len(results)}个指数。指数可加自选：用其 stockId 调 confirm_watchlist(action='add')。"}
+        price = prices.get(symbol, {})
+        results.append({"stockId": identities.get(symbol), "symbol": symbol, "name": name, "country": country,
+                        **price, "available": price.get("price") is not None})
+    return {"indices": results, "note": "仅提供收盘历史的标的不是实时行情；stockId 有值时可加入自选。"}
+
 
 def tool_get_world_news(limit: int = 10) -> dict:
     """Internal — called by tool_get_world_market"""

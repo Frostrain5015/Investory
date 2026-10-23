@@ -42,14 +42,15 @@ export interface PreloadMarketNewsItem {
 export interface PreloadAdminMarketStat {
   market: string
   stock_count: number
-  price_rows: number
+  price_rows: number | null
   latest_date: string
   earliest_date: string
 }
 
 export interface PreloadAdminDbStatus {
+  historyMode?: string
   markets: PreloadAdminMarketStat[]
-  totals: { stock_count: number; price_rows: number }
+  totals: { stock_count: number; price_rows: number | null }
   tables: { total_mb: number }[]
 }
 

@@ -2,6 +2,8 @@ package com.investory.controller.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.investory.crawler.AiSessionManager;
+import com.investory.crawler.RealtimeQuoteService;
+import com.investory.marketdata.MarketRows;
 import com.investory.util.ProcessRunner;
 import com.investory.service.AiModelConfiguration;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,6 +33,7 @@ public class AiApiController {
     private final AiSessionManager session;
     private final JdbcTemplate jdbc;
     private final AiModelConfiguration modelConfiguration;
+    @Autowired private RealtimeQuoteService quotes;
 
     @Value("${python.executable:python3}")
     private String pythonExecutable;
@@ -628,18 +631,17 @@ public class AiApiController {
 
         try {
             // Today's biggest mover among holdings
-            List<Map<String, Object>> movers = jdbc.queryForList(
-                "SELECT s.name, s.market, h.total_shares * sp.close AS mv, " +
-                "  (sp.close - sp_prev.close) / sp_prev.close * 100 AS chg_pct " +
-                "FROM holdings h " +
-                "JOIN stocks s ON s.id = h.stock_id " +
-                "JOIN stock_prices sp ON sp.stock_id = h.stock_id " +
-                "JOIN stock_prices sp_prev ON sp_prev.stock_id = h.stock_id " +
-                "WHERE h.portfolio_id = ? AND h.total_shares > 0 " +
-                "  AND sp.trade_date = (SELECT MAX(trade_date) FROM stock_prices WHERE stock_id = h.stock_id) " +
-                "  AND sp_prev.trade_date = (SELECT MAX(trade_date) FROM stock_prices WHERE stock_id = h.stock_id AND trade_date < sp.trade_date) " +
-                "ORDER BY ABS((sp.close - sp_prev.close) / sp_prev.close) DESC LIMIT 1",
-                portfolioId);
+            List<Map<String, Object>> holdings = jdbc.queryForList(
+                "SELECT s.symbol, s.name, s.market FROM holdings h JOIN stocks s ON s.id=h.stock_id " +
+                "WHERE h.portfolio_id=? AND h.total_shares>0", portfolioId);
+            var current = MarketRows.quotes(holdings, quotes, true);
+            List<Map<String, Object>> movers = new ArrayList<>();
+            for (var holding : holdings) {
+                var quote = current.get(holding.get("symbol"));
+                if (quote != null && quote.changePct() != null)
+                    movers.add(Map.of("name", holding.get("name"), "chg_pct", quote.changePct()));
+            }
+            movers.sort((a, b) -> Double.compare(Math.abs(((Number)b.get("chg_pct")).doubleValue()), Math.abs(((Number)a.get("chg_pct")).doubleValue())));
 
             // Holding count + a market regime hint (placeholder — pulled from a cached table if available)
             Integer count = jdbc.queryForObject(
@@ -670,7 +672,7 @@ public class AiApiController {
                 if (chg != null) {
                     double c = chg.doubleValue();
                     String dir = c >= 0 ? "+" : "";
-                    msg.append("。昨日最大波动是 ").append(name)
+                    msg.append("。当前报价中波动最大的是 ").append(name)
                        .append(" ").append(dir).append(String.format("%.1f%%", c));
                 }
             }
@@ -678,7 +680,7 @@ public class AiApiController {
 
             return Map.of(
                 "show", true,
-                "title", "观澜 · " + greeting,
+                "title", "观澜，" + greeting,
                 "message", msg.toString()
             );
         } catch (Exception e) {
@@ -852,12 +854,19 @@ public class AiApiController {
         try {
             // Pull all holdings (not just top 5) so we can compute concentration + style signals
             List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT s.name, s.market, h.total_shares, h.avg_cost, " +
-                "  (SELECT sp.close FROM stock_prices sp WHERE sp.stock_id = h.stock_id ORDER BY sp.trade_date DESC LIMIT 1) AS price " +
+                "SELECT s.symbol, s.name, s.market, h.total_shares, h.avg_cost " +
                 "FROM holdings h JOIN stocks s ON s.id = h.stock_id " +
                 "WHERE h.portfolio_id = ? AND h.total_shares > 0 ORDER BY (h.total_shares * h.avg_cost) DESC",
                 portfolioId);
             if (rows.isEmpty()) return "";
+
+            var current = MarketRows.quotes(rows, quotes, true);
+            for (var row : rows) {
+                var quote = current.get(row.get("symbol"));
+                if (quote == null || quote.price() == null)
+                    return "持仓共" + rows.size() + "只。部分报价尚未获取，不能推断市值权重或集中度；需要时先调用持仓工具。";
+                row.put("price", quote.price());
+            }
 
             // ── Compute objective profile signals ──────────────────────────
             int holdingCount = rows.size();
@@ -868,7 +877,7 @@ public class AiApiController {
                 Number price = (Number) r.get("price");
                 Number shares = (Number) r.get("total_shares");
                 Number avgCost = (Number) r.get("avg_cost");
-                double p = price != null ? price.doubleValue() : (avgCost != null ? avgCost.doubleValue() : 0);
+                double p = price.doubleValue();
                 double s = shares != null ? shares.doubleValue() : 0;
                 mvs[i] = Math.max(p * s, 0);
                 totalMv += mvs[i];

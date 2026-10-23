@@ -4,6 +4,7 @@ import com.investory.dao.DailyPortfolioValueDao;
 import com.investory.model.DailyValue;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -18,17 +19,19 @@ public class PortfolioValueCalculator {
     @Autowired private DailyPortfolioValueDao dailyDao;
     @Autowired private PnlLedgerService pnlLedgerService;
 
+    @Transactional
     public void backfillFrom(long portfolioId, LocalDate fromDate) {
         backfillFrom(portfolioId, fromDate, 0, null, null);
     }
 
+    @Transactional
     public void backfillFrom(long portfolioId, LocalDate fromDate,
                               long tradedStockId, BigDecimal tradePrice, BigDecimal tradeShares) {
         LocalDate toDate = LocalDate.now();
         if (fromDate == null || fromDate.isAfter(toDate)) return;
 
-        dailyDao.deleteFrom(portfolioId, fromDate);
         List<DailyValue> values = pnlLedgerService.calculateDailyValues(portfolioId, fromDate, toDate);
+        dailyDao.deleteFrom(portfolioId, fromDate);
         for (DailyValue value : values) {
             dailyDao.upsert(value);
         }

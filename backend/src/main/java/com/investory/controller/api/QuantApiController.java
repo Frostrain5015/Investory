@@ -2,6 +2,10 @@ package com.investory.controller.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.investory.dao.QuantCacheDao;
+import com.investory.marketdata.HistoricalPriceService;
+import com.investory.marketdata.MarketRows;
+import com.investory.crawler.RealtimeQuoteService;
+import java.time.LocalDate;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.servlet.http.HttpSession;
@@ -56,6 +60,8 @@ public class QuantApiController {
 
     /** 量化缓存数据访问对象，读取 stock_metric_cache / portfolio_* 缓存表 */
     private final QuantCacheDao quantDao;
+    @Autowired private HistoricalPriceService history;
+    @Autowired private RealtimeQuoteService quotes;
 
     /** Python 可执行文件路径，默认 python3，可在 application.properties 覆盖 */
     @Value("${python.executable:python3}")
@@ -348,12 +354,19 @@ public class QuantApiController {
             if (rate != null && rate.doubleValue() > 0) toCny.put(c, 1.0 / rate.doubleValue());
         }); } catch (Exception ignored) {}
 
-        // 查询持仓基本信息及最新收盘价（子查询取最新一条 stock_prices）
+        // 持仓基础信息来自业务库，报价复用行情网关。
         List<Map<String, Object>> rows = jdbc.queryForList(
-            "SELECT s.symbol, s.name, s.market, s.currency, h.total_shares, h.avg_cost, " +
-            "  (SELECT sp.close FROM stock_prices sp WHERE sp.stock_id = h.stock_id ORDER BY sp.trade_date DESC LIMIT 1) AS latest_price " +
+            "SELECT s.symbol, s.name, s.market, s.currency, h.total_shares, h.avg_cost " +
             "FROM holdings h JOIN stocks s ON s.id = h.stock_id " +
             "WHERE h.portfolio_id = ? AND h.total_shares > 0", portfolioId);
+
+        var current = MarketRows.quotes(rows, quotes, false);
+        for (var row : rows) {
+            var quote = current.get(row.get("symbol"));
+            if (quote == null || quote.price() == null || !toCny.containsKey(row.get("currency")))
+                return Map.of("error", "部分行情或汇率暂不可用，无法计算完整组合市值");
+            row.put("latest_price", quote.price());
+        }
 
         // 计算各股市值（CNY）和盈亏率
         double totalValue = 0;
@@ -488,15 +501,11 @@ public class QuantApiController {
      * @return 日期字符串（yyyy-MM-dd）→ 收盘价 的 Map（按数据库返回顺序）
      */
     private Map<String, Double> fetchPriceSeries(long stockId, int limit) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
-            "SELECT trade_date, close FROM stock_prices WHERE stock_id = ? ORDER BY trade_date DESC LIMIT ?",
-            stockId, limit);
+        LocalDate today = LocalDate.now(java.time.ZoneId.of("Asia/Shanghai"));
+        var bars = history.range(stockId, today.minusDays(limit * 2L + 30), today, "forward");
         Map<String, Double> m = new LinkedHashMap<>();
-        for (Map<String, Object> r : rows) {
-            String date = r.get("trade_date").toString().substring(0, 10);
-            Object v = r.get("close");
-            if (v != null) m.put(date, ((Number) v).doubleValue());
-        }
+        for (var bar : bars.subList(Math.max(0, bars.size() - limit), bars.size()))
+            m.put(bar.getTradeDate().toString(), bar.getClose().doubleValue());
         return m;
     }
 

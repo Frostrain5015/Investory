@@ -1,7 +1,11 @@
 package com.investory.service;
 
-import com.investory.dao.StockPriceDao;
+import com.investory.marketdata.HistoricalPriceService;
 import com.investory.model.DailyValue;
+import com.investory.model.StockPrice;
+import java.util.ArrayList;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.*;
 import com.investory.model.Holding;
 import com.investory.model.Transaction;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,10 +21,12 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class PnlFormulaServiceTest {
 
     private JdbcTemplate jdbc;
+    private final List<StockPrice> prices = new ArrayList<>();
     private PnlLedgerService ledgerService;
     private PortfolioAnalysisService analysisService;
 
@@ -30,17 +36,25 @@ class PnlFormulaServiceTest {
                 "jdbc:h2:mem:pnl_formula;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1", "sa", "");
         jdbc = new JdbcTemplate(ds);
         createSchema();
+        prices.clear();
         seedScenario();
 
-        StockPriceDao stockPriceDao = new StockPriceDao();
-        inject(stockPriceDao, "jdbc", jdbc);
+        HistoricalPriceService stockPriceDao = mock(HistoricalPriceService.class);
+        when(stockPriceDao.range(eq(1L), any(LocalDate.class), any(LocalDate.class), eq("none"))).thenReturn(prices);
 
         ledgerService = new PnlLedgerService();
         inject(ledgerService, "jdbc", jdbc);
-        inject(ledgerService, "stockPriceDao", stockPriceDao);
+        inject(ledgerService, "history", stockPriceDao);
 
         analysisService = new PortfolioAnalysisService();
         inject(analysisService, "jdbc", jdbc);
+    }
+
+    @Test
+    void missingHistoricalPricesNeverSubstituteCostAsMarketValue() {
+        prices.clear();
+        assertThrows(HistoricalPriceService.HistoryUnavailable.class, () -> ledgerService.calculateDailyValues(
+            1L, LocalDate.parse("2026-01-02"), LocalDate.parse("2026-01-05")));
     }
 
     @Test
@@ -126,18 +140,6 @@ class PnlFormulaServiceTest {
                 )
                 """);
         jdbc.execute("""
-                CREATE TABLE stock_prices (
-                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    stock_id BIGINT,
-                    trade_date DATE,
-                    open DECIMAL(18,4),
-                    close DECIMAL(18,4),
-                    high DECIMAL(18,4),
-                    low DECIMAL(18,4),
-                    volume BIGINT
-                )
-                """);
-        jdbc.execute("""
                 CREATE TABLE exchange_rates (
                     currency VARCHAR(8) PRIMARY KEY,
                     rate DECIMAL(18,8)
@@ -159,8 +161,9 @@ class PnlFormulaServiceTest {
     }
 
     private void insertPrice(String date, String close) {
-        jdbc.update("INSERT INTO stock_prices (stock_id, trade_date, open, close, high, low, volume) VALUES (1, ?, ?, ?, ?, ?, 0)",
-                LocalDate.parse(date), new BigDecimal(close), new BigDecimal(close), new BigDecimal(close), new BigDecimal(close));
+        StockPrice price = new StockPrice();
+        price.setStockId(1L); price.setTradeDate(LocalDate.parse(date)); price.setClose(new BigDecimal(close));
+        prices.add(price);
     }
 
     private Transaction tx(String type, String shares, String price, String fee) {

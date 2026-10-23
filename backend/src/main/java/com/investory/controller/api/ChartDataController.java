@@ -2,7 +2,7 @@ package com.investory.controller.api;
 
 import com.investory.dao.DividendDao;
 import com.investory.dao.StockDao;
-import com.investory.dao.StockPriceDao;
+import com.investory.marketdata.HistoricalPriceService;
 import com.investory.dao.HoldingDao;
 import com.investory.model.*;
 import com.investory.service.HoldingService;
@@ -29,7 +29,7 @@ import java.util.*;
 public class ChartDataController {
 
     @Autowired private StockDao stockDao;
-    @Autowired private StockPriceDao stockPriceDao;
+    @Autowired private HistoricalPriceService history;
     @Autowired private DividendDao dividendDao;
     @Autowired private HoldingDao holdingDao;
     @Autowired private HoldingService holdingService;
@@ -80,16 +80,12 @@ public class ChartDataController {
             to   = LocalDate.parse(endStr);
         } else if (days == 0) {
             to = LocalDate.now();
-            List<java.sql.Date> dates = jdbc.queryForList(
-                "SELECT MIN(trade_date) FROM stock_prices WHERE stock_id = ?",
-                java.sql.Date.class, stock.getId());
-            java.sql.Date earliest = dates.isEmpty() ? null : dates.get(0);
-            from = earliest != null ? earliest.toLocalDate() : to.minusYears(1);
+            from = LocalDate.of(1990, 1, 1);
         } else {
             to   = LocalDate.now();
             from = to.minusDays(days);
         }
-        List<StockPrice> prices = stockPriceDao.findRange(stock.getId(), from, to);
+        List<StockPrice> prices = history.range(stock.getId(), from, to, "forward");
         List<Map<String, Object>> result = new ArrayList<>();
         for (StockPrice p : prices) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -107,7 +103,7 @@ public class ChartDataController {
         if (benchmarkSymbol != null && !benchmarkSymbol.isBlank()) {
             Stock bmStock = stockDao.findBySymbol(benchmarkSymbol);
             if (bmStock != null) {
-                List<StockPrice> bmPrices = stockPriceDao.findRange(bmStock.getId(), from, to);
+                List<StockPrice> bmPrices = history.range(bmStock.getId(), from, to, "none");
                 if (!bmPrices.isEmpty() && !prices.isEmpty()) {
                     // Build date → close maps
                     Map<String, BigDecimal> stockCloses = new LinkedHashMap<>();
@@ -294,13 +290,18 @@ public class ChartDataController {
         Map<Long, Map<LocalDate, BigDecimal>> priceCache = new HashMap<>();
         for (Long sid : allStockIds) {
             Map<LocalDate, BigDecimal> dateMap = new HashMap<>();
-            for (StockPrice p : stockPriceDao.findRange(sid, from, to))
+            for (StockPrice p : history.range(sid, from.minusDays(31), to, "none"))
                 dateMap.put(p.getTradeDate(), p.getClose());
             priceCache.put(sid, dateMap);
         }
 
         // Walk day by day with time-based holdings, exclude transfers from P&L
         Map<Long, BigDecimal> lastPrice = new HashMap<>();
+        LocalDate firstVisibleDay = from;
+        for (var entry : priceCache.entrySet()) {
+            var previous = entry.getValue().entrySet().stream().filter(p -> !p.getKey().isAfter(firstVisibleDay)).max(Map.Entry.comparingByKey());
+            previous.ifPresent(p -> lastPrice.put(entry.getKey(), p.getValue()));
+        }
         Map<Long, BigDecimal[]> currentHolding = null;
         LocalDate cursor = from;
         while (!cursor.isAfter(to)) {
@@ -321,6 +322,7 @@ public class ChartDataController {
 
                 BigDecimal close = priceCache.getOrDefault(sid, Collections.emptyMap()).get(cursor);
                 if (close == null) close = lastPrice.get(sid);
+                if (close == null) throw new HistoricalPriceService.HistoryUnavailable();
                 if (close != null) {
                     lastPrice.put(sid, close);
                     stockValue = stockValue.add(close.multiply(sh).multiply(r));

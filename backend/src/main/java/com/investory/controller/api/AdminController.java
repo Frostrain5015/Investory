@@ -96,8 +96,7 @@ public class AdminController {
      * 获取数据库统计状态，包含各市场股票数量、K线行数、最早/最新日期，
      * 以及各数据表的磁盘占用（MB）。
      *
-     * <p>执行前先 ANALYZE TABLE stock_prices 以刷新 InnoDB 行数统计，
-     * 确保 information_schema.TABLES 返回准确的估算值。
+     * <p>历史行情按需从外部接口获取，不再读取归档行情表。
      *
      * @param req HTTP 请求（用于管理员校验）
      * @return 包含 markets（按市场分组统计）、totals（全局合计）、tables（表磁盘信息）的 Map
@@ -107,7 +106,7 @@ public class AdminController {
         if (!checkAdmin(req)) return Map.of("error", "unauthorized");
 
         // Refresh InnoDB stats for accurate row counts and disk sizes
-        jdbc.execute("ANALYZE TABLE stock_prices");
+        // External history mode never opens or analyzes the archived price table.
 
         Map<String, Object> result = new LinkedHashMap<>();
 
@@ -115,11 +114,10 @@ public class AdminController {
         List<Map<String, Object>> markets = jdbc.queryForList("""
             SELECT CASE WHEN s.market IN ('SH','SZ') THEN 'A' ELSE s.market END AS market,
                    COUNT(DISTINCT s.id) AS stock_count,
-                   COUNT(sp.id)          AS price_rows,
-                   COALESCE(MAX(sp.trade_date), '-') AS latest_date,
-                   COALESCE(MIN(sp.trade_date), '-') AS earliest_date
+                   NULL AS price_rows,
+                   '-' AS latest_date,
+                   '-' AS earliest_date
             FROM stocks s
-            LEFT JOIN stock_prices sp ON sp.stock_id = s.id
             WHERE s.market IN ('SH','SZ','HK','US')
             GROUP BY CASE WHEN s.market IN ('SH','SZ') THEN 'A' ELSE s.market END
             ORDER BY market
@@ -128,11 +126,10 @@ public class AdminController {
         Map<String, Object> idxStats = jdbc.queryForMap("""
             SELECT 'IDX' AS market,
                    COUNT(DISTINCT s.id) AS stock_count,
-                   COUNT(sp.id)          AS price_rows,
-                   COALESCE(MAX(sp.trade_date), '-') AS latest_date,
-                   COALESCE(MIN(sp.trade_date), '-') AS earliest_date
+                   NULL AS price_rows,
+                   '-' AS latest_date,
+                   '-' AS earliest_date
             FROM stocks s
-            LEFT JOIN stock_prices sp ON sp.stock_id = s.id
             WHERE s.market IN ('JP','KR','GB','DE','FR','TW','SG','IN','AU','CA','BR','IDX','CMD','CCY')
             """);
         if (idxStats != null) {
@@ -142,13 +139,14 @@ public class AdminController {
 
         // 计算全市场合计（股票总数、K线总行数）
         Map<String, Object> totals = new LinkedHashMap<>();
-        long totalStocks = 0, totalRows = 0;
+        long totalStocks = 0;
         for (var m : markets) {
             totalStocks += ((Number) m.get("stock_count")).longValue();
-            totalRows += ((Number) m.get("price_rows")).longValue();
+
         }
         totals.put("stock_count", totalStocks);
-        totals.put("price_rows", totalRows);
+        totals.put("price_rows", null);
+        result.put("historyMode", "external");
         result.put("totals", totals);
 
         // 按 data+index 总大小降序列出各表的磁盘占用
@@ -307,6 +305,9 @@ public class AdminController {
      * @param response  HTTP 响应（设置 SSE 相关响应头）
      * @return SseEmitter 流对象
      */
+    @Value("${investory.history.legacy-writes-enabled:false}")
+    private boolean legacyHistoryWritesEnabled;
+
     @GetMapping("/crawl/{market}")
     public SseEmitter startCrawl(@PathVariable String market,
             @RequestParam(defaultValue = "") String start,
@@ -337,6 +338,12 @@ public class AdminController {
             // Copy settings from the session manager into this emitter
             sub.onCompletion(() -> {}); // don't clear session on subscriber disconnect
             return sub;
+        }
+
+        if (!legacyHistoryWritesEnabled) {
+            emit(emitter, "error", Map.of("msg", "旧行情抓取已停用，历史行情由数据接口按需提供"));
+            emitter.complete();
+            return emitter;
         }
 
         // 新建爬虫会话：构建市场中文标签并确定日期范围
@@ -381,6 +388,7 @@ public class AdminController {
                         pythonExecutable, "-u", script.getAbsolutePath(),
                         "-m", market, "--start", startDate, "--end", endDate
                     );
+                    pb.environment().put("INVESTORY_LEGACY_HISTORY_WRITES", "true");
                     pb.directory(scriptDir);
                     pb.redirectErrorStream(true);
                     pb.environment().put("PYTHONUNBUFFERED", "1");

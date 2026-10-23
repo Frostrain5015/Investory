@@ -3,7 +3,6 @@ package com.investory.marketdata;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.investory.util.ProcessRunner;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -18,11 +17,11 @@ import java.util.concurrent.Semaphore;
 /** Temporary providers for instruments not exposed by the current Hithink contract. */
 @Service
 public class LegacyWorldMarketClient {
-    private final JdbcTemplate jdbc;
+    private final HistoricalPriceService history;
     private final ObjectMapper json;
     private final Semaphore yahooLimit = new Semaphore(7, true);
     private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
-    public LegacyWorldMarketClient(JdbcTemplate jdbc, ObjectMapper json) { this.jdbc = jdbc; this.json = json; }
+    public LegacyWorldMarketClient(HistoricalPriceService history, ObjectMapper json) { this.history = history; this.json = json; }
 
     public WorldMarketQuote fetch(WorldMarketCatalog.Spec spec) {
         try {
@@ -86,21 +85,18 @@ public class LegacyWorldMarketClient {
 
     public WorldMarketQuote lastClose(WorldMarketCatalog.Spec spec) {
         try {
-            // fetch_stocks.py stores index identities as 000001.SH / GSPC.US /
-            // DXY.IDX etc. Do not convert them to equity prefixes or use LIKE.
-            var rows = jdbc.queryForList("SELECT sp.close, sp.trade_date FROM stock_prices sp JOIN stocks s ON s.id = sp.stock_id "
-                + "WHERE s.symbol = ? ORDER BY sp.trade_date DESC LIMIT 2", spec.dbSymbol());
+            LocalDate today = LocalDate.now(ZoneId.of("Asia/Shanghai"));
+            var series = history.series(spec.dbSymbol(), today.minusDays(20), today, "none");
+            var rows = series.prices();
             if (rows.isEmpty()) return null;
-            BigDecimal price = number(rows.get(0).get("close"));
-            BigDecimal previous = rows.size() > 1 ? number(rows.get(1).get("close")) : null;
+            var last = rows.get(rows.size() - 1);
+            BigDecimal price = last.getClose();
+            BigDecimal previous = rows.size() > 1 ? rows.get(rows.size() - 2).getClose() : null;
             BigDecimal change = price != null && previous != null ? price.subtract(previous) : null;
             BigDecimal pct = change != null && previous.signum() > 0
                 ? change.multiply(BigDecimal.valueOf(100)).divide(previous, 6, RoundingMode.HALF_UP) : null;
-            Object rawDate = rows.get(0).get("trade_date");
-            LocalDate date = rawDate instanceof java.sql.Date day ? day.toLocalDate()
-                : rawDate instanceof LocalDate day ? day : rawDate == null ? null : LocalDate.parse(rawDate.toString().substring(0, 10));
-            WorldMarketQuote quote = WorldMarketQuote.of(spec, price, change, pct, "database", null, "CLOSE", date, null);
-            return quote.valid() ? quote.stale("DATABASE_LAST_CLOSE") : null;
+            WorldMarketQuote quote = WorldMarketQuote.of(spec, price, change, pct, series.source(), null, "CLOSE", last.getTradeDate(), null);
+            return quote.valid() ? quote.stale("HISTORICAL_LAST_CLOSE") : null;
         } catch (Exception error) { return null; }
     }
     private static BigDecimal decimal(JsonNode value) { return value != null && value.isNumber() ? value.decimalValue() : null; }

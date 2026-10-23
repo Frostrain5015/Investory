@@ -339,7 +339,11 @@ public class CrawlerScheduler {
         return day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
     }
 
+    @Value("${investory.history.legacy-writes-enabled:false}")
+    private boolean legacyHistoryWritesEnabled;
+
     private void runScript(String filename, String marketCode, String label) {
+        if ("fetch_stocks.py".equals(filename) && !legacyHistoryWritesEnabled) return;
         File script = new File(SCRIPT_DIR, filename);
         if (!script.exists()) {
             script = new File("../script", filename);
@@ -384,6 +388,7 @@ public class CrawlerScheduler {
             pb.directory(script.getParentFile());
             pb.redirectErrorStream(true);
 
+            if (legacyHistoryWritesEnabled) pb.environment().put("INVESTORY_LEGACY_HISTORY_WRITES", "true");
             int exitCode = ProcessRunner.run(pb, Duration.ofMinutes(crawlTimeoutMinutes), line -> {
                 logTail.append(line).append("\n");
                 if (logTail.length() > 12000) logTail.delete(0, logTail.length() - 6000);

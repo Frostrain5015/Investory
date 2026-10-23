@@ -16,6 +16,7 @@ import json
 import numpy as np
 
 from db import get_conn as connect_db, load_config
+from market_history import latest as latest_quotes
 
 
 # ── Config ──────────────────────────────────────────────────────────────
@@ -27,29 +28,25 @@ def get_conn(cfg: dict):
 # ── Data loading ────────────────────────────────────────────────────────
 
 def load_returns(conn, stock_ids: list, lookback_days=252) -> tuple:
-    """Return (returns_matrix, symbols) where returns_matrix is N_stocks × N_days."""
+    from market_history import recent_by_id
     cur = conn.cursor()
-    all_returns = []
-    symbols = []
-    for sid in stock_ids:
-        cur.execute(
-            "SELECT close, s.symbol FROM stock_prices sp JOIN stocks s ON s.id=sp.stock_id "
-            "WHERE sp.stock_id=%s AND close>0 ORDER BY sp.trade_date DESC LIMIT %s",
-            (sid, lookback_days + 1))
-        rows = cur.fetchall()
-        if len(rows) < 60:  # need at least 60 data points
-            continue
-        closes = np.array([float(r[0]) for r in reversed(rows)], dtype=np.float64)
-        rets = np.diff(closes) / closes[:-1]
-        all_returns.append(rets)
-        symbols.append(rows[0][1])
-    cur.close()
-    if len(all_returns) < 2:
+    series, symbols = [], []
+    try:
+        for sid in stock_ids:
+            cur.execute("SELECT symbol FROM stocks WHERE id=%s", (sid,))
+            identity = cur.fetchone()
+            rows = recent_by_id(conn, sid, lookback_days + 1, "forward")
+            if not identity or len(rows) < 60:
+                return None, None  # Never optimize a subset against full-portfolio weights.
+            series.append({row["date"]: row["close"] for row in rows})
+            symbols.append(identity[0])
+    finally:
+        cur.close()
+    dates = sorted(set.intersection(*(set(row) for row in series))) if series else []
+    if len(dates) < 60 or len(series) < 2:
         return None, None
-    # Align lengths (take last N days common to all)
-    min_len = min(len(r) for r in all_returns)
-    aligned = np.array([r[-min_len:] for r in all_returns])
-    return aligned, symbols
+    closes = np.array([[row[day] for day in dates] for row in series], dtype=np.float64)
+    return np.diff(closes, axis=1) / closes[:, :-1], symbols
 
 # ── Optimization ────────────────────────────────────────────────────────
 
@@ -101,9 +98,7 @@ def analyze(portfolio_id: int, max_weight=0.30, mode="sharpe"):
     cur = conn.cursor()
     cur.execute("""
         SELECT h.stock_id, s.symbol, s.name, s.market, h.total_shares,
-               (SELECT sp.close FROM stock_prices sp
-                WHERE sp.stock_id=h.stock_id AND sp.close>0
-                ORDER BY sp.trade_date DESC LIMIT 1) AS price
+               NULL AS price
         FROM holdings h JOIN stocks s ON s.id=h.stock_id
         WHERE h.portfolio_id=%s AND h.total_shares>0
         ORDER BY h.total_invested DESC
@@ -114,6 +109,11 @@ def analyze(portfolio_id: int, max_weight=0.30, mode="sharpe"):
     if len(holdings) < 2:
         return {"error": "至少需要 2 只持仓才能优化", "holdings": len(holdings)}
 
+    quotes = latest_quotes([h[1] for h in holdings])
+    if any(h[1] not in quotes for h in holdings):
+        conn.close()
+        return {"error": "持仓报价不完整，不能生成再平衡建议"}
+    holdings = [(*h[:5], quotes[h[1]]["price"]) for h in holdings]
     # Build current weights
     stock_ids = [h[0] for h in holdings]
     current_prices = [float(h[5]) if h[5] else 0 for h in holdings]

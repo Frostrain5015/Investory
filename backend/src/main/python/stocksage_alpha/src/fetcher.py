@@ -578,15 +578,17 @@ def get_price_history(code: str, days: int = 365) -> Optional[pd.DataFrame]:
     Hithink's `turnover` means amount, NOT the engine's turnover-rate column.
     """
     from hithink_finance import normalize_symbol
+    from market_history import HistoryError
     try:
         symbol = normalize_symbol(code)
         days = max(1, min(int(days), 1800))
         fetch_days = min(3650, max(_PRICE_FETCH_DAYS, days * 2 + 30))
         today = datetime.now(SHANGHAI).date()
         cache_key = f"price_hithink_forward_v1_{symbol}_{fetch_days}_{today.isoformat()}"
-        cached = cache.get_df(cache_key, 3600)
+        cached = cache.get_df(cache_key, 25)
         if cached is None:
-            result = _hithink().history(symbol, today - timedelta(days=fetch_days), today, "forward")
+            from market_history import history
+            result = history(symbol, today - timedelta(days=fetch_days), today, "forward")
             if not result["points"]:
                 return None
             cached = pd.DataFrame(result["points"])
@@ -599,7 +601,7 @@ def get_price_history(code: str, days: int = 365) -> Optional[pd.DataFrame]:
         result_df = cached.tail(days).reset_index(drop=True)
         result_df.attrs.update(source=SOURCE, adjust="forward", volume_unit="shares", amount_unit="CNY")
         return result_df
-    except (HithinkError, ValueError, TypeError) as error:
+    except (HithinkError, HistoryError, ValueError, TypeError) as error:
         log.warning("src_degraded", extra={"source": SOURCE, "operation": "history", "reason": str(error) if isinstance(error, HithinkError) else "invalid_argument"})
         return None
 

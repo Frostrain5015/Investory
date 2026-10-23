@@ -117,9 +117,6 @@ class RealtimeQuoteServiceTest {
         holding.setAvgCost(new BigDecimal("90")); holding.setDilutedCost(new BigDecimal("90"));
         holding.setTotalInvested(new BigDecimal("900")); holding.setTotalDividends(BigDecimal.ZERO);
         when(holdings.findByPortfolio(1L)).thenReturn(List.of(holding));
-        StockPriceDao prices=mock(StockPriceDao.class);
-        StockPrice stale=new StockPrice(); stale.setClose(new BigDecimal("50")); stale.setTradeDate(LocalDate.of(2026,10,1));
-        when(prices.findLatestTwo(1L)).thenReturn(List.of(stale));
         JdbcTemplate jdbc=mock(JdbcTemplate.class);
         HoldingService holdingService=new HoldingService();
         ReflectionTestUtils.setField(holdingService,"holdingDao",holdings);
@@ -143,7 +140,6 @@ class RealtimeQuoteServiceTest {
         holdingService.getSnapshots(1L,false);
         watchlist.getWatchlist(request,false);
         verify(provider,times(1)).snapshot(anyList());
-        verifyNoInteractions(prices);
         verify(jdbc,never()).update(anyString(),any(Object[].class));
         verify(holdings,never()).upsert(any());
     }

@@ -67,42 +67,19 @@ def resolve_symbol(conn, symbol: str) -> Optional[str]:
 
 
 def load_ohlcv(conn, symbol: str, start: str, end: str) -> dict:
-    """加载单只股票的 OHLCV 数据，返回 { open, high, low, close, volume, dates } 各为 list"""
+    from market_history import history, HistoryError
     db_symbol = resolve_symbol(conn, symbol)
     if db_symbol is None:
-        print(f"  [警告] 未找到股票: {symbol}", flush=True)
         return None
-
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT s.id FROM stocks s WHERE s.symbol = %s
-    """, (db_symbol,))
-    row = cur.fetchone()
-    if not row:
-        cur.close()
-        return None
-    stock_id = row[0]
-
-    cur.execute("""
-        SELECT trade_date, open, high, low, close, volume
-        FROM stock_prices
-        WHERE stock_id = %s AND trade_date >= %s AND trade_date <= %s
-        ORDER BY trade_date
-    """, (stock_id, start, end))
-    rows = cur.fetchall()
-    cur.close()
-
+    series = history(db_symbol, start, end, "forward")
+    rows = series["points"]
     if len(rows) < 30:
         return None
-
-    return {
-        "open":   np.array([float(r[1] or 0) for r in rows]),
-        "high":   np.array([float(r[2] or 0) for r in rows]),
-        "low":    np.array([float(r[3] or 0) for r in rows]),
-        "close":  np.array([float(r[4] or 0) for r in rows]),
-        "volume": np.array([float(r[5] or 0) for r in rows]),
-        "dates":  [str(r[0]) for r in rows],
-    }
+    if any(row["volume"] is None for row in rows):
+        raise HistoryError("成交量缺失，不能按完整 OHLCV 执行回测")
+    return {**{key: np.array([row[key] for row in rows], dtype=np.float64) for key in ("open", "high", "low", "close", "volume")},
+            "dates": [row["date"] for row in rows], "source": series["source"], "adjust": series["adjust"],
+            "fetchedAtMs": series["fetchedAtMs"]}
 
 
 def compute_metrics(equity_curve: list, trade_log: list, risk_free_rate: float = 0.03) -> dict:
@@ -186,6 +163,9 @@ def run_simple_backtest(strategy: dict, config: dict, conn, result_id: int) -> d
     stock_data = {}
     for sym in stocks:
         data = load_ohlcv(conn, sym, start_date, end_date)
+        if data is None:
+            print(f"[ERROR] {sym} 历史行情不足，不能仅用部分标的执行回测", flush=True)
+            return None
         if data is not None:
             stock_data[sym] = data
             print(f"  [信息] 加载 {sym}: {len(data['dates'])} 个交易日", flush=True)
@@ -377,6 +357,14 @@ def run_simple_backtest(strategy: dict, config: dict, conn, result_id: int) -> d
         })
 
     metrics = compute_metrics(equity_curve, trade_log)
+    import hashlib
+    metrics["dataManifest"] = {symbol: {
+        "source": data.get("source"), "adjust": data.get("adjust"),
+        "firstDate": data["dates"][0], "lastDate": data["dates"][-1], "barCount": len(data["dates"]),
+        "sha256": hashlib.sha256(json.dumps({key: value.tolist() if hasattr(value, "tolist") else value
+            for key, value in data.items() if key in ("dates", "open", "high", "low", "close", "volume")},
+            sort_keys=True, allow_nan=False).encode()).hexdigest(),
+    } for symbol, data in stock_data.items()}
     return {"equityCurve": equity_curve, "metrics": metrics, "tradeLog": trade_log}
 
 
@@ -422,6 +410,9 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
     stock_data = {}
     for sym in stocks:
         data = load_ohlcv(conn, sym, start_date, end_date)
+        if data is None:
+            print(f"[ERROR] {sym} 历史行情不足，不能仅用部分标的执行回测", flush=True)
+            return None
         if data is not None:
             stock_data[sym] = data
     if not stock_data:
@@ -632,6 +623,14 @@ def run_advanced_backtest(strategy: dict, config: dict, conn, result_id: int) ->
                   f"访问了 ctx 不存在的字段，或 try/except 捕获了不可用的异常类。", flush=True)
             return None
         metrics = compute_metrics(equity_curve, trade_log)
+        import hashlib
+        metrics["dataManifest"] = {symbol: {
+            "source": data.get("source"), "adjust": data.get("adjust"),
+            "firstDate": data["dates"][0], "lastDate": data["dates"][-1], "barCount": len(data["dates"]),
+            "sha256": hashlib.sha256(json.dumps({key: value.tolist() if hasattr(value, "tolist") else value
+                for key, value in data.items() if key in ("dates", "open", "high", "low", "close", "volume")},
+                sort_keys=True, allow_nan=False).encode()).hexdigest(),
+        } for symbol, data in stock_data.items()}
         return {"equityCurve": equity_curve, "metrics": metrics, "tradeLog": trade_log}
 
     except Exception as e:

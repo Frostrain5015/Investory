@@ -28,11 +28,12 @@ from datetime import datetime, timedelta
 import numpy as np
 
 from db import get_conn, load_config
+from market_history import by_id as history_by_id, recent_by_id, latest as latest_quotes
 
 # ─── 路径配置（跨平台，与 fetch_stocks.py 完全相同）────────────────────────────
 
 
-# ─── 基准指数（全部在库中，直接查 stock_prices）──────────────────────────────
+# ─── 基准指数（身份查业务库，价格走统一网络历史层）──────────────────────────────
 
 BENCHMARK_SYMBOL = {
     'SH': '000001.SH',
@@ -89,107 +90,49 @@ def get_benchmark_id(conn, market: str):
 # ─── 算法函数 ──────────────────────────────────────────────────────────────────
 
 def calc_percentile_5y(conn, stock_id: int, current_close: float):
-    """5年价格历史分位数，样本 < 30 返回 None。"""
-    cutoff = (datetime.today() - timedelta(days=5 * 365)).strftime('%Y-%m-%d')
-    cur = conn.cursor()
-    cur.execute(
-        'SELECT close FROM stock_prices WHERE stock_id=%s AND trade_date >= %s AND close > 0',
-        (stock_id, cutoff),
-    )
-    closes = np.array([float(r[0]) for r in cur.fetchall()], dtype=np.float64)
-    cur.close()
-    if len(closes) < 30:
-        return None
-    return float(np.sum(closes <= current_close) / len(closes) * 100)
+    today = datetime.today().date()
+    rows = history_by_id(conn, stock_id, today - timedelta(days=5 * 365), today, "forward")["points"]
+    closes = np.array([row["close"] for row in rows], dtype=np.float64)
+    return float(np.sum(closes <= current_close) / len(closes) * 100) if len(closes) >= 30 else None
 
 
 def calc_beta_and_vol(conn, stock_id: int, benchmark_id: int):
-    """
-    1年 Beta 和年化波动率。联表查询同日收盘价，避免多次 round-trip。
-    返回 (beta, vol_pct) 或 (None, None)。
-    """
-    cutoff = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
-    cur = conn.cursor()
-    cur.execute(
-        '''SELECT s.close, b.close
-           FROM stock_prices s
-           JOIN stock_prices b ON b.stock_id=%s AND b.trade_date=s.trade_date
-           WHERE s.stock_id=%s AND s.trade_date >= %s
-             AND s.close > 0 AND b.close > 0
-           ORDER BY s.trade_date''',
-        (benchmark_id, stock_id, cutoff),
-    )
-    rows = cur.fetchall()
-    cur.close()
-    if len(rows) < 30:
+    today = datetime.today().date()
+    left = history_by_id(conn, stock_id, today - timedelta(days=365), today, "forward")["points"]
+    right = history_by_id(conn, benchmark_id, today - timedelta(days=365), today, "none")["points"]
+    a = {row["date"]: row["close"] for row in left}
+    b = {row["date"]: row["close"] for row in right}
+    dates = sorted(a.keys() & b.keys())
+    if len(dates) < 30:
         return None, None
-    stock_c = np.array([float(r[0]) for r in rows], dtype=np.float64)
-    bench_c = np.array([float(r[1]) for r in rows], dtype=np.float64)
-    stock_r = np.diff(stock_c) / stock_c[:-1]
-    bench_r = np.diff(bench_c) / bench_c[:-1]
+    stock_c, bench_c = np.array([a[d] for d in dates]), np.array([b[d] for d in dates])
+    stock_r, bench_r = np.diff(stock_c) / stock_c[:-1], np.diff(bench_c) / bench_c[:-1]
     cov = np.cov(stock_r, bench_r)
-    bench_var = cov[1, 1]
-    beta = float(cov[0, 1] / bench_var) if bench_var > 1e-12 else None
-    vol = float(np.std(stock_r, ddof=1) * np.sqrt(252) * 100)
-    return beta, vol
+    return (float(cov[0, 1] / cov[1, 1]) if cov[1, 1] > 1e-12 else None,
+            float(np.std(stock_r, ddof=1) * np.sqrt(252) * 100))
 
 
 def calc_vol_only(conn, stock_id: int):
-    """仅计算年化波动率（当 Beta 无法算时的回退）。"""
-    cutoff = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
-    cur = conn.cursor()
-    cur.execute(
-        'SELECT close FROM stock_prices WHERE stock_id=%s AND trade_date >= %s AND close > 0 ORDER BY trade_date',
-        (stock_id, cutoff),
-    )
-    closes = np.array([float(r[0]) for r in cur.fetchall()], dtype=np.float64)
-    cur.close()
-    if len(closes) < 30:
-        return None
-    returns = np.diff(closes) / closes[:-1]
-    return float(np.std(returns, ddof=1) * np.sqrt(252) * 100)
+    today = datetime.today().date()
+    rows = history_by_id(conn, stock_id, today - timedelta(days=365), today, "forward")["points"]
+    closes = np.array([row["close"] for row in rows], dtype=np.float64)
+    return float(np.std(np.diff(closes) / closes[:-1], ddof=1) * np.sqrt(252) * 100) if len(closes) >= 30 else None
 
 
 def calc_max_drawdown(conn, stock_id: int):
-    """1年最大回撤（负百分比）。"""
-    cutoff = (datetime.today() - timedelta(days=365)).strftime('%Y-%m-%d')
-    cur = conn.cursor()
-    cur.execute(
-        'SELECT close FROM stock_prices WHERE stock_id=%s AND trade_date >= %s AND close > 0 ORDER BY trade_date',
-        (stock_id, cutoff),
-    )
-    closes = np.array([float(r[0]) for r in cur.fetchall()], dtype=np.float64)
-    cur.close()
+    today = datetime.today().date()
+    rows = history_by_id(conn, stock_id, today - timedelta(days=365), today, "forward")["points"]
+    closes = np.array([row["close"] for row in rows], dtype=np.float64)
     if len(closes) < 10:
         return None
-    peak = np.maximum.accumulate(closes)
-    drawdowns = (closes - peak) / peak * 100
-    return float(np.min(drawdowns))
+    return float(np.min((closes - np.maximum.accumulate(closes)) / np.maximum.accumulate(closes) * 100))
 
 
 def calc_scenario_return(conn, stock_id: int, start_date: str, end_date: str):
-    """
-    计算区间回报率。取起始日期之后第一个可用交易日 和 终止日期之前最后一个交易日。
-    返回百分比，若数据不足返回 None。
-    """
-    cur = conn.cursor()
-    cur.execute(
-        'SELECT close FROM stock_prices WHERE stock_id=%s AND trade_date >= %s AND close > 0 ORDER BY trade_date LIMIT 1',
-        (stock_id, start_date),
-    )
-    row_s = cur.fetchone()
-    cur.execute(
-        'SELECT close FROM stock_prices WHERE stock_id=%s AND trade_date <= %s AND close > 0 ORDER BY trade_date DESC LIMIT 1',
-        (stock_id, end_date),
-    )
-    row_e = cur.fetchone()
-    cur.close()
-    if not row_s or not row_e:
+    rows = history_by_id(conn, stock_id, start_date, end_date, "forward")["points"]
+    if len(rows) < 2:
         return None
-    c_s, c_e = float(row_s[0]), float(row_e[0])
-    if c_s == 0:
-        return None
-    return (c_e - c_s) / c_s * 100
+    return (rows[-1]["close"] / rows[0]["close"] - 1) * 100
 
 
 # ─── upsert 辅助 ───────────────────────────────────────────────────────────────
@@ -286,23 +229,11 @@ def upsert_risk(conn, portfolio_id, weighted_beta, var_95, maxdd, dry_run):
 # ─── 主计算模块 ────────────────────────────────────────────────────────────────
 
 def calc_momentum(conn, stock_id: int):
-    """12-1个月动量：最近12个月收益率 减 最近1个月收益率（避免反转效应）。"""
-    cur = conn.cursor()
-    cur.execute(
-        'SELECT close, trade_date FROM stock_prices WHERE stock_id=%s AND close > 0 '
-        'AND trade_date >= DATE_SUB(CURDATE(), INTERVAL 13 MONTH) ORDER BY trade_date',
-        (stock_id,),
-    )
-    rows = cur.fetchall()
-    cur.close()
-    if len(rows) < 120:  # need ~1 year of data
+    rows = recent_by_id(conn, stock_id, 280, "forward")
+    if len(rows) < 120:
         return None
-    closes = np.array([float(r[0]) for r in rows], dtype=np.float64)
-    # 12-month return (all rows) minus 1-month return (last ~22 rows)
-    ret_12m = (closes[-1] - closes[0]) / closes[0] if closes[0] > 0 else 0
-    m1_idx = max(0, len(closes) - 22)
-    ret_1m = (closes[-1] - closes[m1_idx]) / closes[m1_idx] if closes[m1_idx] > 0 else 0
-    return float((ret_12m - ret_1m) * 100)
+    closes = np.array([row["close"] for row in rows])
+    return float(((closes[-1] / closes[0] - 1) - (closes[-1] / closes[max(0, len(closes)-22)] - 1)) * 100)
 
 
 def calc_factor_exposures(conn, stock_id: int):
@@ -366,17 +297,10 @@ def compute_metrics(conn, dry_run: bool):
         pct_done = seq / total * 100
         log.info(f'  [{seq}/{total} {pct_done:.1f}%] {name}({symbol})')
         try:
-            cur2 = conn.cursor()
-            cur2.execute(
-                'SELECT close FROM stock_prices WHERE stock_id=%s AND close > 0 ORDER BY trade_date DESC LIMIT 1',
-                (stock_id,),
-            )
-            row = cur2.fetchone()
-            cur2.close()
-            if not row:
-                log.debug(f'    {symbol} 无收盘价，跳过')
+            series = recent_by_id(conn, stock_id, 2, "forward")
+            if not series:
                 continue
-            current_close = float(row[0])
+            current_close = series[-1]["close"]
 
             percentile = calc_percentile_5y(conn, stock_id, current_close)
             bench_id = get_benchmark_id(conn, market)
@@ -431,9 +355,7 @@ def compute_scenarios(conn, portfolio_id: int, dry_run: bool):
     cur.execute(
         '''SELECT h.stock_id, s.symbol, s.name, s.market,
                   h.total_shares,
-                  (SELECT sp.close FROM stock_prices sp
-                   WHERE sp.stock_id = h.stock_id AND sp.close > 0
-                   ORDER BY sp.trade_date DESC LIMIT 1) AS last_close
+                  NULL AS last_close
            FROM holdings h
            JOIN stocks s ON s.id = h.stock_id
            WHERE h.portfolio_id = %s AND h.total_shares > 0''',
@@ -446,6 +368,10 @@ def compute_scenarios(conn, portfolio_id: int, dry_run: bool):
         log.info(f'portfolio_id={portfolio_id} 无持仓，跳过压测')
         return
 
+    quotes = latest_quotes([row[1] for row in holdings])
+    if any(row[1] not in quotes for row in holdings):
+        raise RuntimeError("持仓报价不完整，不能计算风险权重")
+    holdings = [(*row[:5], quotes[row[1]]["price"]) for row in holdings]
     # 计算各持仓市值权重
     weights = []
     for stock_id, symbol, name, market, shares, last_close in holdings:
@@ -480,7 +406,7 @@ def compute_scenarios(conn, portfolio_id: int, dry_run: bool):
             })
 
         upsert_scenario(conn, portfolio_id, key, name, start_date, end_date,
-                        round(weighted_sum, 4), json.dumps(details, ensure_ascii=False), dry_run)
+                        round(weighted_sum, 4) if all(item["returnPct"] is not None for item in details) else None, json.dumps(details, ensure_ascii=False), dry_run)
 
     # ── 风险汇总：加权 Beta + VaR + 组合最大回撤 ──────────────────────────────
     weighted_beta = 0.0
@@ -518,24 +444,18 @@ def compute_scenarios(conn, portfolio_id: int, dry_run: bool):
         maxdd_portfolio = round(float(np.min((vals - peak) / peak * 100)), 4)
     else:
         # 等权模拟：取各持仓1年日收益率等权平均
-        all_rets = []
+        histories = []
         cutoff = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
         for stock_id, symbol, sname, market, mv in weights:
-            cur4 = conn.cursor()
-            cur4.execute(
-                'SELECT close FROM stock_prices WHERE stock_id=%s AND trade_date >= %s AND close > 0 ORDER BY trade_date',
-                (stock_id, cutoff),
-            )
-            closes_raw = [float(r[0]) for r in cur4.fetchall()]
-            cur4.close()
-            if len(closes_raw) > 30:
-                c = np.array(closes_raw, dtype=np.float64)
-                all_rets.append(np.diff(c) / c[:-1] * 100)
-        if all_rets:
-            min_len = min(len(r) for r in all_rets)
-            stacked = np.stack([r[-min_len:] for r in all_rets])
-            port_ret = np.mean(stacked, axis=0)
-            var_95 = round(float(np.percentile(port_ret, 5)), 4)
+            points = history_by_id(conn, stock_id, cutoff, datetime.today().date(), "forward")["points"]
+            histories.append({p["date"]: p["close"] for p in points})
+        if histories:
+            dates = sorted(set.intersection(*(set(item) for item in histories)))
+            if len(dates) > 30:
+                prices = np.array([[series[day] for day in dates] for series in histories])
+                stacked = np.diff(prices, axis=1) / prices[:, :-1] * 100
+                port_ret = np.mean(stacked, axis=0)
+                var_95 = round(float(np.percentile(port_ret, 5)), 4)
 
     upsert_risk(conn, portfolio_id, wb, var_95, maxdd_portfolio, dry_run)
     log.info(f'=== 压测完成: 加权Beta={wb}, VaR95={var_95}%, MaxDD={maxdd_portfolio}% ===')

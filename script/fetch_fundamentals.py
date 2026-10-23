@@ -100,7 +100,6 @@ def get_stocks(conn, market: str) -> list:
     with conn.cursor() as cur:
         cur.execute(
             "SELECT s.id, s.symbol, s.name, s.market FROM stocks s "
-            "INNER JOIN stock_prices sp ON sp.stock_id = s.id "
             "WHERE s.market = %s GROUP BY s.id, s.symbol, s.name, s.market "
             "ORDER BY s.symbol", (market,))
         return list(cur.fetchall())

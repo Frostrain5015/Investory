@@ -159,7 +159,7 @@ class RoutingTest(unittest.TestCase):
         import pandas as pd
         provider = Mock()
         provider.history.return_value = {"points": [{"date": "2026-10-21", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100, "amount": 1000}, {"date": "2026-10-22", "open": 10, "high": 12, "low": 9, "close": 11, "volume": 200, "amount": 2100}]}
-        with patch.object(self.fetcher, "_hithink", return_value=provider), patch.object(self.fetcher.cache, "get_df", return_value=None) as cached, patch.object(self.fetcher.cache, "set_df"):
+        with patch("market_history.history", side_effect=provider.history), patch.object(self.fetcher.cache, "get_df", return_value=None) as cached, patch.object(self.fetcher.cache, "set_df"):
             result = self.fetcher.get_price_history("600519.SH", 1)
         self.assertEqual(len(result), 1)
         self.assertAlmostEqual(result["change_pct"].iloc[0], 10)
@@ -173,7 +173,7 @@ class RoutingTest(unittest.TestCase):
     def test_failed_history_does_not_fall_back_to_baostock_or_old_cache(self):
         provider = Mock()
         provider.history.side_effect = hf.HithinkError("unavailable")
-        with patch.object(self.fetcher, "_hithink", return_value=provider), patch.object(self.fetcher.cache, "get_df", return_value=None) as cached:
+        with patch("market_history.history", side_effect=provider.history), patch.object(self.fetcher.cache, "get_df", return_value=None) as cached:
             self.assertIsNone(self.fetcher.get_price_history("600519"))
         cached.assert_called_once()
         provider.history.assert_called_once()
@@ -208,12 +208,12 @@ class RoutingTest(unittest.TestCase):
         connection = Mock()
         provider = Mock()
         provider.history.return_value = {"points": [{"date": "2026-10-22", "open": 10, "close": 11}], "source": hf.SOURCE, "timestamp": None}
-        with patch.object(agent, "get_db_conn", return_value=connection), patch.object(agent, "resolve_symbol", return_value="1.600519"), patch.object(hf, "get_client", return_value=provider):
+        with patch.object(agent, "get_db_conn", return_value=connection), patch.object(agent, "resolve_symbol", return_value="1.600519"), patch("market_history.history", return_value={"points": [{"date": "2026-10-22", "open": 10, "close": 11}], "source": hf.SOURCE, "adjust": "none", "timestamp": None}) as gateway:
             result = agent.tool_get_stock_price_history("贵州茅台")
         self.assertEqual(result["adjust"], "none")
         self.assertEqual(result["source"], hf.SOURCE)
         self.assertEqual(result["count"], 1)
-        self.assertEqual(provider.history.call_args.args[-1], "none")
+        self.assertEqual(gateway.call_args.args[-1], "none")
         connection.cursor.assert_not_called()
         connection.close.assert_called_once()
 
@@ -358,17 +358,14 @@ class LatestQuoteTest(unittest.TestCase):
         self.assertNotIn("stock_prices", cursor.execute.call_args.args[0])
         connection.cursor.assert_called_once()
 
-    def test_non_a_share_stays_on_explicit_legacy_path(self):
+    def test_non_a_share_uses_external_history_without_sql(self):
         agent = importlib.import_module("ai_agent")
-        connection = Mock()
-        cursor = connection.cursor.return_value
-        cursor.fetchall.return_value = [(100, date(2026, 10, 22)), (101, date(2026, 10, 21))]
-        with patch.object(agent, "get_db_conn", return_value=connection), patch.object(hf, "get_client") as factory:
+        with patch.object(agent, "get_db_conn") as database, patch.object(hf, "get_client") as factory, patch("market_history.latest", return_value={"116.00700": {"source": "yahoo", "price": 100, "change": -1}}):
             factory.return_value.snapshot.return_value = {"1.600519": {"price": 100}}
             result = agent._latest_quotes(["1.600519", "116.00700"])
-        self.assertEqual(result["116.00700"]["source"], "database")
+        self.assertEqual(result["116.00700"]["source"], "yahoo")
         self.assertEqual(result["116.00700"]["change"], -1)
-        self.assertEqual(cursor.execute.call_args.args[1], ("116.00700",))
+        database.assert_not_called()
         factory.return_value.snapshot.assert_called_once_with(["1.600519"])
 
     def test_provider_failure_never_reopens_a_share_price_sql(self):

@@ -31,9 +31,13 @@ public class EastMoneyCrawler {
     @Autowired private StockDao stockDao;
     @Autowired private StockPriceDao stockPriceDao;
 
+    @org.springframework.beans.factory.annotation.Value("${investory.history.legacy-writes-enabled:false}")
+    private boolean legacyHistoryWritesEnabled;
+
     private final HttpClient http = HttpClient.newHttpClient();
 
     public void updateRealtimePrices(List<Stock> stocks) {
+        if (!legacyHistoryWritesEnabled) return;
         if (stocks.isEmpty()) return;
         StringBuilder secids = new StringBuilder();
         for (int i = 0; i < stocks.size(); i++) {
@@ -78,6 +82,7 @@ public class EastMoneyCrawler {
 
     /** Fetch recent prices (last 30 trading days). Used by daily scheduler. */
     public void fetchHistory(Stock stock) {
+        if (!legacyHistoryWritesEnabled) return;
         if (fetchRecentEastMoney(stock) > 0) return;
         if (fetchRecentSina(stock) > 0) return;
         log.warning("Recent price fetch failed for all sources: " + stock.getSymbol());
@@ -104,6 +109,7 @@ public class EastMoneyCrawler {
 
     /** Sync today's prices for ALL stocks via Sina stock list API (includes trade price). */
     public int syncAllPricesFromSina() {
+        if (!legacyHistoryWritesEnabled) return 0;
         int total = 0;
         for (String node : new String[]{"sh_a", "sz_a"}) {
             int page = 1;

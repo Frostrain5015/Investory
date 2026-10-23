@@ -18,6 +18,7 @@ import traceback
 from collections import defaultdict
 
 from db import get_conn as connect_db, load_config
+from market_history import latest as latest_quotes
 
 
 def get_conn(cfg: dict):
@@ -63,16 +64,11 @@ def analyze_portfolio(conn, portfolio_id: int) -> dict:
     # Latest prices
     stock_ids = [h[0] for h in holdings]
     id_str = ",".join(str(sid) for sid in stock_ids)
-    cur.execute(f"""
-        SELECT sp.stock_id, sp.close
-        FROM stock_prices sp
-        INNER JOIN (
-            SELECT stock_id, MAX(trade_date) AS max_date
-            FROM stock_prices WHERE stock_id IN ({id_str})
-            GROUP BY stock_id
-        ) latest ON sp.stock_id = latest.stock_id AND sp.trade_date = latest.max_date
-    """)
-    price_map = {row[0]: float(row[1]) for row in cur.fetchall()}
+    quotes = latest_quotes([h[5] for h in holdings])
+    if any(h[5] not in quotes for h in holdings):
+        cur.close()
+        return {"error": "持仓报价不完整，无法生成组合风格权重", "unpricedSymbols": [h[5] for h in holdings if h[5] not in quotes]}
+    price_map = {h[0]: quotes[h[5]]["price"] for h in holdings}
 
     # Load metrics — try factor columns first, fall back to basic columns
     metric_rows = {}

@@ -372,7 +372,7 @@ export default function Admin() {
               className="h-8 rounded-lg border border-slate-200 px-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10" />
           </div>
           <button onClick={() => startCrawl('all')}
-            disabled={cs.crawling !== null}
+            disabled={cs.crawling !== null || status?.historyMode === 'external'}
             className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
             <Globe className="w-3.5 h-3.5" />{t.admin.allMarketCrawl}
           </button>
@@ -398,7 +398,7 @@ export default function Admin() {
                       {marketLabels[m.market] ?? m.market}
                     </span>
                     <button onClick={() => startCrawl(marketToScript(m.market))}
-                      disabled={cs.crawling !== null}
+                      disabled={cs.crawling !== null || status?.historyMode === 'external'}
                       className="inline-flex items-center gap-1 h-7 px-2.5 rounded-lg bg-slate-900 text-white text-[10px] font-medium hover:bg-slate-800 transition-colors disabled:opacity-40">
                       <Play className="w-3 h-3" />{t.admin.crawl}
                     </button>
@@ -409,7 +409,7 @@ export default function Admin() {
                     <span className="text-slate-400">{t.admin.stockCount}</span>
                     <span className="text-right font-medium tabular-nums">{m.stock_count.toLocaleString()}</span>
                     <span className="text-slate-400">{t.admin.klineRows}</span>
-                    <span className="text-right font-medium tabular-nums">{Number(m.price_rows).toLocaleString()}</span>
+                    <span className="text-right font-medium tabular-nums">{m.price_rows === null ? '—' : Number(m.price_rows).toLocaleString()}</span>
                     <span className="text-slate-400">{t.admin.earliest}</span>
                     <span className="text-right font-medium tabular-nums text-xs">{m.earliest_date}</span>
                     <span className="text-slate-400">{t.admin.latest}</span>
@@ -426,7 +426,7 @@ export default function Admin() {
             <span className="text-slate-300">|</span>
             <span>{t.admin.totalPrefix}<strong className="text-slate-700">{status.totals.stock_count.toLocaleString()}</strong>{t.admin.stockUnit}</span>
             <span className="text-slate-300">|</span>
-            <span><strong className="text-slate-700">{Number(status.totals.price_rows).toLocaleString()}</strong>{t.admin.klineRowsUnit}</span>
+            <span><strong className="text-slate-700">{status.totals.price_rows === null ? '—' : Number(status.totals.price_rows).toLocaleString()}</strong>{t.admin.klineRowsUnit}</span>
             <span className="text-slate-300">|</span>
             <span><strong className="text-slate-700">{status.tables.reduce((s, t) => s + (t.total_mb || 0), 0).toFixed(0)}</strong>{t.admin.dbSizeUnit}</span>
           </div>

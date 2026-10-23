@@ -27,6 +27,11 @@ import java.util.logging.Logger;
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(com.investory.marketdata.HistoricalPriceService.HistoryUnavailable.class)
+    public ResponseEntity<Map<String, String>> handleHistoryUnavailable(Exception error) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            .body(Map.of("error", "历史行情暂不可用，请稍后重试"));
+    }
     @ExceptionHandler({org.springframework.web.servlet.NoHandlerFoundException.class,
                        org.springframework.web.servlet.resource.NoResourceFoundException.class})
     public ResponseEntity<Map<String, String>> handleNotFound(Exception error) {

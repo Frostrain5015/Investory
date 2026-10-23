@@ -1097,6 +1097,10 @@ def parse_args():
 
 
 def main():
+    import os
+    if os.getenv("INVESTORY_LEGACY_HISTORY_WRITES", "").lower() != "true":
+        print("旧行情抓取已停用；仅归档维护时显式设置 INVESTORY_LEGACY_HISTORY_WRITES=true。")
+        return
     args = parse_args()
     log  = setup_logging(args.verbose)
     cfg  = load_config()

@@ -1,6 +1,6 @@
 package com.investory.service;
 
-import com.investory.dao.StockPriceDao;
+import com.investory.marketdata.HistoricalPriceService;
 import com.investory.model.DailyValue;
 import com.investory.model.StockPrice;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,7 +30,7 @@ public class PnlLedgerService {
     private static final BigDecimal HUNDRED = new BigDecimal("100");
 
     @Autowired private JdbcTemplate jdbc;
-    @Autowired private StockPriceDao stockPriceDao;
+    @Autowired private HistoricalPriceService history;
 
     public List<DailyValue> calculateDailyValues(long portfolioId, LocalDate fromDate, LocalDate toDate) {
         Ledger ledger = buildLedger(portfolioId, fromDate, toDate);
@@ -181,7 +181,7 @@ public class PnlLedgerService {
                 BigDecimal marketValue = ZERO;
                 if (state.shares.compareTo(ZERO) > 0) {
                     BigDecimal price = closeOnOrBefore(priceCache.get(stockId), day);
-                    if (price == null) price = state.lastTradePrice;
+                    if (price == null) throw new HistoricalPriceService.HistoryUnavailable();
                     if (price != null) {
                         marketValue = price.multiply(state.shares).multiply(rate);
                     }
@@ -271,7 +271,7 @@ public class PnlLedgerService {
         Map<Long, NavigableMap<LocalDate, BigDecimal>> cache = new HashMap<>();
         for (Long stockId : stockIds) {
             NavigableMap<LocalDate, BigDecimal> prices = new TreeMap<>();
-            for (StockPrice price : stockPriceDao.findRange(stockId, from, to)) {
+            for (StockPrice price : history.range(stockId, from.minusDays(31), to, "none")) {
                 if (price.getClose() != null) prices.put(price.getTradeDate(), price.getClose());
             }
             cache.put(stockId, prices);
