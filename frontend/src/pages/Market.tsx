@@ -126,7 +126,8 @@ export default function Market() {
   const { positiveHex, negativeHex, positiveClass, negativeClass } = useSettings()
   const [indices, setIndices] = useState<IndexData[]>([])
   const [indicators, setIndicators] = useState<IndicatorData[]>([])
-  const [loading, setLoading] = useState(true)
+  const [mapReady, setMapReady] = useState(false)
+  const [mapError, setMapError] = useState(false)
   const [updatedAt, setUpdatedAt] = useState<string | null>(null)
   const [sources, setSources] = useState<string[]>([])
   const [dataError, setDataError] = useState('')
@@ -134,31 +135,71 @@ export default function Market() {
   const [news, setNews] = useState<NewsItem[]>([])
   const chartRef = useRef<HTMLDivElement>(null)
   const loadedInitialRef = useRef(false)
+  const chartInstance = useRef<echarts.ECharts | null>(null)
+  const activeRequest = useRef(0)
+  const quoteAbort = useRef<AbortController | null>(null)
 
   const timeLocale = lang === 'zh' ? 'zh-CN' : 'en-US'
 
-  const loadIndices = useCallback((force = false) => {
+  const loadIndices = useCallback(async (force = false) => {
+    const foreground = () => document.visibilityState !== 'hidden'
+    if (!foreground()) return
+    quoteAbort.current?.abort()
+    const controller = new AbortController()
+    quoteAbort.current = controller
+    const request = ++activeRequest.current
     const shouldForce = force || loadedInitialRef.current
     loadedInitialRef.current = true
-    const quotes = getPreloadedMarketSnapshot({ force: shouldForce })
-      .then(data => {
+    void getPreloadedMarketNews({ force: shouldForce })
+      .then(data => { if (request === activeRequest.current) setNews(Array.isArray(data) ? data : []) })
+      .catch(() => {})
+    let polling = shouldForce
+    try {
+      do {
+        const data = await getPreloadedMarketSnapshot({ force: polling, signal: controller.signal })
+        if (request !== activeRequest.current || !foreground()) return
         setIndices(data.indices || [])
         setIndicators(data.indicators || [])
         setUpdatedAt(data.updatedAt ?? null)
         setSources(data.sources ?? [])
         setProviderWarning(data.hithinkStatus === 'fallback' || data.hithinkStatus === 'partial')
         setDataError('')
-      })
-      .catch(() => setDataError('行情更新失败，已保留上次显示的结果'))
-      .finally(() => setLoading(false))
-    getPreloadedMarketNews({ force: shouldForce })
-      .then(data => setNews(Array.isArray(data) ? data : []))
-      .catch(() => {})
-    return quotes
+        if (!data.refreshing) return
+        await new Promise<void>(resolve => window.setTimeout(resolve, 650))
+        polling = true
+      } while (request === activeRequest.current && foreground())
+    } catch {
+      if (!controller.signal.aborted && request === activeRequest.current) setDataError('行情更新失败，已保留上次显示的结果')
+    }
   }, [])
 
-  useEffect(() => { loadIndices() }, [loadIndices])
+  useEffect(() => {
+    void loadIndices()
+    const visibility = () => {
+      if (document.visibilityState === 'hidden') { activeRequest.current++; quoteAbort.current?.abort() }
+      else void loadIndices(true)
+    }
+    document.addEventListener('visibilitychange', visibility)
+    const active = activeRequest
+    const abort = quoteAbort
+    return () => { active.current++; abort.current?.abort(); document.removeEventListener('visibilitychange', visibility) }
+  }, [loadIndices])
   useTimedRefresh(() => loadIndices(true))
+
+  useEffect(() => {
+    if (!chartRef.current) return
+    const chart = echarts.init(chartRef.current, null, { renderer: 'svg' })
+    chartInstance.current = chart
+    let disposed = false
+    const resize = new ResizeObserver(() => { if (!disposed) chart.resize() })
+    resize.observe(chartRef.current)
+    void getPreloadedWorldMap().then(geoJson => {
+      if (disposed) return
+      echarts.registerMap('world', geoJson as Parameters<typeof echarts.registerMap>[1])
+      setMapReady(true)
+    }).catch(() => { if (!disposed) setMapError(true) })
+    return () => { disposed = true; resize.disconnect(); chartInstance.current = null; chart.dispose() }
+  }, [])
 
   // Country region coloring based on leading index change
   const countryRegions = useMemo(() => {
@@ -216,17 +257,12 @@ export default function Market() {
   }, [news])
 
   useEffect(() => {
-    if (!chartRef.current || markers.length === 0) return
-    const chart = echarts.init(chartRef.current, null, { renderer: 'svg' })
-
-    const onResize = () => chart.resize()
-    window.addEventListener('resize', onResize)
-
-    getPreloadedWorldMap()
-      .then(geoJson => {
-        echarts.registerMap('world', geoJson as Parameters<typeof echarts.registerMap>[1])
+    const chart = chartInstance.current
+    if (!mapReady || !chart) return
         chart.setOption({
           backgroundColor: 'transparent',
+          animationDurationUpdate: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 450,
+          animationEasingUpdate: 'cubicOut',
           tooltip: {
             trigger: 'item',
             confine: true,
@@ -349,18 +385,8 @@ export default function Market() {
             window.location.href = import.meta.env.BASE_URL + `stock?symbol=${encodeURIComponent(leader.symbol)}`
           }
         })
-      })
+  }, [mapReady, indices, t, markers, countryRegions, positiveHex, negativeHex, newsPoints, lang, t.market.noData, t.market.clickToViewSource, t.market.categoryFinance, t.market.categoryGeopolitics, t.market.countryNames, timeLocale])
 
-    return () => {
-      window.removeEventListener('resize', onResize)
-      chart.dispose()
-    }
-  }, [indices, t, markers, countryRegions, positiveHex, negativeHex, newsPoints, lang, t.market.noData, t.market.clickToViewSource, t.market.categoryFinance, t.market.categoryGeopolitics, t.market.countryNames, timeLocale])
-
-  if (loading) return <div className="flex flex-col items-center justify-center gap-3 h-screen">
-    <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-    <span className="text-sm text-slate-400">{t.market.loading}</span>
-  </div>
 
   return (
     <div className="h-full flex flex-col">
@@ -371,6 +397,7 @@ export default function Market() {
         </div>
         <div className="flex items-center text-[10px] text-slate-400"><span>{t.market.dataSource}：{sources.map(sourceLabel).join(' / ') || '—'}</span><InfoTip label="行情来源">A 股指数优先使用同花顺金融 API。当前开放接口尚未覆盖此页全部海外股指、商品和比特币，它们暂保留原数据源。当前页面每 30 秒刷新，后端共享短时缓存。时间来自行情或供应商批次；本地收盘和保留报价会单独标记。黄金卡片对应 COMEX 黄金期货，原油卡片对应 WTI 期货，并非现货。</InfoTip></div>
       </div>
+      {mapError && <p role="alert" className="px-6 text-xs text-red-600">地图加载失败，请刷新重试</p>}
       {dataError && <p role="alert" className="px-6 pb-2 text-xs text-red-600 dark:text-red-400">{dataError}</p>}
       {providerWarning && <p role="status" className="px-6 pb-2 text-xs text-amber-700 dark:text-amber-400">部分同花顺指数未更新，已尝试备用来源。</p>}
       {indicators.length > 0 && (
@@ -396,7 +423,7 @@ export default function Market() {
         </div>
       )}
       <div className="flex-1 min-h-0 px-2 pb-2 overflow-hidden">
-        <div ref={chartRef} className="w-full h-full" style={{ overflow: 'hidden' }} />
+        <div ref={chartRef} role="img" aria-label={t.market.title} className="w-full h-full" style={{ overflow: 'hidden' }} />
       </div>
     </div>
   )

@@ -1,5 +1,6 @@
 import { ChatContext } from '@/hooks/use-chat'
-import { NavLink, Outlet } from 'react-router-dom'
+import { NavLink } from 'react-router-dom'
+import PageTransition from '@/components/PageTransition'
 import { useAuth } from '@/hooks/use-auth'
 import { usePortfolioPreload } from '@/hooks/use-portfolio-preload'
 import { useMorningGreeting } from '@/hooks/use-morning-greeting'
@@ -193,7 +194,7 @@ export default function Layout() {
         </header>
         <UpdateBanner />
         <main className="flex-1 overflow-auto" style={{ scrollbarGutter: 'stable' }}>
-          <Outlet />
+          <PageTransition />
         </main>
       </div>
 

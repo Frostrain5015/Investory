@@ -148,7 +148,9 @@ def active_jobs(client) -> list[str]:
     code = r'''
 from pathlib import Path
 import json
-names = ("fetch_stocks.py", "fetch_fundamentals.py", "fetch_news.py", "backtest_engine.py", "ai_agent.py", "analyze_quant.py")
+# Keep detecting an old collector process during upgrades/rollbacks, even after
+# its source is retired. Maintenance must also finish before any service restart.
+names = ("fetch_stocks.py", "retire_price_store.py", "fetch_fundamentals.py", "fetch_news.py", "backtest_engine.py", "ai_agent.py", "analyze_quant.py")
 jobs=[]
 for process in Path("/proc").iterdir():
     if not process.name.isdigit(): continue

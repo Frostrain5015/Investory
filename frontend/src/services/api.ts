@@ -84,20 +84,20 @@ export function checkSession(): Promise<SessionResponse> {
 
 // ── Dashboard ──────────────────────────────────────────────────────────
 
-export function getDashboard(): Promise<DashboardResponse> {
-  return request<DashboardResponse>('/api/dashboard')
+export function getDashboard(signal?: AbortSignal): Promise<DashboardResponse> {
+  return request<DashboardResponse>('/api/dashboard', { signal })
 }
 
 // ── Holdings ───────────────────────────────────────────────────────────
 
-export function getHoldings(): Promise<HoldingsResponse> {
-  return request<HoldingsResponse>('/api/holdings')
+export function getHoldings(signal?: AbortSignal): Promise<HoldingsResponse> {
+  return request<HoldingsResponse>('/api/holdings', { signal })
 }
 
 // ── Transactions ───────────────────────────────────────────────────────
 
-export function getTransactions(): Promise<TransactionsResponse> {
-  return request<TransactionsResponse>('/api/transactions')
+export function getTransactions(signal?: AbortSignal): Promise<TransactionsResponse> {
+  return request<TransactionsResponse>('/api/transactions', { signal })
 }
 
 export function createTransaction(data: Record<string, string>): Promise<Response> {
@@ -118,8 +118,8 @@ export function deleteTransaction(id: number): Promise<Response> {
 
 // ── Dividends ──────────────────────────────────────────────────────────
 
-export function getDividends(): Promise<DividendsResponse> {
-  return request<DividendsResponse>('/api/dividends')
+export function getDividends(signal?: AbortSignal): Promise<DividendsResponse> {
+  return request<DividendsResponse>('/api/dividends', { signal })
 }
 
 export function createDividend(data: Record<string, string>): Promise<Response> {
@@ -140,14 +140,14 @@ export function deleteDividend(id: number): Promise<Response> {
 
 // ── Stock detail ───────────────────────────────────────────────────────
 
-export function getStockDetail(symbol: string): Promise<StockDetailResponse> {
-  return request<StockDetailResponse>(`/api/stocks/${encodeURIComponent(symbol)}`)
+export function getStockDetail(symbol: string, signal?: AbortSignal): Promise<StockDetailResponse> {
+  return request<StockDetailResponse>(`/api/stocks/${encodeURIComponent(symbol)}`, { signal })
 }
 
 // ── Portfolios ─────────────────────────────────────────────────────────
 
-export function getPortfolios(): Promise<Portfolio[]> {
-  return request<Portfolio[]>('/api/portfolios')
+export function getPortfolios(signal?: AbortSignal): Promise<Portfolio[]> {
+  return request<Portfolio[]>('/api/portfolios', { signal })
 }
 
 export function createPortfolio(name: string): Promise<Portfolio> {
@@ -176,23 +176,23 @@ export function deletePortfolio(id: number): Promise<Response> {
 // ── Charts ─────────────────────────────────────────────────────────────
 
 export const chartAPI = {
-  price(symbol: string, days: number, start?: string, end?: string, benchmark?: string): Promise<PriceData[] | { prices: PriceData[]; benchmark: BenchmarkItem[] }> {
+  price(symbol: string, days: number, start?: string, end?: string, benchmark?: string, signal?: AbortSignal): Promise<PriceData[] | { prices: PriceData[]; benchmark: BenchmarkItem[] }> {
     let url = start && end
       ? `/api/chart?type=price&symbol=${encodeURIComponent(symbol)}&start=${start}&end=${end}`
       : `/api/chart?type=price&symbol=${encodeURIComponent(symbol)}&days=${days}`
     if (benchmark) url += `&benchmark=${encodeURIComponent(benchmark)}`
-    return request(url)
+    return request(url, { signal })
   },
   allocation(portfolioId: number): Promise<AllocationItem[]> {
     return request<AllocationItem[]>(`/api/chart?type=allocation&portfolioId=${portfolioId}`)
   },
-  pnlCalendar(portfolioId: number, year: number): Promise<PnlCalendarItem[]> {
-    return request<PnlCalendarItem[]>(`/api/chart?type=pnl_calendar&portfolioId=${portfolioId}&year=${year}`)
+  pnlCalendar(portfolioId: number, year: number, signal?: AbortSignal): Promise<PnlCalendarItem[]> {
+    return request<PnlCalendarItem[]>(`/api/chart?type=pnl_calendar&portfolioId=${portfolioId}&year=${year}`, { signal })
   },
-  cumulativeReturn(portfolioId: number, days: number, start?: string, end?: string): Promise<CumulativeReturnItem[]> {
+  cumulativeReturn(portfolioId: number, days: number, start?: string, end?: string, signal?: AbortSignal): Promise<CumulativeReturnItem[]> {
     if (start && end)
-      return request<CumulativeReturnItem[]>(`/api/chart?type=cumulative_return&portfolioId=${portfolioId}&start=${start}&end=${end}`)
-    return request<CumulativeReturnItem[]>(`/api/chart?type=cumulative_return&portfolioId=${portfolioId}&days=${days}`)
+      return request<CumulativeReturnItem[]>(`/api/chart?type=cumulative_return&portfolioId=${portfolioId}&start=${start}&end=${end}`, { signal })
+    return request<CumulativeReturnItem[]>(`/api/chart?type=cumulative_return&portfolioId=${portfolioId}&days=${days}`, { signal })
   },
 }
 
@@ -306,8 +306,8 @@ export function getMarketNews(): Promise<MarketNewsItem[]> { return request('/ap
 
 // ── Quant extras ─────────────────────────────────────────────────────────
 
-export function getHoldingsCorrelation(symbol: string): Promise<HoldingCorrelation[]> {
-  return request<HoldingCorrelation[]>(`/api/quant/holdings-correlation?symbol=${encodeURIComponent(symbol)}`)
+export function getHoldingsCorrelation(symbol: string, signal?: AbortSignal): Promise<HoldingCorrelation[]> {
+  return request<HoldingCorrelation[]>(`/api/quant/holdings-correlation?symbol=${encodeURIComponent(symbol)}`, { signal })
 }
 
 export function getBacktestCompare(ids: number[]): Promise<CompareResult[]> {

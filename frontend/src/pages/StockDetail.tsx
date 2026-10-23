@@ -1,7 +1,9 @@
+import AsyncState from '@/components/AsyncState'
+import { useAsyncResource } from '@/hooks/use-async-resource'
 import QuoteNumber from '@/components/QuoteNumber'
 import { useTimedRefresh } from '@/hooks/use-timed-refresh'
 import QuoteWarning from '@/components/QuoteWarning'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { BASE, chartAPI, getStockDetail, searchStocks, getHoldingsCorrelation } from '@/services/api'
@@ -27,75 +29,41 @@ export default function StockDetail() {
   const { portfolioId } = useAuth()
   const { positiveClass, negativeClass, positiveHex, negativeHex } = useSettings()
   const { t } = useT()
-  const [data, setData] = useState<StockDetailResponse | null>(null)
   type Period = '1M' | '6M' | '1Y' | 'all' | 'custom'
   interface ChartParams { days: number; start?: string; end?: string }
-  const [priceData, setPriceData] = useState<PriceData[]>([])
   const [period, setPeriod] = useState<Period>('1Y')
   const [chartParams, setChartParams] = useState<ChartParams>({ days: 365 })
   const [customStart, setCustomStart] = useState('')
   const [customEnd, setCustomEnd] = useState('')
-  const [loadedRequest, setLoadedRequest] = useState('')
   const [watching, setWatching] = useState(false)
   const [watchId, setWatchId] = useState<number | null>(null)
   const [benchmark, setBenchmark] = useState('')
-  const requestKey = JSON.stringify([symbol, portfolioId, chartParams, benchmark])
-  const loading = loadedRequest !== requestKey
-  const [bmData, setBmData] = useState<{ date: string; base100: number; bmBase100: number; bmName: string }[] | null>(null)
   const [correlations, setCorrelations] = useState<HoldingCorrelation[]>([])
 
 
+  const loadDetail = useCallback((signal: AbortSignal) => getStockDetail(symbol, signal), [symbol])
+  const detail = useAsyncResource<StockDetailResponse>(symbol && portfolioId ? `${symbol}:${portfolioId}` : null, loadDetail)
+  const data = detail.data
+  const loadPrices = useCallback((signal: AbortSignal) => chartAPI.price(symbol, chartParams.days, chartParams.start, chartParams.end, benchmark || undefined, signal), [symbol, chartParams, benchmark])
+  const prices = useAsyncResource(symbol ? `${symbol}:${JSON.stringify(chartParams)}:${benchmark}` : null, loadPrices)
+  const priceData: PriceData[] = Array.isArray(prices.data) ? prices.data : prices.data?.prices ?? []
+  const bmName = BENCHMARKS[data?.stock?.market || '']?.find(item => item.symbol === benchmark)?.name || benchmark
+  const bmData = !Array.isArray(prices.data) && prices.data?.benchmark?.length
+    ? prices.data.benchmark.map(item => ({ ...item, bmName })) : null
+
   useEffect(() => {
     if (!symbol || !portfolioId) return
-    let cancelled = false
-    Promise.all([
-      getStockDetail(symbol),
-      chartAPI.price(symbol, chartParams.days, chartParams.start, chartParams.end, benchmark || undefined),
-    ]).then(([detail, rawPrices]) => {
-      if (cancelled) return
-      setData(detail)
-      // rawPrices is array when no benchmark, { prices, benchmark } when benchmark set
-      if (Array.isArray(rawPrices)) {
-        setPriceData(rawPrices)
-        setBmData(null)
-      } else {
-        setPriceData(rawPrices.prices)
-        const bm = rawPrices.benchmark
-        if (bm && bm.length > 0) {
-          const bmName = BENCHMARKS[detail.stock?.market || '']?.find(b => b.symbol === benchmark)?.name || benchmark
-          setBmData(bm.map((d) => ({ date: d.date, base100: d.base100, bmBase100: d.bmBase100, bmName })))
-        } else {
-          setBmData(null)
-        }
-      }
-    }).catch(() => { /* Keep the last valid data if a refresh fails. */ })
-      .finally(() => { if (!cancelled) setLoadedRequest(requestKey) })
-    // Check watchlist status
-    fetch(`${BASE}/api/watchlist?quotes=false`, { credentials: 'include' })
-      .then(r => r.json() as Promise<{ id: number; symbol: string }[]>).then((list) => {
-        if (cancelled) return
-        const found = list.find((w) => w.symbol === symbol)
-        setWatching(!!found)
-        setWatchId(found?.id ?? null)
+    const controller = new AbortController()
+    fetch(`${BASE}/api/watchlist?quotes=false`, { credentials: 'include', signal: controller.signal })
+      .then(response => response.json() as Promise<{ id: number; symbol: string }[]>).then(list => {
+        if (controller.signal.aborted) return
+        const found = list.find(item => item.symbol === symbol)
+        setWatching(!!found); setWatchId(found?.id ?? null)
       }).catch(() => {})
-    // Holdings correlation
-    getHoldingsCorrelation(symbol).then(value => { if (!cancelled) setCorrelations(value) }).catch(() => {})
-    return () => { cancelled = true }
-  }, [symbol, portfolioId, chartParams, benchmark, requestKey])
-
-  useTimedRefresh(async () => {
-    if (!symbol || !portfolioId) return
-    setData(await getStockDetail(symbol))
-  }, `${symbol}:${portfolioId}`)
-
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 h-96">
-        <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-        <span className="text-sm text-slate-400">{t.stockDetail.loading}</span>
-      </div>
-    )
-  }
+    getHoldingsCorrelation(symbol, controller.signal).then(value => { if (!controller.signal.aborted) setCorrelations(value) }).catch(() => {})
+    return () => controller.abort()
+  }, [symbol, portfolioId])
+  useTimedRefresh(detail.reload, `${symbol}:${portfolioId}`)
 
   const stock = data?.stock
   const holding = data?.holding
@@ -124,7 +92,7 @@ export default function StockDetail() {
                 <img src={`https://flagcdn.com/${flag}.svg`}
                   alt={m} className="w-6 h-4 inline-block align-middle mr-2 rounded-sm" />
               )})()}
-              {stock?.name}
+              {stock?.name || symbol}
             </h2>
             {currentPrice != null && (
               <>
@@ -188,6 +156,7 @@ export default function StockDetail() {
         </Link>
       </div>
 
+      <AsyncState loading={!detail.data && detail.loading} error={detail.error} retry={detail.reload} rows={2} />
       {/* Cost cards */}
       {holding && (
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
@@ -225,6 +194,7 @@ export default function StockDetail() {
         </div>
       )}
 
+      <AsyncState loading={!prices.data && prices.loading} error={prices.error} retry={prices.reload} rows={3} />
       {/* Price chart */}
       <Card>
         <CardHeader className="flex-row items-center justify-between flex-wrap gap-y-2">

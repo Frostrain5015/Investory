@@ -29,7 +29,7 @@ class WorldMarketServiceTest {
         when(legacy.fetch(any())).thenAnswer(call -> quote(call.getArgument(0), "yahoo"));
         service = new WorldMarketService(hithink, legacy, executor, clock);
     }
-    @AfterEach void shutdown() { executor.shutdownNow(); }
+    @AfterEach void shutdown() { service.close(); executor.shutdownNow(); }
     private WorldMarketQuote quote(WorldMarketCatalog.Spec spec, String source) {
         return WorldMarketQuote.of(spec, new BigDecimal("100.12"), new BigDecimal("-2.10"), new BigDecimal("-2.05"),
             source, clock.instant().minusSeconds(20), "EXCHANGE", null, clock.instant());
@@ -96,5 +96,28 @@ class WorldMarketServiceTest {
         assertNull(result.indicators().get(0).price());
         assertNull(result.indicators().get(0).change());
         verify(hithink, never()).indexSnapshot(anyList());
+    }
+    @Test void firstResponseAndFastRegionsNeverWaitForSlowCountries() throws Exception {
+        var release=new CountDownLatch(1);
+        doAnswer(call -> {
+            WorldMarketCatalog.Spec spec=call.getArgument(0);
+            if("HK".equals(spec.flag())) release.await(3,TimeUnit.SECONDS);
+            return quote(spec,"yahoo");
+        }).when(legacy).fetch(any());
+        try {
+            long start=System.nanoTime(); var initial=service.progress();
+            assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-start)<200);
+            assertEquals(20,initial.indices().size());
+            long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+            WorldMarketService.Progress partial=initial;
+            while(partial.indices().get(0).price()==null && System.nanoTime()<deadline) {
+                Thread.sleep(10); partial=service.progress();
+            }
+            assertTrue(partial.refreshing()); assertNotNull(partial.indices().get(0).price());
+            assertNull(partial.indices().stream().filter(q->q.symbol().equals("HSI.HK")).findFirst().orElseThrow().price());
+            verify(hithink,times(1)).indexSnapshot(anyList());
+            verify(legacy,never()).lastClose(any());
+        } finally {release.countDown();}
+        assertEquals(24,service.snapshot().indices().size()+service.snapshot().indicators().size());
     }
 }

@@ -840,7 +840,7 @@ export function BacktestSection() {
 
       {/* ── Strategy List ──────────────────────────────────────────── */}
       {view === 'list' &&
-        (loading ? (
+        (loading && strategies.length === 0 ? (
           <div className="flex items-center justify-center h-32">
             <div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
           </div>
@@ -1563,7 +1563,7 @@ export function BacktestSection() {
       )}
 
       {/* History */}
-      {loading ? (
+      {loading && results.length === 0 ? (
         <div className="flex items-center justify-center h-32">
           <div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
         </div>

@@ -16,7 +16,7 @@ Investory 量化分析脚本
     python analyze_quant.py --mode all --portfolio-id N  # 全量（Java SSE 调用此模式）
     python analyze_quant.py --dry-run -v                # 测试模式
 
-配置: 与 fetch_stocks.py 相同（config.ini + 环境变量）
+配置: 共享配置（config.ini + 环境变量）
 """
 
 import argparse
@@ -30,7 +30,7 @@ import numpy as np
 from db import get_conn, load_config
 from market_history import by_id as history_by_id, recent_by_id, latest as latest_quotes
 
-# ─── 路径配置（跨平台，与 fetch_stocks.py 完全相同）────────────────────────────
+# ─── 路径配置（跨平台）────────────────────────────
 
 
 # ─── 基准指数（身份查业务库，价格走统一网络历史层）──────────────────────────────
@@ -52,7 +52,7 @@ SCENARIOS = [
 ]
 
 
-# ─── 配置加载（复用 fetch_stocks.py 逻辑）──────────────────────────────────────
+# ─── 配置加载（共享环境变量和配置文件）──────────────────────────────────────
 
 
 def setup_logging(verbose: bool):

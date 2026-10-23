@@ -23,6 +23,7 @@ from urllib.parse import quote, urlencode
 from zoneinfo import ZoneInfo
 
 from hithink_finance import get_client, HithinkError, normalize_symbol, SHANGHAI
+import index_archive
 
 
 class HistoryError(RuntimeError):
@@ -264,8 +265,8 @@ def _file_lock(path: Path):
                 fcntl.flock(stream, fcntl.LOCK_UN)
 
 
-def _provider(symbol: str, start: date, end: date, adjust: str, kind: str) -> dict:
-    five_years_ago = datetime.now(SHANGHAI).date() - timedelta(days=5 * 365 - 2)
+def _network_provider(symbol: str, start: date, end: date, adjust: str, kind: str) -> dict:
+    five_years_ago = index_archive.years_ago(datetime.now(SHANGHAI).date(), 5)
     use_hithink = (kind == "equity" or kind == "index" and symbol.endswith((".SH", ".SZ", ".TI"))
                    and start >= five_years_ago or kind == "fund" and adjust == "forward" and (end - start).days <= 5 * 365)
     # Reserve a slot across ALL local processes, without holding this lock
@@ -286,6 +287,30 @@ def _provider(symbol: str, start: date, end: date, adjust: str, kind: str) -> di
         return _hithink(symbol, start, end, adjust, kind) if use_hithink else _yahoo(symbol, start, end, adjust)
     except HithinkError as error:
         raise HistoryError(str(error)) from None
+
+
+def _provider(symbol: str, start: date, end: date, adjust: str, kind: str) -> dict:
+    if kind != "index" or not symbol.endswith((".SH", ".SZ", ".TI")):
+        return _network_provider(symbol, start, end, adjust, kind)
+    cutoff = index_archive.years_ago(datetime.now(SHANGHAI).date(), 5)
+    pieces = []
+    if start < cutoff:
+        stop = min(end, cutoff - timedelta(days=1))
+        try:
+            old = index_archive.read(symbol, start, stop)
+        except index_archive.ArchiveError as error:
+            raise HistoryError(str(error)) from None
+        pieces.append(old if old is not None else _network_provider(symbol, start, stop, "none", kind))
+    if end >= cutoff:
+        pieces.append(_network_provider(symbol, max(start, cutoff), end, "none", kind))
+    points = []
+    for piece in pieces:
+        if piece.get("adjust") != "none":
+            raise HistoryError("指数历史必须使用原始点位")
+        points.extend({**point, "source": piece["source"]} for point in piece["points"])
+    _validate_points(points, start, end)
+    return {"source": "index_history_gateway", "adjust": "none", "timestamp": pieces[0].get("timestamp") if len(pieces) == 1 else None,
+            "sources": list(dict.fromkeys(piece["source"] for piece in pieces)), "points": points}
 
 
 def _missing(start: date, end: date, intervals: list) -> list[tuple[date, date]]:
@@ -390,6 +415,9 @@ def history(symbol: str, start: date | str, end: date | str, adjust: str = "forw
     # may restate old bars. Raw, closed bars have no expiry.
     today = datetime.now(SHANGHAI).date()
     epoch = today.isoformat() if effective != "none" else "raw"
+    if kind == "index" and symbol.endswith((".SH", ".SZ", ".TI")):
+        # Installing/replacing an archive must invalidate cached failures/old routes.
+        epoch += "|index-archive-v1:" + index_archive.fingerprint()
     identity = f"v3|{symbol}|{effective}|{start.isoformat()}|{end.isoformat()}|{epoch}"
     key = hashlib.sha256(identity.encode()).hexdigest()
     path = _cache_dir() / (key + ".json")
@@ -416,8 +444,6 @@ def history(symbol: str, start: date | str, end: date | str, adjust: str = "forw
                     return json.loads(json.dumps(cached))
             except (OSError, ValueError, KeyError, TypeError, HistoryError):
                 pass
-            if kind == "index" and start < today - timedelta(days=5 * 365 - 2):
-                kind = "other"  # Keep one provider across older-index ranges.
             parts = []
             frozen_end = min(end, today - timedelta(days=2))
             if start <= frozen_end:
@@ -428,6 +454,9 @@ def history(symbol: str, start: date | str, end: date | str, adjust: str = "forw
                 raise HistoryError("请求跨越不同历史数据源，请分区间查询")
             result = {**parts[-1], "transientEmpty": any(part.get("transientEmpty") or not part["points"] for part in parts),
                       "points": [p for part in parts for p in part["points"]]}
+            if result["source"] == "index_history_gateway":
+                result["sources"] = list(dict.fromkeys(point["source"] for point in result["points"]))
+                result["volumeBasis"] = "legacy_provider_units" if index_archive.SOURCE in result["sources"] else "provider_units"
             result.update({"identity": identity, "symbol": symbol, "start": start.isoformat(), "end": end.isoformat(),
                            "fetchedAtMs": int(time.time() * 1000)})
             result.setdefault("currency", "CNY" if symbol.endswith((".SH", ".SZ", ".BJ", ".TI")) else "HKD" if symbol.endswith(".HK") else "USD")

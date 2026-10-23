@@ -159,8 +159,9 @@ assert m.history('600519.SH','2025-01-01','2025-01-10','none')['points'][0]['clo
 class NoPriceSqlTest(unittest.TestCase):
     def test_active_modules_have_no_price_table_sql(self):
         root = Path(__file__).resolve().parents[2]
-        files = [root/"script"/name for name in ("ai_agent.py","analyze_quant.py","backtest_engine.py","optimizer.py","portfolio_style_analyzer.py","fetch_fundamentals.py","market_history.py")]
-        files += [p for p in (root/"backend/src/main/java").rglob("*.java") if p.name != "StockPriceDao.java"]
+        files = [p for p in (root/"script").glob("*.py") if p.name != "retire_price_store.py"]
+        files += list((root/"backend/src/main/java").rglob("*.java"))
+        files += list((root/"backend/src/main/python/stocksage_alpha").rglob("*.py"))
         import re
         for path in files:
             with self.subTest(file=path.name):

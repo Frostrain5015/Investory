@@ -1,4 +1,6 @@
-import { useEffect, useState, useCallback } from 'react'
+import AsyncState from '@/components/AsyncState'
+import { useAsyncResource } from '@/hooks/use-async-resource'
+import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useConfirm } from '@/hooks/use-confirm'
@@ -23,17 +25,17 @@ export default function Transactions() {
 function TransactionsContent() {
   const confirm = useConfirm()
   const { t, lang } = useT()
-  const [items, setItems] = useState<Activity[]>([])
-  const [loading, setLoading] = useState(true)
   const [managing, setManaging] = useState(false)
 
-  const load = useCallback(() => {
-    fetch(`${BASE}/api/transactions`, { credentials: 'include' })
-      .then(r => r.json()).then(setItems)
-      .finally(() => setLoading(false))
+  const loader = useCallback(async (signal: AbortSignal): Promise<Activity[]> => {
+    const response = await fetch(`${BASE}/api/transactions`, { credentials: 'include', signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const value: unknown = await response.json()
+    return value as Activity[]
   }, [])
-
-  useEffect(() => { load() }, [load])
+  const resource = useAsyncResource('transactions', loader)
+  const items = resource.data ?? []
+  const load = resource.reload
 
   async function handleDelete(id: number, type: string) {
     const msg = lang === 'zh'
@@ -47,9 +49,7 @@ function TransactionsContent() {
 
   const sharesUnit = lang === 'zh' ? '股' : ''
 
-  if (loading) {
-    return <div className="flex flex-col items-center justify-center gap-3 h-96"><div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-sm text-slate-400">{t.common.loading}</span></div>
-  }
+
 
   const typeBadge = (txType: string) => {
     switch (txType) {
@@ -79,7 +79,7 @@ function TransactionsContent() {
       </div>
       <Card>
         <CardContent className="p-0">
-          {items.length === 0 ? (
+          {!resource.data ? (<AsyncState loading={resource.loading} error={resource.error} retry={load} />) : items.length === 0 ? (
             <div className="py-12 text-center text-slate-500 text-sm">{t.transactions.noTransactions}</div>
           ) : (
             <>

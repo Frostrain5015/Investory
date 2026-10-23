@@ -5,6 +5,7 @@ import { useSettings } from '@/hooks/use-settings'
 import { useT } from '@/i18n/I18nContext'
 import { getFrostIdLoginUrl } from '@/services/api'
 import { TrendingUp } from 'lucide-react'
+import PageLoading from '@/components/PageLoading'
 
 const FROST_ACCENT = '#7176aa'
 const FROST_ACCENT_HI = '#8b90c4'
@@ -23,13 +24,7 @@ export default function Login() {
     }
   }, [authenticated, loading, navigate])
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="w-5 h-5 border-2 border-slate-300 border-t-slate-600 rounded-full animate-spin" />
-      </div>
-    )
-  }
+  if (loading) return <PageLoading />
 
   if (authenticated) return null
 

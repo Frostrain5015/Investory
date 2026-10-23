@@ -1,3 +1,4 @@
+import AsyncState from '@/components/AsyncState'
 import { useAsyncResource } from '@/hooks/use-async-resource'
 import { useCallback, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -69,7 +70,7 @@ function PnlCalendarContent() {
   const [year, setYear] = useState(new Date().getFullYear())
   const [month, setMonth] = useState(new Date().getMonth())
   const [selected, setSelected] = useState<Selected | null>(null)
-  const loadCalendar = useCallback(() => chartAPI.pnlCalendar(portfolioId!, year), [portfolioId, year])
+  const loadCalendar = useCallback((signal: AbortSignal) => chartAPI.pnlCalendar(portfolioId!, year, signal), [portfolioId, year])
   const calendar = useAsyncResource<PnlCalendarItem[]>(portfolioId ? `${portfolioId}:${year}` : null, loadCalendar)
   const data = calendar.data ?? EMPTY_CALENDAR
   const loading = calendar.loading
@@ -155,12 +156,7 @@ function PnlCalendarContent() {
     return { bg: '#f8fafc', text: 'text-slate-400' }
   }
 
-  if (loading) return (
-    <div className="flex flex-col items-center justify-center gap-3 h-96">
-      <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-      <span className="text-sm text-slate-400">{t.pnl.loadingCalendar}</span>
-    </div>
-  )
+
 
   const displayLabel = pnlDisplay === 'amount' ? t.pnl.pnlValue : t.pnl.pctChange
 
@@ -200,6 +196,7 @@ function PnlCalendarContent() {
         </div>
       </div>
 
+      <AsyncState loading={loading && !calendar.data} error={calendar.error} retry={calendar.reload} rows={2} />
       {/* Yearly grid */}
       {viewMode === 'yearly' ? (
         <Card>

@@ -43,6 +43,11 @@ public class MarketIndexController {
         return market.snapshot();
     }
 
+    @GetMapping("/indices/progress")
+    public com.investory.marketdata.WorldMarketService.Progress getProgress() {
+        return market.progress();
+    }
+
     @GetMapping("/news")
     public List<Map<String, Object>> getNews() {
         try {

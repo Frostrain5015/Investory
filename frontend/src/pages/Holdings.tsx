@@ -1,5 +1,7 @@
+import AsyncState from '@/components/AsyncState'
+import { useAsyncResource } from '@/hooks/use-async-resource'
 import QuoteNumber from '@/components/QuoteNumber'
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useSettings } from '@/hooks/use-settings'
@@ -39,34 +41,87 @@ function HoldingsContent() {
   const { portfolioId } = useAuth()
   const { positiveClass, negativeClass } = useSettings()
   const { t } = useT()
-  const [items, setItems] = useState<WatchItem[]>([])
-  const [loading, setLoading] = useState(true)
+  const [order, setOrder] = useState<string[]>([])
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<StockSearchItem[]>([])
   const [showAdd, setShowAdd] = useState(false)
   const [managing, setManaging] = useState(false)
   const [sparkData, setSparkData] = useState<Record<string, number[]>>({})
+  const sparkCache = useRef<Record<string, number[]>>({})
   const [dragKey, setDragKey] = useState<string | null>(null)
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropIdx, setDropIdx] = useState<number | null>(null)
 
+  const holdingsLoader = useCallback(async (signal: AbortSignal): Promise<HoldingsResponse> => {
+    const response = await fetch(`${BASE}/api/holdings`, { credentials: 'include', signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return response.json() as Promise<HoldingsResponse>
+  }, [])
+  const watchLoader = useCallback(async (signal: AbortSignal): Promise<WatchItem[]> => {
+    const response = await fetch(`${BASE}/api/watchlist`, { credentials: 'include', signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return response.json() as Promise<WatchItem[]>
+  }, [])
+  const holdings = useAsyncResource(portfolioId ? String(portfolioId) : null, holdingsLoader)
+  const watchlist = useAsyncResource(portfolioId ? String(portfolioId) : null, watchLoader)
+  const reloadHoldings = holdings.reload
+  const reloadWatchlist = watchlist.reload
+  const load = useCallback(() => { reloadHoldings(); reloadWatchlist() }, [reloadHoldings, reloadWatchlist])
+  const items = useMemo(() => {
+      const held: HoldingSnapshot[] = holdings.data?.snapshots || []
+      const heldById = new Map(held.map(s => [s.stockId, s]))
+      const watchItems = watchlist.data || []
+
+      const merged: WatchItem[] = []
+
+      // Holdings first
+      for (const s of held) {
+        merged.push({
+          id: -(s.stockId), stock_id: s.stockId, symbol: s.stockSymbol, name: s.stockName,
+          market: s.market, currency: s.currency || '', price: s.nativePrice ?? s.currentPrice,
+          changeToday: s.nativeChangeToday ?? null, changePctToday: s.changePctToday,
+          priceLive: s.priceLive,
+          priceSource: s.priceSource,
+          priceTimestamp: s.priceTimestamp,
+        })
+      }
+
+      // Watched but not held
+      for (const w of watchItems) {
+        if (!heldById.has(w.stock_id)) merged.push(w)
+      }
+
+      if (order.length) {
+        const positions = new Map(order.map((symbol, index) => [symbol, index]))
+        merged.sort((a,b) => (positions.get(a.symbol) ?? 100000) - (positions.get(b.symbol) ?? 100000))
+      }
+      return merged
+  }, [holdings.data, watchlist.data, order])
+  const [lastRefresh] = useTimedRefresh(load, String(portfolioId))
+
+
   useEffect(() => {
-    const missing = items.filter(item => !sparkData[item.symbol])
+    const missing = items.filter(item => !sparkCache.current[item.symbol])
     if (missing.length === 0) return
-    let cancelled = false
-    Promise.all(missing.map(async item => {
-      try {
-        const raw = await chartAPI.price(item.symbol, 30)
-        const prices: PriceData[] = Array.isArray(raw) ? raw : raw.prices
-        return [item.symbol, prices.map(price => price.close)] as const
-      } catch { return null }
-    })).then(entries => {
-      if (cancelled) return
-      const loaded = entries.filter(entry => entry !== null)
-      if (loaded.length) setSparkData(previous => ({ ...previous, ...Object.fromEntries(loaded) }))
-    })
-    return () => { cancelled = true }
-  }, [items, sparkData])
+    const controller = new AbortController()
+    let cursor = 0
+    const worker = async () => {
+      while (cursor < missing.length && !controller.signal.aborted) {
+        const item = missing[cursor++]
+        try {
+          const raw = await chartAPI.price(item.symbol, 30, undefined, undefined, undefined, controller.signal)
+          const prices: PriceData[] = Array.isArray(raw) ? raw : raw.prices
+          if (!controller.signal.aborted) {
+            const values = prices.map(price => price.close)
+            sparkCache.current[item.symbol] = values
+            setSparkData(previous => ({ ...previous, [item.symbol]: values }))
+          }
+        } catch { /* Keep the quote row usable when its sparkline is unavailable. */ }
+      }
+    }
+    void Promise.allSettled(Array.from({ length: Math.min(4, missing.length) }, worker))
+    return () => controller.abort()
+  }, [items])
 
 
   function handleDragStart(groupKey: string, idx: number) {
@@ -90,7 +145,7 @@ function HoldingsContent() {
     const to = globalStart + idx
     const [moved] = next.splice(from, 1)
     next.splice(to, 0, moved)
-    setItems(next)
+    setOrder(next.map(item => item.symbol))
     setDragKey(null)
     setDragIdx(null)
     setDropIdx(null)
@@ -102,42 +157,6 @@ function HoldingsContent() {
     }).catch(() => {})
   }
 
-
-  const load = useCallback(() => {
-    if (!portfolioId) return
-    return Promise.all([
-      fetch(`${BASE}/api/holdings`, { credentials: 'include' }).then(r => r.json() as Promise<HoldingsResponse>),
-      fetch(`${BASE}/api/watchlist`, { credentials: 'include' }).then(r => r.json() as Promise<WatchItem[]>),
-    ]).then(([hData, wData]) => {
-      const held: HoldingSnapshot[] = hData.snapshots || []
-      const heldById = new Map(held.map(s => [s.stockId, s]))
-      const watchItems = wData || []
-
-      const merged: WatchItem[] = []
-
-      // Holdings first
-      for (const s of held) {
-        merged.push({
-          id: -(s.stockId), stock_id: s.stockId, symbol: s.stockSymbol, name: s.stockName,
-          market: s.market, currency: s.currency || '', price: s.nativePrice ?? s.currentPrice,
-          changeToday: s.nativeChangeToday ?? null, changePctToday: s.changePctToday,
-          priceLive: s.priceLive,
-          priceSource: s.priceSource,
-          priceTimestamp: s.priceTimestamp,
-        })
-      }
-
-      // Watched but not held
-      for (const w of watchItems) {
-        if (!heldById.has(w.stock_id)) merged.push(w)
-      }
-
-      setItems(merged)
-    }).catch(() => {}).finally(() => setLoading(false))
-  }, [portfolioId])
-
-  useEffect(() => { load() }, [load])
-  const [lastRefresh] = useTimedRefresh(load)
 
   useEffect(() => { if (query.length >= 1) searchStocks(query).then(setResults) }, [query])
 
@@ -161,14 +180,8 @@ function HoldingsContent() {
       flag: GROUP_META[key].flag,
       items: items.filter(item => marketToGroup(item.market) === key),
     })).filter(g => g.items.length > 0)
-
-  if (loading) {
-    return <div className="flex flex-col items-center justify-center gap-3 h-96">
-      <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-      <span className="text-sm text-slate-400">{t.common.loading}</span>
-    </div>
-  }
-
+  const loading = holdings.loading || watchlist.loading
+  const loadError = holdings.error ?? watchlist.error
   return (
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
@@ -214,9 +227,10 @@ function HoldingsContent() {
         </div>
       </div>
 
-      {items.length === 0 ? (
+      <AsyncState loading={items.length === 0 && loading} error={loadError} retry={load} />
+      {items.length === 0 ? (!loading && !loadError && (
         <div className="py-12 text-center text-slate-500 text-sm">{t.holdings.noHoldings}</div>
-      ) : (
+      )) : (
         <div className="space-y-6">
           {groups.map(group => (
             <Card key={group.key}>

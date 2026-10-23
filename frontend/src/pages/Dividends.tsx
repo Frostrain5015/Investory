@@ -1,4 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useAuth } from '@/hooks/use-auth'
+import AsyncState from '@/components/AsyncState'
+import { useAsyncResource } from '@/hooks/use-async-resource'
+import { useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, CardContent } from '@/components/ui/card'
 import { shortSymbol } from '@/lib/format'
@@ -12,16 +15,17 @@ interface Div { id: number; stockName?: string; stockSymbol?: string; amountPerS
 export default function Dividends() {
   const confirm = useConfirm()
   const { t, lang } = useT()
-  const [dividends, setDividends] = useState<Div[]>([])
-  const [loading, setLoading] = useState(true)
+  const { portfolioId } = useAuth()
 
-  function load() {
-    fetch(`${BASE}/api/dividends`, { credentials: 'include' })
-      .then(r => r.json()).then(d => setDividends(d.dividends || []))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => { load() }, [])
+  const loader = useCallback(async (signal: AbortSignal): Promise<Div[]> => {
+    const response = await fetch(`${BASE}/api/dividends`, { credentials: 'include', signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const value: unknown = await response.json()
+    return (value as { dividends?: Div[] }).dividends ?? []
+  }, [])
+  const resource = useAsyncResource(portfolioId ? String(portfolioId) : null, loader)
+  const dividends = resource.data ?? []
+  const load = resource.reload
 
   async function handleDelete(id: number) {
     const msg = lang === 'zh' ? '确认删除？' : 'Confirm delete?'
@@ -30,9 +34,7 @@ export default function Dividends() {
     load()
   }
 
-  if (loading) {
-    return <div className="flex flex-col items-center justify-center gap-3 h-96"><div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" /><span className="text-sm text-slate-400">{t.common.loading}</span></div>
-  }
+
 
   return (
     <div className="p-6 space-y-6">
@@ -45,7 +47,7 @@ export default function Dividends() {
       </div>
       <Card>
         <CardContent className="p-0">
-          {dividends.length === 0 ? (
+          {!resource.data ? (<AsyncState loading={resource.loading} error={resource.error} retry={load} />) : dividends.length === 0 ? (
             <div className="py-12 text-center text-slate-500 text-sm">{lang === 'zh' ? '暂无分红记录' : 'No dividend records'}</div>
           ) : (
             <>

@@ -1,6 +1,5 @@
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
-import { useEffect, lazy, Suspense } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { useEffect, lazy } from 'react'
 import { AuthProvider } from '@/providers/AuthProvider'
 import { useAuth } from '@/hooks/use-auth'
 import { SettingsProvider } from '@/providers/SettingsProvider'
@@ -12,7 +11,8 @@ import { preloadSuggestions } from '@/services/aiPreload'
 import { ConfirmProvider } from '@/providers/ConfirmProvider'
 import { PromptProvider } from '@/providers/PromptProvider'
 import { I18nProvider } from '@/providers/I18nProvider'
-import { useT } from '@/i18n/I18nContext'
+import PageLoading from '@/components/PageLoading'
+import PageTransition from '@/components/PageTransition'
 import Layout from '@/components/Layout'
 import TitleBar from '@/components/TitleBar'
 import ErrorBoundary from '@/components/ErrorBoundary'
@@ -38,71 +38,16 @@ const Research = lazy(() => import('@/pages/Research'))
 
 const isElectron = !!window.electronAPI?.isDesktop
 
-function LoadingScreen() {
-  const { t } = useT()
-  return (
-    <div className="flex flex-col items-center justify-center gap-4 h-full bg-slate-50 dark:bg-slate-950">
-      {/* Orb — a small glowing pill that pulses like the Guanlan idle state */}
-      <motion.div
-        className="w-10 h-10 rounded-full"
-        style={{ background: 'linear-gradient(135deg, #863bff, #47bfff)' }}
-        animate={{
-          scale: [1, 1.15, 1],
-          opacity: [0.8, 1, 0.8],
-        }}
-        transition={{
-          duration: 1.5,
-          repeat: Infinity,
-          ease: 'easeInOut',
-        }}
-      />
-      <motion.span
-        className="text-sm text-slate-400"
-        initial={{ opacity: 0, y: 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.2, duration: 0.3 }}
-      >
-        {t.common.loading}
-      </motion.span>
-    </div>
-  )
-}
-
-function PageTransition({ children }: { children: React.ReactNode }) {
-  const location = useLocation()
-  return (
-    <Suspense fallback={<LoadingScreen />}>
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={location.pathname}
-          initial={{ opacity: 0, clipPath: 'circle(0% at 50% 50%)' }}
-          animate={{ opacity: 1, clipPath: 'circle(100% at 50% 50%)' }}
-          exit={{ opacity: 0, scale: 0.97 }}
-          transition={{
-            type: 'spring',
-            stiffness: 120,
-            damping: 20,
-            mass: 0.8,
-          }}
-          className="h-full"
-        >
-          {children}
-        </motion.div>
-      </AnimatePresence>
-    </Suspense>
-  )
-}
-
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { authenticated, loading } = useAuth()
   useEffect(() => { if (authenticated) preloadSuggestions() }, [authenticated])
-  if (loading) return <LoadingScreen />
+  if (loading) return <PageLoading />
   return authenticated ? children : <Navigate to="/" replace />
 }
 
 function PublicRoute({ children }: { children: React.ReactNode }) {
   const { authenticated, loading, isAdmin } = useAuth()
-  if (loading) return <LoadingScreen />
+  if (loading) return <PageLoading />
   return !authenticated ? children : <Navigate to={isAdmin ? '/admin' : '/dashboard'} replace />
 }
 
@@ -122,25 +67,27 @@ export default function App() {
           <PromptProvider>
           <ErrorBoundary>
           <Routes>
-            <Route path="/" element={<PublicRoute><Hero /></PublicRoute>} />
-            <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-            <Route path="/register" element={<PublicRoute><Register /></PublicRoute>} />
+            <Route element={<PublicRoute><PageTransition /></PublicRoute>}>
+              <Route path="/" element={<Hero />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+            </Route>
             <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-              <Route path="/market" element={<PageTransition><Market /></PageTransition>} />
+              <Route path="/market" element={<Market />} />
               <Route path="/watchlist" element={<Navigate to="/holdings" replace />} />
-              <Route path="/dashboard" element={<PageTransition><Dashboard /></PageTransition>} />
-              <Route path="/holdings" element={<PageTransition><Holdings /></PageTransition>} />
-              <Route path="/transactions" element={<PageTransition><Transactions /></PageTransition>} />
-              <Route path="/transactions/add" element={<PageTransition><AddTransaction /></PageTransition>} />
-              <Route path="/dividends" element={<PageTransition><Dividends /></PageTransition>} />
-              <Route path="/stock" element={<PageTransition><StockDetail /></PageTransition>} />
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/holdings" element={<Holdings />} />
+              <Route path="/transactions" element={<Transactions />} />
+              <Route path="/transactions/add" element={<AddTransaction />} />
+              <Route path="/dividends" element={<Dividends />} />
+              <Route path="/stock" element={<StockDetail />} />
               <Route path="/pnl-calendar" element={<PnlCalendar />} />
               <Route path="/portfolio" element={<Portfolio />} />
-              <Route path="/settings" element={<PageTransition><Settings /></PageTransition>} />
+              <Route path="/settings" element={<Settings />} />
               <Route path="/quant" element={<Navigate to="/research" replace />} />
               <Route path="/screener" element={<Navigate to="/research" replace />} />
-              <Route path="/research" element={<PageTransition><Research /></PageTransition>} />
-              <Route path="/admin" element={<PageTransition><Admin /></PageTransition>} />
+              <Route path="/research" element={<Research />} />
+              <Route path="/admin" element={<Admin />} />
             </Route>
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>

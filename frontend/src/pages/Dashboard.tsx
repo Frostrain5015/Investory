@@ -1,3 +1,5 @@
+import AsyncState from '@/components/AsyncState'
+import { useAsyncResource } from '@/hooks/use-async-resource'
 import QuoteNumber from '@/components/QuoteNumber'
 import { useEffect, useState, useCallback } from 'react'
 import { useCountUp } from '@/hooks/use-count-up'
@@ -9,7 +11,7 @@ import { useToast } from '@/hooks/use-toast'
 import { useSettings } from '@/hooks/use-settings'
 import { chartAPI } from '@/services/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import type { AllocationItem, CumulativeReturnItem } from '@/types'
+import type { CumulativeReturnItem } from '@/types'
 import { ArrowLeftRight, Sparkles } from 'lucide-react'
 import { useChatContext } from '@/hooks/use-chat'
 import {
@@ -24,17 +26,6 @@ import ClosedPositions from '@/components/ClosedPositions'
 import { useT } from '@/i18n/I18nContext'
 import { BASE } from '@/services/api'
 
-interface Snapshot {
-  stockId: number; stockSymbol: string; stockName: string; market: string; currency: string
-  totalShares: number; avgCost: number; dilutedCost: number
-  totalInvested: number; totalDividends: number
-  currentPrice: number; marketValue: number; unrealizedPnl: number; unrealizedPnlPct: number
-  changeToday: number; changePctToday: number
-  nativePrice: number; nativeAvgCost: number; nativeInvested: number; nativeMarketValue: number; nativeUnrealizedPnl: number
-  priceLive?: boolean
-  priceTimestamp?: string | null
-  priceSource?: string | null
-}
 
 const COLORS = [
   '#1e3a5f', '#e07a5f', '#2a9d8f', '#e9c46a', '#7c6fae',
@@ -54,12 +45,8 @@ function DashboardContent() {
   const { isDark } = useTheme()
   const toast = useToast()
   const { t, lang } = useT()
-  const [snapshots, setSnapshots] = useState<Snapshot[]>([])
-  const [totals, setTotals] = useState({ totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, cumulativeReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 })
-  const [allocation, setAllocation] = useState<AllocationItem[]>([])
   type Period = '1M' | '6M' | '1Y' | 'all' | 'custom'
   interface ChartParams { days: number; start?: string; end?: string }
-  const [cumulative, setCumulative] = useState<CumulativeReturnItem[]>([])
   const [cumulativePeriod, setCumulativePeriod] = useState<Period>('1Y')
   const [cumParams, setCumParams] = useState<ChartParams>({ days: 365 })
   const [cumCustomStart, setCumCustomStart] = useState('')
@@ -70,35 +57,20 @@ function DashboardContent() {
   const [pnlCardMode, setPnlCardMode] = useState<'today' | 'holding'>('today')
   const [showClosed, setShowClosed] = useState(false)
   const [cashCardMode, setCashCardMode] = useState<'mv' | 'cash'>('mv')
-  const [cashByCurrency, setCashByCurrency] = useState<{ currency: string; amount: number }[]>([])
   const [refreshing, setRefreshing] = useState(false)
-  const [loading, setLoading] = useState(true)
 
-  const loadDashboard = useCallback(() => {
-    if (!portfolioId) return
-    return Promise.all([
-      getDashboard(),
-      chartAPI.cumulativeReturn(portfolioId, cumParams.days, cumParams.start, cumParams.end),
-    ]).then(([dash, cum]) => {
-      setSnapshots(dash.snapshots || [])
-      setTotals({
-        totalMarketValue: dash.totalMarketValue || 0,
-        totalInvested: dash.totalInvested || 0,
-        totalPnl: dash.totalPnl || 0,
-        realizedPnl: dash.realizedPnl || 0,
-        cumulativePnl: dash.cumulativePnl || 0,
-        totalReturnPct: dash.totalReturnPct || 0,
-        cumulativeReturnPct: dash.cumulativeReturnPct || 0,
-        todayPnl: dash.todayPnl || 0,
-        todayPnlPct: dash.todayPnlPct || 0,
-        cashBalance: dash.cashBalance || 0,
-      })
-      setCashByCurrency(dash.cashByCurrency || [])
-      setAllocation(dash.allocation || [])
-      setCumulative(cum || [])
-    }).catch((e) => console.error('Dashboard load error:', e))
-    .finally(() => setLoading(false))
-  }, [portfolioId, cumParams])
+  const loadSummary = useCallback((signal: AbortSignal) => getDashboard(signal), [])
+  const summary = useAsyncResource(portfolioId ? String(portfolioId) : null, loadSummary)
+  const loadCurve = useCallback((signal: AbortSignal) => chartAPI.cumulativeReturn(portfolioId!, cumParams.days, cumParams.start, cumParams.end, signal), [portfolioId, cumParams])
+  const curve = useAsyncResource<CumulativeReturnItem[]>(portfolioId ? `${portfolioId}:${JSON.stringify(cumParams)}` : null, loadCurve)
+  const cumulative = curve.data ?? []
+  const snapshots = summary.data?.snapshots ?? []
+  const allocation = summary.data?.allocation ?? []
+  const cashByCurrency = summary.data?.cashByCurrency ?? []
+  const totals = summary.data ?? { totalMarketValue: 0, totalInvested: 0, totalPnl: 0, realizedPnl: 0, cumulativePnl: 0, totalReturnPct: 0, cumulativeReturnPct: 0, todayPnl: 0, todayPnlPct: 0, cashBalance: 0 }
+  const reloadSummary = summary.reload
+  const reloadCurve = curve.reload
+  const loadDashboard = useCallback(() => { reloadSummary(); reloadCurve() }, [reloadSummary, reloadCurve])
 
   useEffect(() => {
     if (!portfolioId) return
@@ -108,7 +80,6 @@ function DashboardContent() {
     }).catch(() => {})
   }, [portfolioId, setPortfolioName])
 
-  useEffect(() => { loadDashboard() }, [loadDashboard])
 
   const [lastRefresh, markRefreshed] = useTimedRefresh(loadDashboard, String(portfolioId))
 
@@ -118,14 +89,7 @@ function DashboardContent() {
   const animHoldingPnl    = useCountUp(totals.totalPnl)
   const animCumulativePnl = useCountUp(totals.cumulativePnl)
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 h-96">
-        <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-        <span className="text-sm text-slate-400">{t.common.loading}</span>
-      </div>
-    )
-  }
+
 
   const cumUp = cumulative.length > 1 ? Number(cumulative[cumulative.length - 1].value) >= Number(cumulative[0].value) : totals.todayPnl >= 0
 
@@ -151,7 +115,7 @@ function DashboardContent() {
         </div>
       </div>
 
-      {snapshots.length === 0 ? (
+      {summary.data && snapshots.length === 0 ? (
         <Card>
           <CardContent className="py-16 text-center">
             <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-4">
@@ -170,6 +134,7 @@ function DashboardContent() {
       ) : (<>
 
       {/* Summary cards */}
+      {!summary.data ? (<AsyncState loading={summary.loading} error={summary.error} retry={summary.reload} />) : (
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardContent className="pt-6">
@@ -261,6 +226,7 @@ function DashboardContent() {
         </Card>
       </div>
 
+      )}
       {/* Total asset curve */}
       <Card>
         <CardHeader className="flex-row items-baseline justify-between flex-wrap gap-y-2">
@@ -308,6 +274,7 @@ function DashboardContent() {
           )})()}
         </CardHeader>
         <CardContent>
+          <AsyncState loading={!curve.data && curve.loading} error={curve.error} retry={curve.reload} />
           <ResponsiveContainer width="100%" height={240}>
             <AreaChart data={cumulative}>
               <defs>
@@ -333,6 +300,7 @@ function DashboardContent() {
         </CardContent>
       </Card>
 
+      {summary.data && (<>
       {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card>
@@ -384,7 +352,7 @@ function DashboardContent() {
             </div>
           </CardHeader>
           <CardContent>
-            {snapshots.length === 0 ? (
+            {summary.data && snapshots.length === 0 ? (
               <div className="h-[280px] flex items-center justify-center text-slate-400 text-sm">{t.pnl.noData}</div>
             ) : (
               <div className="space-y-0.5 h-[280px] overflow-auto">
@@ -549,6 +517,7 @@ function DashboardContent() {
           </CardContent>
         </Card>
       )}
+      </>)}
       </>)}
       <ClosedPositions open={showClosed} onClose={() => setShowClosed(false)} />
     </div>

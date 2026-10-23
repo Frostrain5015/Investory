@@ -12,7 +12,7 @@ public class StockDataInitializer implements CommandLineRunner {
 
     private static final Logger log = Logger.getLogger(StockDataInitializer.class.getName());
 
-    @Autowired private EastMoneyCrawler crawler;
+    @Autowired private StockCatalogSeeder catalog;
     @Autowired private StockDao stockDao;
 
     @Override
@@ -22,7 +22,7 @@ public class StockDataInitializer implements CommandLineRunner {
             return;
         }
         log.info("Seeding stocks table...");
-        int count = crawler.fetchAllStocks();
+        int count = catalog.fetchAllStocks();
         log.info("Stock seed complete: " + count + " stocks inserted");
     }
 }

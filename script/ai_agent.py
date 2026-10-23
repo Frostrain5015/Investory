@@ -820,7 +820,7 @@ def tool_get_stock_price_history(symbol: str, days: int = 60) -> dict:
         result = history(db_sym, today - timedelta(days=min(3650, limit * 2 + 30)), today, "none")
         points = result["points"][-limit:]
         return {**result, "symbol": symbol, "points": points, "count": len(points),
-                "truncated": len(result["points"]) > limit, "volume_unit": "shares"}
+                "truncated": len(result["points"]) > limit, "volume_unit": result.get("volumeBasis", "shares")}
     except HistoryError as error:
         return {"error": str(error)}
 

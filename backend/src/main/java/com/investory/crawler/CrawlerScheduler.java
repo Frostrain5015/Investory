@@ -14,13 +14,10 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.Duration;
-import com.investory.util.ProcessRunner;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.InetSocketAddress;
 import java.util.List;
-import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import com.investory.dao.PortfolioDao;
@@ -34,7 +31,7 @@ import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.jdbc.support.KeyHolder;
 
 /**
- * Schedules daily close-price syncs via external Python scripts.
+ * Business maintenance: analysis, portfolio snapshots, news and FX refreshes.
  * Results are saved to the crawl_history table for the admin dashboard.
  */
 @Component
@@ -51,16 +48,14 @@ public class CrawlerScheduler {
         "写入\\s+(\\d+)\\s+行.*?(\\d+)\\s+只");
 
     private final JdbcTemplate jdbc;
-    private final CrawlSessionManager sessionManager;
     private final java.net.Proxy socksProxy;
     @org.springframework.beans.factory.annotation.Autowired
     private PortfolioValueCalculator valueCalculator;
     @org.springframework.beans.factory.annotation.Autowired
     private PortfolioDao portfolioDao;
 
-    public CrawlerScheduler(JdbcTemplate jdbc, @org.springframework.beans.factory.annotation.Autowired(required = false) CrawlSessionManager sessionManager) {
+    public CrawlerScheduler(JdbcTemplate jdbc) {
         this.jdbc = jdbc;
-        this.sessionManager = sessionManager;
         this.socksProxy = buildSocksProxy();
     }
 
@@ -88,39 +83,6 @@ public class CrawlerScheduler {
     @Value("${python.executable:python3}")
     private String pythonExecutable;
 
-    @Value("${crawler.timeout-minutes:180}")
-    private long crawlTimeoutMinutes = 180;
-
-    // ── A-shares: 15:30 Mon-Fri (BaoStock) ──────────────────────────
-
-    @Scheduled(cron = "0 30 15 * * MON-FRI", zone = "Asia/Shanghai")
-    public void syncAShares() {
-        if (isWeekend()) return;
-        runScript("fetch_stocks.py", "a", "A股");
-    }
-
-    // ── HK: 16:30 Mon-Fri (Yahoo Finance) ───────────────────────────
-
-    @Scheduled(cron = "0 30 16 * * MON-FRI", zone = "Asia/Shanghai")
-    public void syncHKStocks() {
-        if (isWeekend()) return;
-        runScript("fetch_stocks.py", "hk", "港股");
-    }
-
-    // ── US: 09:00 Tue-Sat (Yahoo Finance) ───────────────────────────
-
-    @Scheduled(cron = "0 0 9 * * TUE-SAT", zone = "Asia/Shanghai")
-    public void syncUSStocks() {
-        runScript("fetch_stocks.py", "us", "美股");
-    }
-
-    // ── Indices: 10:00 daily (Yahoo + Sina) ──────────────────────────
-
-    @Scheduled(cron = "0 0 10 * * *", zone = "Asia/Shanghai")
-    public void syncIndices() {
-        runScript("fetch_stocks.py", "idx", "指数");
-    }
-
     // ── Quant Analysis ───────────────────────────────────────────────────
 
     // 每日 02:00（上海时间）刷新持仓股票的分位数/Beta/波动率缓存
@@ -133,16 +95,6 @@ public class CrawlerScheduler {
     @Scheduled(cron = "0 0 3 * * SUN", zone = "Asia/Shanghai")
     public void refreshQuantMetricsWeekly() {
         runQuantScript("metrics");
-    }
-
-    // ── 19:00 二次抓取 — BaoStock/Yahoo 收盘数据通常已就绪 ──────────
-
-    @Scheduled(cron = "0 0 19 * * MON-FRI", zone = "Asia/Shanghai")
-    public void eveningRefetch() {
-        if (isWeekend()) return;
-        log.info("晚间二次抓取 A股 + 港股");
-        runScript("fetch_stocks.py", "a", "A股(二次)");
-        runScript("fetch_stocks.py", "hk", "港股(二次)");
     }
 
     // ── 每日收盘后回填所有活跃组合的净值 ─────────────────────────────────
@@ -339,105 +291,4 @@ public class CrawlerScheduler {
         return day == DayOfWeek.SATURDAY || day == DayOfWeek.SUNDAY;
     }
 
-    @Value("${investory.history.legacy-writes-enabled:false}")
-    private boolean legacyHistoryWritesEnabled;
-
-    private void runScript(String filename, String marketCode, String label) {
-        if ("fetch_stocks.py".equals(filename) && !legacyHistoryWritesEnabled) return;
-        File script = new File(SCRIPT_DIR, filename);
-        if (!script.exists()) {
-            script = new File("../script", filename);
-        }
-        if (!script.exists()) {
-            log.warning(label + " script not found at any path (tried: "
-                + new File(SCRIPT_DIR, filename).getAbsolutePath() + ", "
-                + new File("../script", filename).getAbsolutePath() + ")");
-            return;
-        }
-
-        log.info("Starting " + label + " sync: " + filename);
-        LocalDateTime startedAt = LocalDateTime.now();
-        long historyId = insertCrawlHistory(marketCode, startedAt);
-
-        // Register with the shared session manager so admin UI can reconnect
-        String startDate = java.time.LocalDate.now().minusDays(3).toString();
-        String endDate = java.time.LocalDate.now().toString();
-        sessionManager.startSession(marketCode, label, startDate, endDate);
-        sessionManager.emitStatus(
-            String.format("启动 %s 定时抓取 (%s ~ %s)...", label, startDate, endDate), marketCode);
-
-        StringBuffer logTail = new StringBuffer();
-        CrawlRunSummary summary = new CrawlRunSummary();
-        String status = "error";
-
-        // Progress regex — same as AdminController
-        java.util.regex.Pattern progressRe = java.util.regex.Pattern.compile(
-            "\\[(\\d+)/(\\d+)\\s+(\\d+(?:\\.\\d+)?)%\\]\\s+(.+)");
-
-        try {
-            java.util.List<String> cmd = new java.util.ArrayList<>();
-            cmd.add(pythonExecutable);
-            cmd.add(script.getAbsolutePath());
-            cmd.add("-m");
-            cmd.add(marketCode);
-            cmd.add("--days");
-            cmd.add("3"); // daily cron fetches last 3 days
-            if ("a".equals(marketCode)) cmd.add("--require-latest");
-
-            ProcessBuilder pb = new ProcessBuilder(cmd);
-            pb.directory(script.getParentFile());
-            pb.redirectErrorStream(true);
-
-            if (legacyHistoryWritesEnabled) pb.environment().put("INVESTORY_LEGACY_HISTORY_WRITES", "true");
-            int exitCode = ProcessRunner.run(pb, Duration.ofMinutes(crawlTimeoutMinutes), line -> {
-                logTail.append(line).append("\n");
-                if (logTail.length() > 12000) logTail.delete(0, logTail.length() - 6000);
-                // Report progress via shared session
-                java.util.regex.Matcher pm = progressRe.matcher(line);
-                if (pm.find()) {
-                    java.util.Map<String, Object> prog = new java.util.LinkedHashMap<>();
-                    prog.put("current", Integer.parseInt(pm.group(1)));
-                    prog.put("total",   Integer.parseInt(pm.group(2)));
-                    prog.put("pct",     Double.parseDouble(pm.group(3)));
-                    prog.put("name",    pm.group(4).trim());
-                    sessionManager.updateProgress(prog);
-                } else if (!line.contains("===") && !line.contains("完成")) {
-                    sessionManager.addLog(line.trim());
-                }
-                summary.accept(line);
-            });
-            status = summary.status(exitCode);
-            if ("error".equals(status)) sessionManager.emitError(label + " 抓取失败，请查看任务日志");
-            log.info(String.format("%s sync completed, exit=%d, rows=%d, failed=%d",
-                label, exitCode, summary.rowsWritten(), summary.stocksFailed()));
-        } catch (Exception e) {
-            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-            logTail.append("Error: ").append(e.getMessage());
-            log.warning(label + " sync error: " + e.getMessage());
-            sessionManager.emitError(e.getMessage());
-        } finally {
-            // Emit done/error to SSE subscribers
-            if ("ok".equals(status)) {
-                sessionManager.emitDone(marketCode, label + " 定时抓取完成");
-            } else if ("pending".equals(status)) {
-                sessionManager.emitDone(marketCode, label + " 信源尚未发布目标日数据，留待晚间补抓");
-            } else if ("no_change".equals(status)) {
-                sessionManager.emitDone(marketCode, label + " 数据无变更");
-            } else if (!sessionManager.isActive()) {
-                // Already cleared by error handler
-            }
-            sessionManager.clearSession();
-
-            // Always record the result — even if the JVM is shutting down mid-run
-            String tail = logTail.toString();
-            if (tail.length() > 6000) tail = tail.substring(tail.length() - 6000);
-            try {
-                jdbc.update(
-                    "UPDATE crawl_history SET ended_at=?, rows_written=?, stocks_failed=?, status=?, log_tail=? WHERE id=?",
-                    LocalDateTime.now(), summary.rowsWritten(), summary.stocksFailed(), status, tail, historyId);
-            } catch (Exception ex) {
-                log.warning(label + " failed to update crawl_history: " + ex.getMessage());
-            }
-        }
-    }
 }

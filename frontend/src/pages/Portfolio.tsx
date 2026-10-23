@@ -1,4 +1,6 @@
-import { useEffect, useState } from 'react'
+import AsyncState from '@/components/AsyncState'
+import { useAsyncResource } from '@/hooks/use-async-resource'
+import { useState, useCallback } from 'react'
 import { useAuth } from '@/hooks/use-auth'
 import { useConfirm } from '@/hooks/use-confirm'
 import { useT } from '@/i18n/I18nContext'
@@ -12,19 +14,19 @@ export default function Portfolio() {
   const confirm = useConfirm()
   const { portfolioId, setPortfolioId, setPortfolioName } = useAuth()
   const { t } = useT()
-  const [portfolios, setPortfolios] = useState<Portfolio[]>([])
   const [newName, setNewName] = useState('')
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
-  const [loading, setLoading] = useState(true)
 
-  function load() {
-    fetch(`${BASE}/api/portfolios`, { credentials: 'include' })
-      .then(r => r.json()).then(setPortfolios)
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => { load() }, [])
+  const loader = useCallback(async (signal: AbortSignal): Promise<Portfolio[]> => {
+    const response = await fetch(`${BASE}/api/portfolios`, { credentials: 'include', signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const value: unknown = await response.json()
+    return value as Portfolio[]
+  }, [])
+  const resource = useAsyncResource('portfolios', loader)
+  const portfolios = resource.data ?? []
+  const load = resource.reload
 
   async function handleCreate() {
     if (!newName.trim()) return
@@ -65,14 +67,7 @@ export default function Portfolio() {
     load()
   }
 
-  if (loading) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-3 h-96">
-        <div className="w-8 h-8 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
-        <span className="text-sm text-slate-400">{t.portfolio.loading}</span>
-      </div>
-    )
-  }
+
 
   return (
     <div className="p-6 max-w-lg mx-auto space-y-6">
@@ -80,6 +75,7 @@ export default function Portfolio() {
 
       <Card>
         <CardContent className="pt-6">
+          <AsyncState loading={!resource.data && resource.loading} error={resource.error} retry={load} />
           <div className="space-y-2">
             {portfolios.map(p => (
               <div key={p.id}
@@ -112,7 +108,7 @@ export default function Portfolio() {
                 </div>
               </div>
             ))}
-            {portfolios.length === 0 && (
+            {resource.data && portfolios.length === 0 && (
               <p className="text-center text-slate-400 text-sm py-4">{t.portfolio.noPortfolio}</p>
             )}
           </div>

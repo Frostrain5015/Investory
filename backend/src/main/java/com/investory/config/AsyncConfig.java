@@ -87,14 +87,6 @@ public class AsyncConfig {
         });
     }
 
-    /** 管理后台执行池（AdminController） */
-    @Bean("adminExecutor")
-    public ExecutorService adminExecutor() {
-        return Executors.newFixedThreadPool(4, r -> {
-            Thread t = new Thread(r, "admin-worker"); t.setDaemon(true); return t;
-        });
-    }
-
     /** 量化分析执行池（QuantApiController） */
     @Bean("quantExecutor")
     public ExecutorService quantExecutor() {

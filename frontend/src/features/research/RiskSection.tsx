@@ -81,10 +81,10 @@ function RiskSectionContent() {
     [],
   )
   const resource = useAsyncResource(
-    portfolioId && (!preloaded || revision > 0) ? `${portfolioId}:${revision}` : null,
+    portfolioId && (!preloaded || revision > 0) ? String(portfolioId) : null,
     loadAnalysis,
   )
-  const data = resource.error ? { _error: resource.error.message } : (resource.data ?? preloaded)
+  const data = resource.data ?? preloaded ?? (resource.error ? { _error: resource.error.message } : null)
   const loading = resource.loading
 
   useEffect(() => {
@@ -107,6 +107,7 @@ function RiskSectionContent() {
           onClick={() => {
             setProgress('加载持仓...')
             setRevision((value) => value + 1)
+            resource.reload()
           }}
           disabled={loading}
           className="inline-flex items-center gap-1.5 h-9 px-4 rounded-xl bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors disabled:opacity-60"
@@ -116,7 +117,7 @@ function RiskSectionContent() {
         </button>
       </div>
 
-      {loading && (
+      {loading && !data && (
         <div className="flex flex-col items-center justify-center h-48 gap-2">
           <div className="w-6 h-6 border-2 border-slate-300 border-t-slate-900 rounded-full animate-spin" />
           <span className="text-xs text-slate-500">正在调用多因子引擎分析持仓...</span>
@@ -135,7 +136,7 @@ function RiskSectionContent() {
         </Card>
       )}
 
-      {!loading && data && !data._error && (
+      {data && !data._error && (
         <>
           {/* Summary card */}
           <Card>

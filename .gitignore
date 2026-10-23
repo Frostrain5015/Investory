@@ -40,3 +40,7 @@ frontend/.env.electron
 *.rar
 
 investory-servlet-core.zip
+
+# Persistent index archives and one-off retirement backups are runtime data.
+/data/
+/price-retirement-*/

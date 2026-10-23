@@ -21,6 +21,9 @@ export interface PreloadMarketIndex extends PreloadMarketQuote {
 }
 export type PreloadMarketIndicator = PreloadMarketQuote
 export interface PreloadMarketSnapshot {
+  refreshing?: boolean
+  completedCount?: number
+  generation?: number
   indices: PreloadMarketIndex[]
   indicators: PreloadMarketIndicator[]
   updatedAt: string
@@ -42,15 +45,11 @@ export interface PreloadMarketNewsItem {
 export interface PreloadAdminMarketStat {
   market: string
   stock_count: number
-  price_rows: number | null
-  latest_date: string
-  earliest_date: string
 }
 
 export interface PreloadAdminDbStatus {
-  historyMode?: string
   markets: PreloadAdminMarketStat[]
-  totals: { stock_count: number; price_rows: number | null }
+  totals: { stock_count: number }
   tables: { total_mb: number }[]
 }
 
@@ -83,8 +82,8 @@ let adminStatusPromise: Promise<PreloadAdminDbStatus> | null = null
 let adminUsersPromise: Promise<PreloadAdminUser[]> | null = null
 let adminCrawlHistoryPromise: Promise<PreloadAdminCrawlHistory[]> | null = null
 
-async function jsonRequest<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { credentials: 'include' })
+async function jsonRequest<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { credentials: 'include', signal })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return (await res.json()) as T
 }
@@ -106,10 +105,11 @@ function cachePromise<T>(
   return current
 }
 
-export function getPreloadedMarketSnapshot(options: { force?: boolean } = {}) {
+export function getPreloadedMarketSnapshot(options: { force?: boolean; signal?: AbortSignal } = {}) {
+  if (options.signal) return jsonRequest<PreloadMarketSnapshot>('/api/market/indices/progress', options.signal)
   if (marketSnapshotPromise && (marketSnapshotPending || (!options.force && Date.now() - marketSnapshotLoadedAt < 20_000))) return marketSnapshotPromise
   marketSnapshotPending = true
-  const next = jsonRequest<PreloadMarketSnapshot>('/api/market/indices').then(data => {
+  const next = jsonRequest<PreloadMarketSnapshot>('/api/market/indices/progress').then(data => {
     marketSnapshotLoadedAt = Date.now()
     return data
   }).catch((error: unknown) => {
