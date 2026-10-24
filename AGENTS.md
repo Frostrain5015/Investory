@@ -99,6 +99,7 @@ Credentials are in memory file `server_credentials.md`. Never restart the servic
 
 ## Key conventions
 
+- 产品版本号只修改 `backend/pom.xml` 中 Investory 的项目版本。前端显示及部署直接读取此处；`node tools/version.mjs` 自动同步前端/桌面端 package 与 lock 文件，开发、构建、安装和发布入口均调用同步。提交前运行 `node tools/version.mjs --check`；不得从提交标题推断版本，也不要手改派生版本号。第三方依赖及历史文档中的版本号不参与同步。
 - No web.xml — Spring Boot auto-configuration
 - DAOs extend `BaseDao` which provides `JdbcTemplate` via `@Autowired`
 - Frontend uses `useSettings()` for currency formatting, color scheme, and unit conversion

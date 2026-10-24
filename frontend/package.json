@@ -1,7 +1,7 @@
 {
   "name": "frontend",
   "private": true,
-  "version": "6.3.12",
+  "version": "6.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,8 +11,13 @@
     "typecheck": "tsc -b",
     "check:imports": "node scripts/check-imports.mjs",
     "test:chat": "node --test scripts/test-chat-stream.mjs",
-    "check": "npm run typecheck && npm run lint && npm run check:imports",
-    "preview": "vite preview"
+    "check": "npm run check:version && npm run typecheck && npm run lint && npm run check:imports",
+    "preview": "vite preview",
+    "predev": "node ../tools/version.mjs",
+    "prebuild": "node ../tools/version.mjs",
+    "prebuild:electron": "node ../tools/version.mjs",
+    "preinstall": "node ../tools/version.mjs",
+    "check:version": "node ../tools/version.mjs --check"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.0",

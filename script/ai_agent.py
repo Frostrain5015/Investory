@@ -1305,45 +1305,24 @@ def _format_rule(rule: dict) -> str:
 # ── Fundamentals tool ────────────────────────────────────────────────────
 
 def tool_get_fundamentals(symbol: str) -> dict:
-    """获取单只股票的基本面数据：PE、PB、ROE、EPS、市值、行业。"""
-    conn = get_db_conn()
-    db_sym = resolve_symbol(conn, symbol)
-    if not db_sym:
-        conn.close()
-        return {"error": "股票未找到", "symbol": symbol}
-    cur = conn.cursor()
-    cur.execute("SELECT id FROM stocks WHERE symbol=%s", (db_sym,))
-    row = cur.fetchone()
-    if not row:
-        cur.close(); conn.close()
-        return {"error": "股票未找到", "symbol": symbol}
-
-    stock_id = row[0]
-    cur.execute("""
-        SELECT pe_ttm, pb, roe, eps_ttm, rev_growth, earnings_growth,
-               debt_ratio, market_cap, sector, industry, div_yield, updated_at
-        FROM stock_fundamentals WHERE stock_id=%s
-    """, (stock_id,))
-    r = cur.fetchone()
-    cur.close(); conn.close()
-
-    if not r:
-        return {"symbol": symbol, "note": "暂无基本面数据"}
-
-    return {
-        "symbol": symbol,
-        "pe_ttm": float(r[0]) if r[0] is not None else None,
-        "pb": float(r[1]) if r[1] is not None else None,
-        "roe": float(r[2]) if r[2] is not None else None,
-        "eps_ttm": float(r[3]) if r[3] is not None else None,
-        "rev_growth": float(r[4]) if r[4] is not None else None,
-        "earnings_growth": float(r[5]) if r[5] is not None else None,
-        "debt_ratio": float(r[6]) if r[6] is not None else None,
-        "market_cap": float(r[7]) if r[7] is not None else None,
-        "sector": r[8], "industry": r[9],
-        "div_yield": float(r[10]) if r[10] is not None else None,
-        "updated_at": str(r[11]) if r[11] else None,
-    }
+    """通过同花顺读取估值与最新已披露财报；数据库仅用于名称解析。"""
+    from hithink_finance import get_client, normalize_symbol, HithinkError
+    try:
+        try:
+            resolved = normalize_symbol(symbol)
+        except HithinkError:
+            conn = get_db_conn()
+            try:
+                resolved = resolve_symbol(conn, symbol)
+            finally:
+                conn.close()
+        if not resolved:
+            return {"error": "股票未找到", "symbol": symbol}
+        if not _quote_uses_hithink(resolved):
+            return {"error": "基本面工具目前仅支持中国内地A股股票", "symbol": symbol}
+        return {**get_client().fundamentals(resolved), "requestedSymbol": symbol}
+    except HithinkError as error:
+        return {"error": str(error), "symbol": symbol}
 
 
 def _jsonable(obj):

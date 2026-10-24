@@ -1,6 +1,6 @@
 {
   "name": "investory-desktop",
-  "version": "6.3.12",
+  "version": "6.4.0",
   "description": "Investory Desktop Client",
   "author": "Investory",
   "main": "main.js",
@@ -8,7 +8,12 @@
     "start": "electron .",
     "build:frontend": "npm --prefix ../frontend run build:electron",
     "pack": "npm run build:frontend && electron-builder --win --dir --publish never",
-    "build:exe": "npm run build:frontend && electron-builder --win --publish never"
+    "build:exe": "npm run build:frontend && electron-builder --win --publish never",
+    "prestart": "node ../tools/version.mjs",
+    "prepack": "node ../tools/version.mjs",
+    "prebuild:exe": "node ../tools/version.mjs",
+    "prebuild:frontend": "node ../tools/version.mjs",
+    "preinstall": "node ../tools/version.mjs"
   },
   "build": {
     "appId": "com.investory.desktop",
@@ -22,11 +27,16 @@
       "www/**"
     ],
     "extraResources": [
-      { "from": "assets", "to": "assets" }
+      {
+        "from": "assets",
+        "to": "assets"
+      }
     ],
     "win": {
       "icon": "assets/icon.ico",
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "signAndEditExecutable": false
     },
     "nsis": {

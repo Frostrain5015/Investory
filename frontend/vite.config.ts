@@ -4,13 +4,18 @@ import tailwindcss from '@tailwindcss/vite'
 import path from 'path'
 import { readFileSync } from 'fs'
 
-const pkg = JSON.parse(readFileSync(path.resolve(__dirname, 'package.json'), 'utf-8')) as { version: string }
+// Read the canonical Maven product version, including direct Vite invocations.
+const appVersion = readFileSync(path.resolve(__dirname, '../backend/pom.xml'), 'utf-8')
+  .match(/<artifactId>investory<\/artifactId>\s*<version>([^<]+)<\/version>/)?.[1]
+if (!appVersion || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(appVersion)) {
+  throw new Error('Invalid Investory version in backend/pom.xml')
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, '')
   return {
     define: {
-      __APP_VERSION__: JSON.stringify(pkg.version),
+      __APP_VERSION__: JSON.stringify(appVersion),
     },
     plugins: [react(), tailwindcss()],
     resolve: {

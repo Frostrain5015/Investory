@@ -12,8 +12,9 @@
     </parent>
 
     <groupId>com.investory</groupId>
+    <!-- Product version: the single source for web, desktop and deployment. -->
     <artifactId>investory</artifactId>
-    <version>6.3.12</version>
+    <version>6.4.0</version>
     <name>Investory</name>
 
     <properties>

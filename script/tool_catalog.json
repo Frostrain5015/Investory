@@ -126,7 +126,7 @@
   },
   {
     "name": "get_fundamentals",
-    "description": "读取指定标的已记录的基本面数据和更新日期。symbol可直接传名称或代码；缺失数据不能推断为零，旧财务记录不能称为实时估值。",
+    "description": "通过同花顺金融API读取A股股票估值快照及最新已披露财报。symbol可传名称或代码；valuation与financials分别为估值和财报，财报累计值不是TTM。百分比字段1表示1%，缺失字段不得补零，limitations必须纳入结论。",
     "category": "query"
   }
 ]

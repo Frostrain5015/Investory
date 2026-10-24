@@ -127,6 +127,14 @@ class Client:
         self._snapshots: dict[str, tuple[float, dict | None]] = {}
 
     def get(self, path: str, params: dict[str, object] | None = None) -> dict:
+        data = self._get_data(path, params)
+        if not isinstance(data.get("item"), list):
+            raise HithinkError("同花顺响应格式无效")
+        if not all(isinstance(row, dict) for row in data["item"]):
+            raise HithinkError("同花顺响应记录无效")
+        return data
+
+    def _get_data(self, path: str, params: dict[str, object] | None = None) -> dict:
         cfg = self.settings
         if not cfg.enabled or not cfg.api_key:
             raise HithinkError("请先配置并启用同花顺金融 API")
@@ -151,10 +159,8 @@ class Client:
                     self._blocked_until = clock.monotonic() + 60
                     raise HithinkError(f"同花顺请求失败（业务码 {payload['code']}）")
                 data = payload.get("data")
-                if not isinstance(data, dict) or not isinstance(data.get("item"), list):
+                if not isinstance(data, dict):
                     raise HithinkError("同花顺响应格式无效")
-                if not all(isinstance(row, dict) for row in data["item"]):
-                    raise HithinkError("同花顺响应记录无效")
                 return data
             except HTTPError as error:
                 error.close()
@@ -249,6 +255,68 @@ class Client:
         return {"source": SOURCE, "scope": "snapshot", "timestamp": data.get("timestamp"),
                 **{name: number(row.get(remote)) for name, remote in
                    (("pe_ttm", "pe_ttm"), ("pb", "pb_mrq"), ("ps_ttm", "ps_ttm"), ("pcf_ttm", "pcf_ttm"))}}
+
+    def financial_indicators(self, symbol: str, report: str) -> dict:
+        symbol = normalize_symbol(symbol)
+        if not re.fullmatch(r"\d{4}-[1-4]", report):
+            raise HithinkError("财报期参数无效")
+        data = self._get_data("/api/a-share/financials/indicators", {"thscode": symbol, "report": report})
+        if data.get("thscode") != symbol or data.get("report") != report or not isinstance(data.get("abilities"), list):
+            raise HithinkError("同花顺财务指标标的或报告期不匹配")
+        values = {}
+        for group in data["abilities"]:
+            if not isinstance(group, dict) or not isinstance(group.get("indicators"), list):
+                raise HithinkError("同花顺财务指标格式无效")
+            for item in group["indicators"]:
+                if not isinstance(item, dict) or not isinstance(item.get("index_id"), str) or item["index_id"] in values:
+                    raise HithinkError("同花顺财务指标格式无效")
+                values[item["index_id"]] = number(item.get("value"))
+        return {"roe": values.get("index_weighted_avg_roe"),
+                "rev_growth": values.get("calculate_operating_income_yoy_growth_ratio",
+                                         values.get("operating_income_yoy_growth_ratio")),
+                "earnings_growth": values.get("net_profit_yoy_growth_ratio"),
+                "parent_earnings_growth": values.get("calculate_parent_holder_net_profit_yoy_growth_ratio"),
+                "debt_ratio": values.get("assets_debt_ratio"),
+                "gross_margin": values.get("sale_gross_margin")}
+
+    def fundamentals(self, symbol: str) -> dict:
+        """Keep current valuation and latest disclosed cumulative financials separate."""
+        symbol = normalize_symbol(symbol)
+        result = {"symbol": symbol, "source": SOURCE}
+        limitations = []
+        try:
+            result["valuation"] = self.valuation(symbol)
+        except HithinkError as error:
+            limitations.append("估值快照：" + str(error))
+        try:
+            data = self.get("/api/a-share/financials/income-statements",
+                            {"thscode": symbol, "period": "quarterly", "limit": 1})
+            rows = [r for r in data["item"] if r.get("thscode") == symbol]
+            if len(rows) != 1:
+                raise HithinkError("同花顺未返回唯一的最新财报")
+            row = rows[0]
+            period_end = timestamp_day(row.get("period_end_ms"))
+            disclosed = timestamp_day(row.get("report_date_ms"))
+            end_day = date.fromisoformat(period_end)
+            if (end_day.month, end_day.day) not in {(3, 31), (6, 30), (9, 30), (12, 31)} or not period_end <= disclosed <= datetime.now(SHANGHAI).date().isoformat():
+                raise HithinkError("同花顺财报日期无效")
+            report = f"{end_day.year}-{end_day.month // 3}"
+            financials = {"report": report, "period_end": period_end, "disclosed_at": disclosed,
+                          "scope": "年初至报告期末累计，非TTM；百分比字段的1表示1%",
+                          **{key: number(row.get(key)) for key in
+                             ("operating_income", "net_profit", "parent_holder_net_profit", "basic_eps")}}
+            result["financials"] = financials
+            try:
+                financials.update(self.financial_indicators(symbol, report))
+            except HithinkError as error:
+                limitations.append("该报告期财务指标：" + str(error))
+        except HithinkError as error:
+            limitations.append("最新已披露财报：" + str(error))
+        if limitations:
+            result["limitations"] = limitations
+        if "valuation" not in result and "financials" not in result:
+            result["error"] = "同花顺暂未提供该股票的基本面数据"
+        return result
 
     def calendar(self) -> list[str]:
         data = self.get("/api/a-share/calendar/trading-days")

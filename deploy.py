@@ -8,10 +8,8 @@ Usage:
     python deploy.py --release     # also publish a desktop client GitHub release
     python deploy.py --release-only  # ONLY publish the desktop release (no cloud)
 
-Release version is taken from the latest commit note if it contains one
-(e.g. "V6.2.0 ..."), otherwise the current version is reused. Publishing a
-release with a higher version is what makes installed clients detect the
-auto-update on next launch.
+The product version is read from backend/pom.xml. Node manifests are synchronized
+before building or deploying; commit messages never override the release version.
 
 Refuses to restart the service if a market-data crawl is running.
 """
@@ -19,6 +17,8 @@ Refuses to restart the service if a market-data crawl is running.
 import paramiko, os, sys, subprocess, time, shlex, re, json
 from pathlib import Path
 import shutil
+import xml.etree.ElementTree as ET
+import zipfile
 from tools.cloud_deploy import active_jobs, deploy_cloud
 
 HOST      = "116.62.179.231"
@@ -26,10 +26,7 @@ USER      = "root"
 # ── Desktop release (GitHub) ─────────────────────────────────────────
 REPO_ROOT    = os.path.dirname(os.path.abspath(__file__))
 DESKTOP_DIR  = os.path.join(REPO_ROOT, "desktop")
-DESKTOP_PKG  = os.path.join(DESKTOP_DIR, "package.json")
-FRONTEND_PKG = os.path.join(REPO_ROOT, "frontend", "package.json")
 BACKEND_POM  = os.path.join(REPO_ROOT, "backend", "pom.xml")
-VERSION_RE   = re.compile(r"[vV]?(\d+\.\d+\.\d+)")
 
 
 def ssh_connect():
@@ -95,61 +92,27 @@ def build_jar():
 
 # ── Desktop GitHub release ───────────────────────────────────────────
 
-def latest_commit_subject():
-    """Subject line of the most recent git commit, or '' on failure."""
-    r = subprocess.run(["git", "log", "-1", "--pretty=%s"],
-                       cwd=REPO_ROOT, capture_output=True, text=True, encoding="utf-8")
-    return r.stdout.strip() if r.returncode == 0 else ""
-
-
 def read_current_version():
-    with open(DESKTOP_PKG, encoding="utf-8") as f:
-        return json.load(f)["version"]
+    """The Maven product version is the only manually maintained version."""
+    element = ET.parse(BACKEND_POM).getroot().find("{http://maven.apache.org/POM/4.0.0}version")
+    version = element.text.strip() if element is not None and element.text else ""
+    if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version):
+        raise ValueError("Invalid Investory version in backend/pom.xml")
+    return version
 
 
-def resolve_release_version():
-    """Version from the latest commit note if it contains one (e.g.
-    'V6.2.0 ...'); otherwise the current desktop/package.json version."""
-    subject = latest_commit_subject()
-    m = VERSION_RE.search(subject)
-    if m:
-        version = m.group(1)
-        print(f"Release version from commit note: {version}  ({subject!r})")
-        return version
-    current = read_current_version()
-    print(f"No version in commit note; reusing current version: {current}")
-    return current
+def sync_versions():
+    subprocess.run(["node", str(Path(REPO_ROOT) / "tools/version.mjs")], cwd=REPO_ROOT, check=True)
+    return read_current_version()
 
 
-def _replace_once(path, pattern, repl, label):
-    with open(path, encoding="utf-8") as f:
-        text = f.read()
-    new_text, n = re.subn(pattern, repl, text, count=1)
-    if n == 0:
-        raise RuntimeError(f"Could not find version field in {label} ({path})")
-    if new_text != text:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(new_text)
-        print(f"  {label}: version set")
-
-
-def set_version(version):
-    """Unify the version across desktop, frontend, and backend manifests so
-    the published client, web bundle, and JAR all report the same number."""
-    print(f"Unifying version to {version} ...")
-    _replace_once(DESKTOP_PKG, r'"version":\s*"[^"]+"',
-                  f'"version": "{version}"', "desktop/package.json")
-    _replace_once(FRONTEND_PKG, r'"version":\s*"[^"]+"',
-                  f'"version": "{version}"', "frontend/package.json")
-    _replace_once(BACKEND_POM,
-                  r'(<artifactId>investory</artifactId>\s*<version>)[^<]+(</version>)',
-                  rf'\g<1>{version}\g<2>', "backend/pom.xml")
-    for directory in (DESKTOP_DIR, os.path.dirname(FRONTEND_PKG)):
-        lock = Path(directory) / "package-lock.json"
-        document = json.loads(lock.read_text(encoding="utf-8"))
-        document["version"] = version
-        document["packages"][""]["version"] = version
-        lock.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+def verify_jar_version(version):
+    """Refuse --no-build when the existing artifact belongs to another release."""
+    with zipfile.ZipFile(Path(REPO_ROOT) / "backend/target/investory.jar") as jar:
+        properties = jar.read("META-INF/maven/com.investory/investory/pom.properties").decode("utf-8")
+    values = dict(line.split("=", 1) for line in properties.splitlines() if "=" in line and not line.startswith("#"))
+    if values.get("version") != version:
+        raise RuntimeError("JAR version differs from backend/pom.xml; rebuild before deploying")
 
 
 def github_token():
@@ -222,11 +185,7 @@ def main():
     do_release = ("--release" in sys.argv) or ("--release-only" in sys.argv)
     release_only = "--release-only" in sys.argv
 
-    # ── Resolve & unify version when releasing ──────────────────────────
-    release_version = None
-    if do_release:
-        release_version = resolve_release_version()
-        set_version(release_version)
+    release_version = sync_versions()
 
     # ── Release-only: publish desktop client and stop (no cloud) ────────
     if release_only:
@@ -245,9 +204,10 @@ def main():
     if not no_build:
         build_jar()
 
+    verify_jar_version(release_version)
     client = ssh_connect()
     try:
-        deploy_cloud(client, Path(REPO_ROOT), read_current_version(),
+        deploy_cloud(client, Path(REPO_ROOT), release_version,
                      os.environ.get("DEPLOY_HEALTH_URL", "http://127.0.0.1:8443/api/session"),
                      allow_unpushed="--allow-unpushed" in sys.argv)
     finally:

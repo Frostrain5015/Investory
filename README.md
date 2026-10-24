@@ -8,7 +8,7 @@
 
 Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-currency P&L.
 
-`v6.3.3` · Java 17 · Spring Boot 3.3.5 · React 19 · Electron 33
+[Version](backend/pom.xml) · Java 17 · Spring Boot 3.3.5 · React 19 · Electron 33
 
 🌐 **Live demo: [investory.frostrain.tech](https://investory.frostrain.tech)**
 

@@ -8,7 +8,7 @@
 
 支持 A 股（上证 / 深证）、港股、美股，多币种盈亏跟踪。
 
-`v6.3.3` · Java 17 · Spring Boot 3.3.5 · React 19 · Electron 33
+[Version](backend/pom.xml) · Java 17 · Spring Boot 3.3.5 · React 19 · Electron 33
 
 🌐 **在线体验：[investory.frostrain.tech](https://investory.frostrain.tech)**
 
