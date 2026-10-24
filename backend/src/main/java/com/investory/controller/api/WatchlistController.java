@@ -55,6 +55,7 @@ public class WatchlistController {
             row.put("priceLive", quote != null && quote.live());
             row.put("priceSource", quote != null ? quote.source() : "unavailable");
             row.put("priceTimestamp", quote != null ? quote.quoteTime() : null);
+            row.put("quoteMetrics", quote != null ? quote.metrics() : null);
         }
         return rows;
     }

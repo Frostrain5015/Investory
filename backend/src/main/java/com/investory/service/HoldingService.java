@@ -132,6 +132,7 @@ public class HoldingService {
             if (hasQuote) {
                 snap.setPriceTimestamp(quote.quoteTime() == null ? null : quote.quoteTime().toString());
                 snap.setPriceSource(quote.source());
+                snap.setQuoteMetrics(quote.metrics());
                 snap.setPriceLive(quote.live());
             }
             if (price == null) snap.setPriceSource("cost");

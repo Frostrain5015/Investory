@@ -44,7 +44,8 @@ class RealtimeQuoteServiceTest {
     private HithinkDataClient.Result<HithinkDataClient.Price> batch(List<String> codes) {
         return new HithinkDataClient.Result<>(HithinkDataClient.SOURCE,"test",clock.instant(),"BATCH",clock.instant(),"CNY","none",
             codes.stream().map(code -> new HithinkDataClient.Price(code,new BigDecimal("100"),new BigDecimal("99"),BigDecimal.ONE,
-                new BigDecimal("1.01"),null,null,null,null,null)).toList());
+                new BigDecimal("1.01"),new BigDecimal("98"),new BigDecimal("105"),new BigDecimal("97"),
+                new BigDecimal("1234567"),new BigDecimal("123456700"))).toList());
     }
     @Test void batchesFiftyDeduplicatesAliasesAndSharesColdConcurrentReads() throws Exception {
         var callers=Executors.newFixedThreadPool(4);
@@ -128,6 +129,8 @@ class RealtimeQuoteServiceTest {
         assertEquals(new BigDecimal("10.00"),snapshot.getChangeToday());
         assertEquals(BigDecimal.ONE,snapshot.getNativeChangeToday());
         assertTrue(snapshot.isPriceLive());
+        assertEquals(new BigDecimal("1234567"),snapshot.getQuoteMetrics().volume());
+        assertEquals(new BigDecimal("105"),snapshot.getQuoteMetrics().high());
         when(jdbc.queryForList(anyString(),eq(7L))).thenReturn(List.of(new HashMap<>(Map.of("stock_id",1L))));
         WatchlistController watchlist=new WatchlistController();
         ReflectionTestUtils.setField(watchlist,"jdbc",jdbc); ReflectionTestUtils.setField(watchlist,"stockDao",stocks);
@@ -137,6 +140,8 @@ class RealtimeQuoteServiceTest {
         assertEquals(snapshot.getNativePrice(),row.get("price"));
         assertEquals(BigDecimal.ONE,row.get("changeToday"));
         assertEquals(new BigDecimal("1.01"),row.get("changePctToday"));
+        assertEquals(snapshot.getQuoteMetrics(),row.get("quoteMetrics"));
+        assertEquals(new BigDecimal("123456700"),((Quote.SessionMetrics)row.get("quoteMetrics")).turnover());
         holdingService.getSnapshots(1L,false);
         watchlist.getWatchlist(request,false);
         verify(provider,times(1)).snapshot(anyList());

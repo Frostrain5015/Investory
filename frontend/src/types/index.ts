@@ -17,7 +17,17 @@ export interface Holding {
   totalDividends: number
 }
 
+export interface QuoteMetrics {
+  open: number | null
+  high: number | null
+  low: number | null
+  previousClose: number | null
+  volume: number | null
+  turnover: number | null
+}
+
 export interface HoldingSnapshot {
+  quoteMetrics?: QuoteMetrics | null
   priceLive?: boolean
   nativeChangeToday?: number | null
   priceTimestamp?: string | null

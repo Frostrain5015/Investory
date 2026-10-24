@@ -293,3 +293,15 @@ input:-webkit-autofill:focus {
   from { opacity: 0; transform: translateY(3px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Quiet data motion, shared by initial content, replacements and map updates. */
+:root { --data-duration: 320ms; --data-easing: cubic-bezier(.22, 1, .36, 1); }
+.data-enter { animation: data-enter var(--data-duration) var(--data-easing) both; }
+.market-map svg path {
+  transition: fill var(--data-duration) var(--data-easing), fill-opacity var(--data-duration) var(--data-easing);
+}
+@keyframes data-enter { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .data-enter { animation: none; }
+  .market-map svg path { transition: none; }
+}

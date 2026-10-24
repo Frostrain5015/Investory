@@ -7,7 +7,7 @@ const zh = {
   nav: {
     dashboard: "总览",
     market: "市场",
-    holdings: "持仓",
+    holdings: "自选",
     transactions: "交易",
     pnl: "日历",
     portfolio: "组合",
@@ -121,6 +121,11 @@ const zh = {
   // ── Holdings ──
   holdings: {
     title: "持仓明细",
+    watchlistTitle: "自选",
+    sharesUnit: "股",
+    noWatchlist: "暂无自选股票",
+    open: "今开", high: "最高", low: "最低", previousClose: "昨收",
+    volume: "成交量", turnover: "成交额", amplitude: "振幅",
     stock: "股票",
     shares: "股数",
     avgCost: "均价",
@@ -672,7 +677,7 @@ const en = {
   nav: {
     dashboard: "Home",
     market: "Market",
-    holdings: "Watch",
+    holdings: "Watchlist",
     transactions: "Trade",
     pnl: "Cal",
     portfolio: "Port",
@@ -781,6 +786,11 @@ const en = {
 
   holdings: {
     title: "Holdings",
+    watchlistTitle: "Watchlist",
+    sharesUnit: " shares",
+    noWatchlist: "No watchlist stocks",
+    open: "Open", high: "High", low: "Low", previousClose: "Prev Close",
+    volume: "Volume", turnover: "Turnover", amplitude: "Range %",
     stock: "Stock",
     shares: "Shares",
     avgCost: "Avg Cost",
@@ -1328,7 +1338,7 @@ const hk = {
   nav: {
     dashboard: "總覽",
     market: "市場",
-    holdings: "持倉",
+    holdings: "自選",
     transactions: "交易",
     pnl: "日曆",
     portfolio: "組合",
@@ -1442,6 +1452,11 @@ const hk = {
   // ── Holdings ──
   holdings: {
     title: "持倉明細",
+    watchlistTitle: "自選",
+    sharesUnit: "股",
+    noWatchlist: "暫無自選股票",
+    open: "今開", high: "最高", low: "最低", previousClose: "昨收",
+    volume: "成交量", turnover: "成交額", amplitude: "振幅",
     stock: "股票",
     shares: "股數",
     avgCost: "均價",

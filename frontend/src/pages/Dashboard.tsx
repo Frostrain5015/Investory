@@ -2,17 +2,15 @@ import AsyncState from '@/components/AsyncState'
 import { useAsyncResource } from '@/hooks/use-async-resource'
 import QuoteNumber from '@/components/QuoteNumber'
 import { useEffect, useState, useCallback } from 'react'
-import { useCountUp } from '@/hooks/use-count-up'
 import { useTheme } from '@/hooks/use-theme'
 import { Link } from 'react-router-dom'
 import { useAuth } from '@/hooks/use-auth'
 import { useTimedRefresh, timeAgo } from '@/hooks/use-timed-refresh'
-import { useToast } from '@/hooks/use-toast'
 import { useSettings } from '@/hooks/use-settings'
 import { chartAPI } from '@/services/api'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import type { CumulativeReturnItem } from '@/types'
-import { ArrowLeftRight, Sparkles } from 'lucide-react'
+import { ArrowLeftRight, Sparkles, LoaderCircle } from 'lucide-react'
 import { useChatContext } from '@/hooks/use-chat'
 import {
   PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid,
@@ -24,7 +22,6 @@ import CloudChart from '@/components/CloudChart'
 import QuoteWarning from '@/components/QuoteWarning'
 import ClosedPositions from '@/components/ClosedPositions'
 import { useT } from '@/i18n/I18nContext'
-import { BASE } from '@/services/api'
 
 
 const COLORS = [
@@ -43,7 +40,6 @@ function DashboardContent() {
   const { positiveClass, negativeClass, positiveHex, negativeHex, formatCurrency, convertCurrency } = useSettings()
   const { openChatWith } = useChatContext()
   const { isDark } = useTheme()
-  const toast = useToast()
   const { t, lang } = useT()
   type Period = '1M' | '6M' | '1Y' | 'all' | 'custom'
   interface ChartParams { days: number; start?: string; end?: string }
@@ -57,7 +53,6 @@ function DashboardContent() {
   const [pnlCardMode, setPnlCardMode] = useState<'today' | 'holding'>('today')
   const [showClosed, setShowClosed] = useState(false)
   const [cashCardMode, setCashCardMode] = useState<'mv' | 'cash'>('mv')
-  const [refreshing, setRefreshing] = useState(false)
 
   const loadSummary = useCallback((signal: AbortSignal) => getDashboard(signal), [])
   const summary = useAsyncResource(portfolioId ? String(portfolioId) : null, loadSummary)
@@ -81,13 +76,8 @@ function DashboardContent() {
   }, [portfolioId, setPortfolioName])
 
 
-  const [lastRefresh, markRefreshed] = useTimedRefresh(loadDashboard, String(portfolioId))
+  const [lastRefresh] = useTimedRefresh(loadDashboard, String(portfolioId))
 
-  const animTotalAsset    = useCountUp(totals.totalMarketValue + totals.cashBalance)
-  const animMarketValue   = useCountUp(totals.totalMarketValue)
-  const animTodayPnl      = useCountUp(totals.todayPnl)
-  const animHoldingPnl    = useCountUp(totals.totalPnl)
-  const animCumulativePnl = useCountUp(totals.cumulativePnl)
 
 
 
@@ -100,13 +90,6 @@ function DashboardContent() {
         <div className="flex items-center gap-2 shrink-0">
           {lastRefresh && (
             <span className="hidden sm:inline text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>
-          )}
-          {snapshots.length > 0 && (
-            <button disabled={refreshing}
-              onClick={async () => { setRefreshing(true); try { await fetch(`${BASE}/api/portfolio/refresh`, { method: 'POST', credentials: 'include' }); toast(t.dashboard.toastRefreshSuccess, true); loadDashboard() } catch { toast(t.dashboard.toastRefreshFail, false) } setRefreshing(false); markRefreshed() }}
-              className="h-8 px-3 rounded-lg border border-slate-200 text-xs text-slate-500 hover:bg-slate-50 transition-colors disabled:opacity-50">
-              {refreshing ? t.common.loading : t.common.refresh}
-            </button>
           )}
           <Link to="/transactions/add"
             className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-slate-900 text-white text-xs font-medium hover:bg-slate-800 transition-colors">
@@ -135,12 +118,12 @@ function DashboardContent() {
 
       {/* Summary cards */}
       {!summary.data ? (<AsyncState loading={summary.loading} error={summary.error} retry={summary.reload} />) : (
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 data-enter">
         <Card>
           <CardContent className="pt-6">
             <p className="text-xs text-slate-500 font-medium">{t.dashboard.totalAsset}</p>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
-              {formatCurrency(animTotalAsset)}
+              <QuoteNumber value={totals.totalMarketValue + totals.cashBalance} format={formatCurrency} />
             </p>
           </CardContent>
         </Card>
@@ -152,11 +135,11 @@ function DashboardContent() {
             </div>
             {cashCardMode === 'mv' ? (<>
             <p className="text-2xl font-bold text-slate-900 mt-1 tabular-nums">
-              {formatCurrency(animMarketValue)}
+              <QuoteNumber value={totals.totalMarketValue} format={formatCurrency} />
             </p>
             {(totals.totalMarketValue + totals.cashBalance) > 0 && (
               <p className="text-xs font-medium text-slate-400 mt-0.5">
-                {t.dashboard.positionRatio}{(totals.totalMarketValue / (totals.totalMarketValue + totals.cashBalance) * 100).toFixed(0)}%
+                {t.dashboard.positionRatio}<QuoteNumber value={totals.totalMarketValue / (totals.totalMarketValue + totals.cashBalance) * 100} format={value => value.toFixed(0)} suffix="%" />
               </p>
             )}
             </>) : (
@@ -166,7 +149,7 @@ function DashboardContent() {
                 return (
                   <div key={c.currency} className="flex items-center gap-2">
                     <img src={`https://flagcdn.com/${flag}.svg`} className="w-4 h-3 rounded-sm" alt={c.currency} />
-                    <span className="text-base font-semibold text-slate-700 tabular-nums">{Number(c.amount).toLocaleString('zh-CN', {minimumFractionDigits:2})}</span>
+                    <span className="text-base font-semibold text-slate-700 tabular-nums"><QuoteNumber value={Number(c.amount)} format={value => value.toLocaleString('zh-CN', {minimumFractionDigits:2})} /></span>
                     <span className="text-xs text-slate-400">{c.currency}</span>
                   </div>
                 )
@@ -192,17 +175,17 @@ function DashboardContent() {
             </div>
             {pnlCardMode === 'today' ? (<>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.todayPnl >= 0 ? positiveClass : negativeClass}`}>
-              {animTodayPnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(animTodayPnl))}
+              <QuoteNumber value={totals.todayPnl} signed format={formatCurrency} />
             </p>
             <p className={`text-xs font-medium mt-0.5 ${totals.todayPnl >= 0 ? positiveClass : negativeClass}`}>
-              {totals.todayPnlPct >= 0 ? '+' : ''}{totals.todayPnlPct}%
+              <QuoteNumber value={totals.todayPnlPct} signed suffix="%" />
             </p>
             </>) : (<>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.totalPnl >= 0 ? positiveClass : negativeClass}`}>
-              {animHoldingPnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(animHoldingPnl))}
+              <QuoteNumber value={totals.totalPnl} signed format={formatCurrency} />
             </p>
             <p className={`text-xs font-medium mt-0.5 ${totals.totalPnl >= 0 ? positiveClass : negativeClass}`}>
-              {totals.totalPnl >= 0 ? '+' : '-'}{Math.abs(totals.totalReturnPct).toFixed(2)}%
+              <QuoteNumber value={totals.totalReturnPct} signed suffix="%" />
             </p>
             </>)}
           </CardContent>
@@ -217,10 +200,10 @@ function DashboardContent() {
               </button>
             </div>
             <p className={`text-2xl font-bold mt-1 tabular-nums ${totals.cumulativePnl >= 0 ? positiveClass : negativeClass}`}>
-              {animCumulativePnl >= 0 ? '+' : '-'}{formatCurrency(Math.abs(animCumulativePnl))}
+              <QuoteNumber value={totals.cumulativePnl} signed format={formatCurrency} />
             </p>
             <p className={`text-xs font-medium mt-0.5 ${totals.cumulativeReturnPct >= 0 ? positiveClass : negativeClass}`}>
-              {totals.cumulativeReturnPct >= 0 ? '+' : '-'}{Math.abs(totals.cumulativeReturnPct).toFixed(2)}%
+              <QuoteNumber value={totals.cumulativeReturnPct} signed suffix="%" />
             </p>
           </CardContent>
         </Card>
@@ -274,8 +257,14 @@ function DashboardContent() {
           )})()}
         </CardHeader>
         <CardContent>
-          <AsyncState loading={!curve.data && curve.loading} error={curve.error} retry={curve.reload} />
-          <ResponsiveContainer width="100%" height={240}>
+          <div className="relative h-[240px]" data-testid="asset-curve">
+          {(!curve.data || curve.error) && <div className="absolute inset-0 z-10 flex items-center justify-center">
+            {curve.error ? <AsyncState error={curve.error} retry={curve.reload} />
+              : curve.loading && <span role="status" aria-label={t.common.loading}>
+                <LoaderCircle aria-hidden="true" className="h-5 w-5 text-slate-400 motion-safe:animate-spin" />
+              </span>}
+          </div>}
+          {curve.data && <ResponsiveContainer width="100%" height={240}>
             <AreaChart data={cumulative}>
               <defs>
                 <linearGradient id="colorValue" x1="0" y1="0" x2="0" y2="1">
@@ -296,7 +285,8 @@ function DashboardContent() {
                 contentStyle={{ backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0', color: isDark ? '#f8fafc' : '#0f172a' }} />
               <Area type="monotone" dataKey="value" stroke={cumUp ? positiveHex : negativeHex} fill="url(#colorValue)" strokeWidth={2} />
             </AreaChart>
-          </ResponsiveContainer>
+          </ResponsiveContainer>}
+          </div>
         </CardContent>
       </Card>
 

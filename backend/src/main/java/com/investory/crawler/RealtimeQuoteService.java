@@ -74,7 +74,8 @@ public class RealtimeQuoteService {
                     for (var item:batch.items()) {
                         if (item.price()==null || item.price().signum()<=0) continue;
                         Quote quote=new Quote(item.price(),batch.receivedAt(),item.previousClose(),item.change(),item.changePct(),
-                            batch.source(),batch.providerTimestamp(),false);
+                            batch.source(),batch.providerTimestamp(),false,
+                            new Quote.SessionMetrics(item.open(),item.high(),item.low(),item.previousClose(),item.volume(),item.turnover()));
                         obtained.put(item.symbol(),quote.withLive(isLive(quote,"SH")));
                     }
                 } catch (HithinkDataClient.DataException error) {

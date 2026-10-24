@@ -87,6 +87,9 @@ public class HoldingSnapshot {
     public BigDecimal getNativeChangeToday() { return nativeChangeToday; }
     public void setNativeChangeToday(BigDecimal change) { nativeChangeToday = change; }
     private String priceSource;
+    private Quote.SessionMetrics quoteMetrics;
+    public Quote.SessionMetrics getQuoteMetrics() { return quoteMetrics; }
+    public void setQuoteMetrics(Quote.SessionMetrics metrics) { this.quoteMetrics = metrics; }
     public boolean isPriceLive() { return priceLive; }
     public void setPriceLive(boolean live) { priceLive = live; }
     public String getPriceSource() { return priceSource; }

@@ -118,7 +118,7 @@ export default function StockDetail() {
                     <QuoteNumber value={changePct} signed suffix="%" />
                   </span>
                 )}
-                <QuoteWarning live={data?.priceLive} timestamp={data?.livePriceTs} />
+                <QuoteWarning live={data?.priceLive} timestamp={data?.livePriceTs} source={data?.priceSource} />
               </>
             )}
             {currentPrice == null && <span className="text-3xl font-bold text-slate-400"><QuoteNumber value={null} /></span>}

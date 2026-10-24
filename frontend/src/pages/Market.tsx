@@ -5,6 +5,7 @@ import { useSettings } from '@/hooks/use-settings'
 import { useTimedRefresh } from '@/hooks/use-timed-refresh'
 import { useT } from '@/i18n/I18nContext'
 import InfoTip from '@/components/InfoTip'
+import { quoteDescription as describeQuote, quoteNeedsWarning, type QuoteContext } from '@/lib/quotePresentation'
 import {
   getPreloadedMarketNews,
   getPreloadedMarketSnapshot,
@@ -105,21 +106,12 @@ function sourceLabel(source: string | null): string {
 function signed(value: number | null, lang: string): string {
   return numeric(value) ? `${value >= 0 ? '+' : '-'}${fmtNum(Math.abs(value), 2, lang)}` : '—'
 }
-function quoteTime(quote: PreloadMarketQuote, locale: string): string {
-  if (quote.asOfDate) return quote.asOfDate
-  if (!quote.quoteTime || !Number.isFinite(Date.parse(quote.quoteTime))) return ''
-  const date = new Date(quote.quoteTime).toLocaleString(locale, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })
-  return `${quote.timestampScope === 'BATCH' ? '批次 ' : ''}${date}`
+function quoteContext(quote: PreloadMarketQuote): QuoteContext {
+  return { source: quote.source, state: quote.state, timestamp: quote.quoteTime,
+    timestampScope: quote.timestampScope, asOfDate: quote.asOfDate }
 }
-function nonRealtime(quote: PreloadMarketQuote): boolean {
-  const time = quote.quoteTime ? Date.parse(quote.quoteTime) : NaN
-  return quote.state !== 'available' || !Number.isFinite(time) || Date.now() - time > 120_000 || time > Date.now()
-}
-function quoteDescription(quote: PreloadMarketQuote, locale: string): string {
-  const state = quote.state === 'stale' ? '保留的历史报价' : quote.state === 'unavailable' ? '暂未获取到报价' : '已获取报价'
-  const asOf = quoteTime(quote, locale)
-  return `${sourceLabel(quote.source)}，${state}${asOf ? `，${asOf}` : '，行情时间未提供'}。${quote.timestampScope === 'BATCH' ? '时间来自供应商批次，不代表每只标的的独立更新时间。' : ''}${quote.fallbackReason ? '当前使用备用来源或上次有效结果。' : ''}`
-}
+function quoteDescription(quote: PreloadMarketQuote): string { return describeQuote(quoteContext(quote)) }
+function needsWarning(quote: PreloadMarketQuote): boolean { return quoteNeedsWarning(quoteContext(quote)) }
 
 export default function Market() {
   const { t, lang } = useT()
@@ -128,7 +120,6 @@ export default function Market() {
   const [indicators, setIndicators] = useState<IndicatorData[]>([])
   const [mapReady, setMapReady] = useState(false)
   const [mapError, setMapError] = useState(false)
-  const [updatedAt, setUpdatedAt] = useState<string | null>(null)
   const [sources, setSources] = useState<string[]>([])
   const [dataError, setDataError] = useState('')
   const [providerWarning, setProviderWarning] = useState(false)
@@ -139,7 +130,6 @@ export default function Market() {
   const activeRequest = useRef(0)
   const quoteAbort = useRef<AbortController | null>(null)
 
-  const timeLocale = lang === 'zh' ? 'zh-CN' : 'en-US'
 
   const loadIndices = useCallback(async (force = false) => {
     const foreground = () => document.visibilityState !== 'hidden'
@@ -160,7 +150,6 @@ export default function Market() {
         if (request !== activeRequest.current || !foreground()) return
         setIndices(data.indices || [])
         setIndicators(data.indicators || [])
-        setUpdatedAt(data.updatedAt ?? null)
         setSources(data.sources ?? [])
         setProviderWarning(data.hithinkStatus === 'fallback' || data.hithinkStatus === 'partial')
         setDataError('')
@@ -261,7 +250,8 @@ export default function Market() {
     if (!mapReady || !chart) return
         chart.setOption({
           backgroundColor: 'transparent',
-          animationDurationUpdate: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 450,
+          animationDuration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 320,
+          animationDurationUpdate: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 320,
           animationEasingUpdate: 'cubicOut',
           tooltip: {
             trigger: 'item',
@@ -287,12 +277,12 @@ export default function Market() {
                   const color = !valid || !numeric(d.change) ? '#9ca3af' : u ? positiveHex : negativeHex
                   const priceText = valid ? Number(d.price).toLocaleString() : '—'
                   const changeText = valid ? `${signed(d.change, lang)} (${numeric(d.changePct) ? signed(d.changePct, lang) + '%' : '—'})` : t.market.noData
-                  const warning = valid && nonRealtime(d)
+                  const warning = valid && needsWarning(d)
                   return `<div style="display:flex;align-items:center;gap:12px;padding:3px 0;font-size:12px">
                     <span style="min-width:56px;color:#475569">${d.name}</span>
                     <span style="font-weight:600;min-width:85px;text-align:right;color:${color}">${priceText}</span>
                     <span style="min-width:95px;text-align:right;color:${color}">${changeText}</span>
-                    ${warning ? `<span tabindex="0" aria-label="非实时报价" title="${quoteDescription(d, timeLocale)}" style="color:#b45309;font-size:14px">&#9888;</span>` : ''}
+                    ${warning ? `<span tabindex="0" aria-label="报价异常" title="${quoteDescription(d)}" style="color:#b45309;font-size:14px">&#9888;</span>` : ''}
                   </div>`
                 }).join('')}`
             },
@@ -306,14 +296,14 @@ export default function Market() {
           },
           series: [
             {
-              type: 'scatter', coordinateSystem: 'geo',
+              id: 'market-indices', type: 'scatter', coordinateSystem: 'geo',
               data: markers.map(group => {
                 const leader = group.find(d => LEADING.includes(d.name)) || group[0]
                 const valid = hasPrice(leader) && numeric(leader.change)
                 const up = Number(leader.change) >= 0
                 const color = !valid ? '#9ca3af' : up ? positiveHex : negativeHex
                 return {
-                  value: [group[0].lng, group[0].lat],
+                  name: group[0].flag, value: [group[0].lng, group[0].lat],
                   itemStyle: {
                     color,
                     shadowBlur: valid ? 12 : 0,
@@ -326,7 +316,7 @@ export default function Market() {
               label: { show: false },
             },
             {
-              type: 'scatter', coordinateSystem: 'geo',
+              id: 'market-news', type: 'scatter', coordinateSystem: 'geo',
               data: newsPoints,
               symbol: 'pin', symbolSize: 22, symbolOffset: [18, 0], z: 10,
               emphasis: { scale: 1.3 },
@@ -385,7 +375,7 @@ export default function Market() {
             window.location.href = import.meta.env.BASE_URL + `stock?symbol=${encodeURIComponent(leader.symbol)}`
           }
         })
-  }, [mapReady, indices, t, markers, countryRegions, positiveHex, negativeHex, newsPoints, lang, t.market.noData, t.market.clickToViewSource, t.market.categoryFinance, t.market.categoryGeopolitics, t.market.countryNames, timeLocale])
+  }, [mapReady, indices, t, markers, countryRegions, positiveHex, negativeHex, newsPoints, lang, t.market.noData, t.market.clickToViewSource, t.market.categoryFinance, t.market.categoryGeopolitics, t.market.countryNames])
 
 
   return (
@@ -393,9 +383,8 @@ export default function Market() {
       <div className="px-4 sm:px-6 pt-6 pb-1 flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-3">
           <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.market.title}</h2>
-          {updatedAt && <span className="text-[10px] text-slate-400">{new Date(updatedAt).toLocaleTimeString(timeLocale, { hour: '2-digit', minute: '2-digit', hour12: false })}</span>}
         </div>
-        <div className="flex items-center text-[10px] text-slate-400"><span>{t.market.dataSource}：{sources.map(sourceLabel).join(' / ') || '—'}</span><InfoTip label="行情来源">A 股指数优先使用同花顺金融 API。当前开放接口尚未覆盖此页全部海外股指、商品和比特币，它们暂保留原数据源。当前页面每 30 秒刷新，后端共享短时缓存。时间来自行情或供应商批次；本地收盘和保留报价会单独标记。黄金卡片对应 COMEX 黄金期货，原油卡片对应 WTI 期货，并非现货。</InfoTip></div>
+        <div className="flex items-center text-[10px] text-slate-400"><span>{t.market.dataSource}：{sources.map(sourceLabel).join(' / ') || '—'}</span><InfoTip label="行情来源">A 股指数使用同花顺金融 API，其他市场使用对应行情来源。黄金为 COMEX 黄金期货，原油为 WTI 期货。</InfoTip></div>
       </div>
       {mapError && <p role="alert" className="px-6 text-xs text-red-600">地图加载失败，请刷新重试</p>}
       {dataError && <p role="alert" className="px-6 pb-2 text-xs text-red-600 dark:text-red-400">{dataError}</p>}
@@ -416,14 +405,14 @@ export default function Market() {
                     <span className={`text-xs font-medium tabular-nums ${cls}`}><QuoteNumber value={valid ? ind.changePct : null} signed suffix="%" format={value => fmtNum(value, 2, lang)} /></span>
                   </div>
                 </a>
-                {valid && nonRealtime(ind) && <span className="absolute right-2 top-2"><InfoTip warning label={`${ind.name}非实时行情`}>{quoteDescription(ind, timeLocale)}</InfoTip></span>}
+                {valid && needsWarning(ind) && <span className="absolute right-2 top-2"><InfoTip warning label={`${ind.name}报价异常`}>{quoteDescription(ind)}</InfoTip></span>}
               </div>
             )
           })}
         </div>
       )}
       <div className="flex-1 min-h-0 px-2 pb-2 overflow-hidden">
-        <div ref={chartRef} role="img" aria-label={t.market.title} className="w-full h-full" style={{ overflow: 'hidden' }} />
+        <div ref={chartRef} role="img" aria-label={t.market.title} className="market-map w-full h-full" style={{ overflow: 'hidden' }} />
       </div>
     </div>
   )

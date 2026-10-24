@@ -12,10 +12,10 @@ import { displaySymbol } from '@/lib/format'
 import QuoteWarning from '@/components/QuoteWarning'
 import Sparkline from '@/components/Sparkline'
 import { useT } from '@/i18n/I18nContext'
-import type { StockSearchItem, PriceData, HoldingsResponse, HoldingSnapshot } from '@/types'
+import type { StockSearchItem, PriceData, HoldingsResponse, HoldingSnapshot, QuoteMetrics } from '@/types'
 import { Search, X, Plus, GripVertical } from 'lucide-react'
 
-interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number | null; changeToday?: number | null; changePctToday?: number | null; priceTimestamp?: string | null; priceLive?: boolean; priceSource?: string | null }
+interface WatchItem { id: number; stock_id: number; symbol: string; name: string; market: string; currency: string; price: number | null; changeToday?: number | null; changePctToday?: number | null; priceTimestamp?: string | null; priceLive?: boolean; priceSource?: string | null; quoteMetrics?: QuoteMetrics | null }
 
 interface MarketGroup { key: string; label: string; flag: string; items: WatchItem[] }
 
@@ -32,6 +32,13 @@ const GROUP_META: Record<string, { flag: string }> = {
 
 const GROUP_KEYS = ['A', 'HK', 'US'] as const
 
+function compactMetric(value: number, suffix = '', lang = 'zh'): string {
+  if (lang === 'en') return new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 2 }).format(value) + suffix
+  if (Math.abs(value) >= 100_000_000) return `${(value / 100_000_000).toFixed(2)}${lang === 'hk' ? '億' : '亿'}${suffix}`
+  if (Math.abs(value) >= 10_000) return `${(value / 10_000).toFixed(2)}${lang === 'hk' ? '萬' : '万'}${suffix}`
+  return `${value.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}${suffix}`
+}
+
 export default function Holdings() {
   const { portfolioId } = useAuth()
   return <HoldingsContent key={portfolioId} />
@@ -40,7 +47,7 @@ export default function Holdings() {
 function HoldingsContent() {
   const { portfolioId } = useAuth()
   const { positiveClass, negativeClass } = useSettings()
-  const { t } = useT()
+  const { t, lang } = useT()
   const [order, setOrder] = useState<string[]>([])
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<StockSearchItem[]>([])
@@ -83,6 +90,7 @@ function HoldingsContent() {
           priceLive: s.priceLive,
           priceSource: s.priceSource,
           priceTimestamp: s.priceTimestamp,
+          quoteMetrics: s.quoteMetrics,
         })
       }
 
@@ -186,7 +194,7 @@ function HoldingsContent() {
     <div className="p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.holdings.title}</h2>
+          <h2 className="text-xl font-bold text-slate-900 tracking-tight">{t.holdings.watchlistTitle}</h2>
           {lastRefresh && <span className="text-[10px] text-slate-400">{timeAgo(lastRefresh)}</span>}
         </div>
         <div className="relative flex items-center gap-2">
@@ -229,7 +237,7 @@ function HoldingsContent() {
 
       <AsyncState loading={items.length === 0 && loading} error={loadError} retry={load} />
       {items.length === 0 ? (!loading && !loadError && (
-        <div className="py-12 text-center text-slate-500 text-sm">{t.holdings.noHoldings}</div>
+        <div className="py-12 text-center text-slate-500 text-sm">{t.holdings.noWatchlist}</div>
       )) : (
         <div className="space-y-6">
           {groups.map(group => (
@@ -240,16 +248,22 @@ function HoldingsContent() {
                 <span className="text-xs text-slate-400">{group.items.length}{t.holdings.stockCountUnit}</span>
               </div>
               <CardContent className="p-0">
-                {/* Desktop table */}
-                <div className="hidden lg:block overflow-auto">
-                  <table className="w-full text-sm">
+                {/* One scrollable table on desktop and mobile; the stock identity stays visible. */}
+                <div className="overflow-x-auto overscroll-x-contain" tabIndex={0} role="region" aria-label={group.label + t.holdings.watchlistTitle}>
+                  <table className="w-full min-w-[1440px] table-fixed text-sm whitespace-nowrap">
+                    <colgroup>
+                      {[180,88,112,100,100,100,128,128,112,112,112,112,56].map((width,index) => <col key={index} style={{ width }} />)}
+                    </colgroup>
                     <thead>
                       <tr className="border-b border-slate-100">
-                        <th className="text-left text-xs font-medium text-slate-500 px-6 py-2">{t.holdings.stock}</th>
+                        <th className="sticky left-0 z-20 bg-white min-w-[180px] text-left text-xs font-medium text-slate-500 px-6 py-2">{t.holdings.stock}</th>
                         <th className="text-center text-xs font-medium text-slate-500 px-1 py-2 w-[68px]">{t.holdings.oneMonth}</th>
                         <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.stockDetail.price}</th>
                         <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.market.change}</th>
                         <th className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.market.changePct}</th>
+                        {(['amplitude','volume','turnover','open','high','low','previousClose'] as const).map(column => (
+                          <th key={column} className="text-right text-xs font-medium text-slate-500 px-3 py-2">{t.holdings[column]}</th>
+                        ))}
                         <th className="text-right text-xs font-medium text-slate-500 px-3 py-2 w-10"></th>
                       </tr>
                     </thead>
@@ -262,6 +276,10 @@ function HoldingsContent() {
                         const hasPct = item.changePctToday != null && Number.isFinite(chgPct)
                         const up = chg >= 0
                         const pctUp = chgPct >= 0
+                        const metrics = item.quoteMetrics
+                        const amplitude = metrics?.previousClose != null && metrics.previousClose > 0
+                          && metrics.high != null && metrics.low != null && metrics.low > 0 && metrics.high >= metrics.low
+                          ? (metrics.high - metrics.low) / metrics.previousClose * 100 : null
                         return (
                           <tr key={`${item.stock_id}-${item.id}`}
                             draggable={managing}
@@ -270,7 +288,7 @@ function HoldingsContent() {
                             onDrop={() => handleDrop(group, idx)}
                             onDragEnd={() => { setDragKey(null); setDragIdx(null); setDropIdx(null) }}
                             className={`border-b border-slate-50 hover:bg-slate-50/50 transition-colors ${managing ? 'cursor-grab active:cursor-grabbing' : ''} ${dropIdx === idx && dragIdx !== idx && dragKey === group.key ? 'border-t-2 border-t-slate-900' : ''}`}>
-                            <td className="px-6 py-3">
+                            <td className="sticky left-0 z-10 bg-white px-6 py-3">
                               <div className="flex items-center gap-2">
                                 {managing && <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
                                 <Link to={`/stock?symbol=${encodeURIComponent(item.symbol)}`}
@@ -278,10 +296,8 @@ function HoldingsContent() {
                               </div>
                               <div className="text-xs text-slate-400">{displaySymbol(item.symbol, item.market)}</div>
                             </td>
-                            <td className="px-1 py-3 flex justify-center">
-                              {sparkData[item.symbol]?.length > 0
-                                ? <Sparkline data={sparkData[item.symbol]} />
-                                : <div className="w-[60px] h-6 bg-slate-50 rounded" />}
+                            <td className="px-1 py-3 text-center">
+                              <span className="inline-flex"><Sparkline data={sparkData[item.symbol] ?? []} /></span>
                             </td>
                             <td className="px-3 py-3 text-right tabular-nums">
                               <div className="inline-flex items-center gap-1"><QuoteNumber value={valid ? Number(item.price) : null} />{valid && <QuoteWarning live={item.priceLive} timestamp={item.priceTimestamp} source={item.priceSource} />}</div>
@@ -292,6 +308,12 @@ function HoldingsContent() {
                             <td className={`px-3 py-3 text-right font-medium tabular-nums ${valid && hasPct ? (pctUp ? positiveClass : negativeClass) : 'text-slate-400'}`}>
                               <QuoteNumber value={valid && hasPct ? chgPct : null} signed suffix="%" />
                             </td>
+                            <td className="px-3 py-3 text-right tabular-nums"><QuoteNumber value={amplitude} suffix="%" /></td>
+                            <td className="px-3 py-3 text-right tabular-nums"><QuoteNumber value={metrics?.volume} format={value => compactMetric(value, t.holdings.sharesUnit, lang)} /></td>
+                            <td className="px-3 py-3 text-right tabular-nums"><QuoteNumber value={metrics?.turnover} format={value => compactMetric(value, '', lang)} /></td>
+                            {(['open','high','low','previousClose'] as const).map(column => (
+                              <td key={column} className="px-3 py-3 text-right tabular-nums"><QuoteNumber value={metrics?.[column] != null && metrics[column] > 0 ? metrics[column] : null} /></td>
+                            ))}
                             <td className="px-3 py-3 text-right">
                               {managing && (
                                 <button onClick={() => removeWatch(item.stock_id)}
@@ -303,46 +325,6 @@ function HoldingsContent() {
                       })}
                     </tbody>
                   </table>
-                </div>
-                {/* Mobile cards */}
-                <div className="lg:hidden divide-y divide-slate-50">
-                  {group.items.map((item) => {
-                    const valid = item.price != null && Number(item.price) !== 0
-                    const chg = Number(item.changeToday)
-                    const hasChange = item.changeToday != null && Number.isFinite(chg)
-                    const chgPct = Number(item.changePctToday)
-                    const hasPct = item.changePctToday != null && Number.isFinite(chgPct)
-                    const up = chg >= 0
-                    const pctUp = chgPct >= 0
-                    return (
-                      <div key={`${item.stock_id}-${item.id}`} className="px-4 py-3">
-                        <div className="flex items-center justify-between mb-1.5">
-                          <div className="flex items-center gap-2 min-w-0">
-                            {managing && <GripVertical className="w-3.5 h-3.5 text-slate-300 shrink-0" />}
-                            <Link to={`/stock?symbol=${encodeURIComponent(item.symbol)}`}
-                              className="font-medium text-slate-900 hover:text-blue-600 truncate max-w-[180px]">{item.name}</Link>
-                            {valid && <QuoteWarning live={item.priceLive} timestamp={item.priceTimestamp} source={item.priceSource} />}
-                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 shrink-0">{item.market}</span>
-                          </div>
-                          <span className={`text-sm font-semibold tabular-nums shrink-0 ${valid && hasPct ? (pctUp ? positiveClass : negativeClass) : 'text-slate-400'}`}>
-                            <QuoteNumber value={valid && hasPct ? chgPct : null} signed suffix="%" />
-                          </span>
-                        </div>
-                        <details className="mt-1">
-                          <summary className="text-xs text-slate-400 cursor-pointer select-none">{t.common.more}</summary>
-                          <div className="mt-2 space-y-1 text-xs text-slate-500">
-                            <div className="flex justify-between"><span>{t.stockDetail.price}</span><span className="tabular-nums"><QuoteNumber value={valid ? Number(item.price) : null} /></span></div>
-                            <div className="flex justify-between"><span>{t.market.change}</span><span className={`tabular-nums ${hasChange ? (up ? positiveClass : negativeClass) : 'text-slate-400'}`}><QuoteNumber value={valid && hasChange ? chg : null} signed /></span></div>
-                            <div className="flex justify-between"><span>{t.market.changePct}</span><span className={`tabular-nums ${hasPct ? (pctUp ? positiveClass : negativeClass) : 'text-slate-400'}`}><QuoteNumber value={valid && hasPct ? chgPct : null} signed suffix="%" /></span></div>
-                            {managing && (
-                              <div className="pt-1"><button onClick={() => removeWatch(item.stock_id)}
-                                className="text-xs text-red-500">{t.common.delete}</button></div>
-                            )}
-                          </div>
-                        </details>
-                      </div>
-                    )
-                  })}
                 </div>
               </CardContent>
             </Card>

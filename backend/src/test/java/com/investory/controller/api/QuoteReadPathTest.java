@@ -108,7 +108,24 @@ class QuoteReadPathTest {
         assertNull(rows.get(1).get("price"));
         assertEquals("unavailable",rows.get(1).get("priceSource"));
         assertNull(rows.get(1).get("changePctToday"));
+        assertNull(rows.get(1).get("quoteMetrics"));
         verify(quotes).getQuotes(argThat(list -> list.size()==2));
+    }
+
+    @Test void metricsSerializeInNativeUnitsWithoutConvertingSharesOrInventingMissingFields() throws Exception {
+        var metrics=new Quote.SessionMetrics(new BigDecimal("98.25"),new BigDecimal("105"),null,
+            new BigDecimal("99"),new BigDecimal("1234567"),new BigDecimal("123456700"));
+        Quote enriched=new Quote(new BigDecimal("100"),Instant.now(),new BigDecimal("99"),BigDecimal.ONE,
+            new BigDecimal("1.01"),"hithink_finance_api",Instant.now(),false,metrics);
+        when(quotes.getQuotes(anyList())).thenReturn(Map.of(first.getSymbol(),enriched));
+        var mapper=new ObjectMapper().findAndRegisterModules();
+        var rows=mapper.readTree(mapper.writeValueAsString(watchlist().getWatchlist(request,true)));
+        assertEquals(1234567,rows.get(0).path("quoteMetrics").path("volume").asInt());
+        assertEquals(123456700,rows.get(0).path("quoteMetrics").path("turnover").asInt());
+        assertTrue(rows.get(0).path("quoteMetrics").path("low").isNull());
+        assertTrue(rows.get(1).path("quoteMetrics").isNull());
+        assertEquals(metrics,service.getSnapshots(1L).get(0).getQuoteMetrics());
+        assertEquals(metrics,enriched.withLive(true).metrics());
     }
 
     @Test void metadataReadsDoNotRequestQuotes() {
