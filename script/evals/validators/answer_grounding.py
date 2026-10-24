@@ -12,8 +12,8 @@ from _base import result, PASS, FAIL, SKIP, is_live, count_sentences
 
 # Read-only data tools whose results an answer can be grounded in.
 _DATA_TOOLS = {
-    "get_stock_price", "get_stock_report", "get_market_regime", "get_world_market",
-    "get_portfolio", "get_portfolio_report", "compute_sector_breakdown",
+    "get_stock_price", "get_fundamentals", "get_world_market",
+    "get_portfolio", "compute_sector_breakdown",
     "compute_correlation", "benchmark_compare", "get_pnl_history", "get_transactions",
     "get_watchlist", "web_search", "run_backtest", "analyze_backtest",
 }

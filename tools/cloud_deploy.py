@@ -11,17 +11,13 @@ import time
 from datetime import datetime, timezone
 
 APP_ROOT = "/opt/investory"
-ENGINE_PREFIX = "backend/src/main/python/stocksage_alpha/"
+RETIRED_ENGINE_PREFIX = "backend/src/main/python/stocksage_alpha/"
 
 
 def runtime_path(source: str) -> str | None:
     path = PurePosixPath(source)
     if path.is_absolute() or ".." in path.parts:
         raise ValueError("Runtime source must be repository-relative")
-    if source.startswith(ENGINE_PREFIX):
-        relative = source[len(ENGINE_PREFIX):]
-        if path.suffix == ".py" or relative == "requirements.txt":
-            return "stocksage_alpha/" + relative
     if source.startswith("script/"):
         relative = source[len("script/"):]
         if "/" not in relative and (path.suffix == ".py" or relative in {
@@ -32,13 +28,25 @@ def runtime_path(source: str) -> str | None:
     return None
 
 
+def retired_runtime_path(source: str) -> str | None:
+    """Only map old tracked engine paths for verified deletion/rollback, never upload."""
+    path = PurePosixPath(source)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError("Unsafe retired runtime path")
+    if source.startswith(RETIRED_ENGINE_PREFIX):
+        relative = source[len(RETIRED_ENGINE_PREFIX):]
+        if path.suffix == ".py" or relative == "requirements.txt":
+            return "stocksage_alpha/" + relative
+    return None
+
+
 def git(root: Path, *args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=root, encoding="utf-8").strip()
 
 
 def release_files(root: Path, previous_commit: str | None = None) -> tuple[dict[str, Path], list[str]]:
     files = {"investory.jar": root / "backend/target/investory.jar"}
-    for source in git(root, "ls-files", "-z", "--", "script", ENGINE_PREFIX).split("\0"):
+    for source in git(root, "ls-files", "-z", "--", "script").split("\0"):
         target = runtime_path(source) if source else None
         if target is not None:
             local = root / source
@@ -51,7 +59,7 @@ def release_files(root: Path, previous_commit: str | None = None) -> tuple[dict[
         version_commit = git(root, "log", "-1", "--format=%H", "--", "backend/pom.xml")
         previous_commit = version_commit + "^"
     removed = [target for source in git(root, "diff", previous_commit, "HEAD", "--diff-filter=D", "--name-only").splitlines()
-               if (target := runtime_path(source)) is not None]
+               if (target := retired_runtime_path(source) or runtime_path(source)) is not None]
     return files, removed
 
 
@@ -165,12 +173,11 @@ print(json.dumps(jobs))
     return json.loads(remote(client, "python3 -c " + shlex.quote(code)))
 
 
-def wait_health(client, health_url: str, engine: bool) -> None:
+def wait_health(client, health_url: str) -> None:
     for attempt in range(45):
         app_ok = remote(client, "curl -fsS --max-time 3 " + shlex.quote(health_url) + " 2>/dev/null || true")
-        engine_ok = remote(client, "curl -fsS --max-time 3 http://127.0.0.1:8200/health 2>/dev/null || true") if engine else '{"status":"ok"}'
         try:
-            if "authenticated" in json.loads(app_ok) and json.loads(engine_ok).get("status") == "ok":
+            if "authenticated" in json.loads(app_ok):
                 return
         except (ValueError, TypeError):
             pass
@@ -224,32 +231,35 @@ def deploy_cloud(client, root: Path, version: str, health_url: str, *, allow_unp
     jobs = active_jobs(client)
     if jobs:
         raise RuntimeError("New jobs started during staging; live files unchanged: " + ", ".join(jobs))
-    engine = remote(client, "systemctl is-active stocksage || true") == "active"
+    legacy_engine = remote(client, "systemctl is-active stocksage || true") == "active"
+    legacy_enabled = remote(client, "systemctl is-enabled stocksage || true") == "enabled"
     if remote(client, "systemctl is-active investory || true") != "active":
         raise RuntimeError("Application was not active before deployment")
     print("Backup verified; activating cloud release ...", flush=True)
     try:
         remote(client, "systemctl stop investory")
-        if engine:
+        if legacy_engine:
             remote(client, "systemctl stop stocksage")
+        if legacy_engine or legacy_enabled:
+            remote(client, "systemctl disable stocksage")
         remote_files(client, payload, "activate")
-        if engine:
-            remote(client, "systemctl start stocksage")
         remote(client, "systemctl start investory")
-        wait_health(client, health_url, engine)
+        wait_health(client, health_url)
         verify = remote(client, "sha256sum " + shlex.quote(APP_ROOT + "/investory.jar")).split()[0]
         if verify != manifest["files"]["investory.jar"]:
             raise RuntimeError("Live JAR checksum does not match the release")
     except Exception:
         print("Activation failed; restoring previous code ...", flush=True)
         remote(client, "systemctl stop investory")
-        if engine:
+        if legacy_engine:
             remote(client, "systemctl stop stocksage")
         remote_files(client, payload, "restore")
-        if engine:
+        if legacy_enabled:
+            remote(client, "systemctl enable stocksage")
+        if legacy_engine:
             remote(client, "systemctl start stocksage")
         remote(client, "systemctl start investory")
-        wait_health(client, health_url, engine)
+        wait_health(client, health_url)
         raise
     receipt = {**manifest, "stage": stage, "status": "healthy"}
     (root / "backend/target/cloud-deployment.json").write_text(json.dumps(receipt, indent=2), encoding="utf-8")

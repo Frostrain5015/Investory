@@ -5,31 +5,6 @@
     "category": "query"
   },
   {
-    "name": "get_stock_report",
-    "description": "【重型审计工具】生成单只A股的可审计 Markdown 分析报告，并把完整报告作为对话任务产物存库。用户明确要求「深度分析/审计报告/专业报告/完整分析/证据链/风险拆解/为什么能买或不能买」，或问「为什么跌这么狠/暴跌原因/上涨异动/出什么问题/还能不能持有」这类个股诊断时可以调用。symbol 可直接传中文名、常见代码或DB格式，工具会解析，禁止为了格式解析先 search_stocks 或手工拼 0./1. 前缀。简单问题不要调用：查股价、涨跌、PE/PB、名称匹配、简短解释、泛泛问一句「今天怎么样」时，优先用 get_stock_price、web_search 或直接解释。回答必须基于报告 Markdown 和证据链，不得用总分替代结论。仅支持A股；港股/美股/指数改用行情+新闻+通用分析。",
-    "category": "analysis"
-  },
-  {
-    "name": "get_portfolio_report",
-    "description": "【重型审计工具】生成当前持仓组合的可审计 Markdown 报告。只在用户要求组合体检、持仓健康、风险拆解、完整组合审计、调仓前系统评估时调用。简单询问持仓列表、盈亏、某只仓位权重时只调用 get_portfolio，不要启动本工具。",
-    "category": "analysis"
-  },
-  {
-    "name": "get_market_regime",
-    "description": "【数据铁律】获取当前A股市场环境（BULL/NORMAL/CAUTION/BEAR/CRISIS）及风险敞口建议。回答大盘、市场状态、加仓/追高问题时调用。",
-    "category": "query"
-  },
-  {
-    "name": "get_daily_picks_report",
-    "description": "【重型审计工具】生成今日候选股的可审计 Markdown 选股报告。只在用户明确询问今日候选、选股池、推荐列表且希望看到理由/风险时调用。不能直接替用户下交易结论，必须说明这是候选分析。简单问市场热点或新闻时不要调用。",
-    "category": "analysis"
-  },
-  {
-    "name": "pick_stocks",
-    "description": "【选股工具】根据用户投资偏好智能选股。接受自然语言描述（如\"高股息低波动银行股\"、\"成长性好的科技股\"、\"价值投资\"），将意图转化为因子权重和筛选条件，在指定范围内评分筛选，返回带理由的候选列表。仅在用户要求选股、推荐股票、筛选条件选股时调用；简单查个股用 get_stock_price 或 get_stock_report。",
-    "category": "analysis"
-  },
-  {
     "name": "get_backtests",
     "description": "【数据铁律】获取最近的历史回测记录和结果指标。",
     "category": "query"
@@ -51,12 +26,12 @@
   },
   {
     "name": "search_stocks",
-    "description": "【数据铁律】根据股票名称或代码搜索真实股票数据，返回 stockId、symbol、name、market。只在名称模糊、需要 stockId（如加入自选）或工具提示未找到时调用；用户已给明确中文名/代码时，行情、报告、基本面工具可直接接收原词。若返回多只同名不同市场股票，必须调用 ask_user 让用户选择。",
+    "description": "【数据铁律】根据股票名称或代码搜索真实股票数据，返回 stockId、symbol、name、market。只在名称模糊、需要 stockId（如加入自选）或工具提示未找到时调用；用户已给明确中文名/代码时，行情、基本面工具可直接接收原词。若返回多只同名不同市场股票，必须调用 ask_user 让用户选择。",
     "category": "query"
   },
   {
     "name": "get_stock_price",
-    "description": "【数据铁律】查询单只股票行情。symbol 可直接传中文名、常见代码或DB格式，工具会解析。省略 days 或 days=1 返回最新价和涨跌；days>1 返回历史K线（OHLCV）。简单行情问题优先用这个，不要启动 StockSage 报告。",
+    "description": "【数据铁律】查询单只股票行情。symbol 可直接传中文名、常见代码或DB格式，工具会解析。省略 days 或 days=1 返回最新价和涨跌；days>1 返回历史K线（OHLCV）。简单行情问题优先用这个。",
     "category": "query"
   },
   {
@@ -148,5 +123,10 @@
     "name": "confirm_delete_transaction",
     "description": "【必须调用】删除交易记录并弹出确认按钮。传 ids 数组（含要删除的交易ID）。调用成功后不输出正文，等待 UI 确认。",
     "category": "mutation"
+  },
+  {
+    "name": "get_fundamentals",
+    "description": "读取指定标的已记录的基本面数据和更新日期。symbol可直接传名称或代码；缺失数据不能推断为零，旧财务记录不能称为实时估值。",
+    "category": "query"
   }
 ]

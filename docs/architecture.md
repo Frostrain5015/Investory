@@ -2,7 +2,7 @@
 
 设计演进入口：[2026-10-22 技术方案 v0.2](a-investory-technical-proposal-2026-10-22.md)。该方案含拟议改造与待决事项；下文继续记录现有实现，不把新方案写成已完成。
 
-主体架构核对日期：2026-10-20；世界市场数据通道更新于 2026-10-22（v6.3.5）。各次验证的范围以集成记录为准。
+当前源码更新至2026-10-24：旧国内价格库已退役，StockSage引擎及调用链已移除；部署结果见对应发布记录。参见[引擎退役说明](operations/stocksage-retirement-2026-10-24.md)。
 
 ## 1. 总体判断
 
@@ -15,7 +15,7 @@ Investory 是一个以投资组合台账为核心的多进程应用：**React �
 | 客户端与展示 | `frontend/` | 页面、图表、国际化、设置、聊天、流式反馈 | HTTP JSON、SSE、Electron preload |
 | 投资组合与台账 | Java `controller/api`、`service`、`dao` | 组合、持仓、买卖记录、分红、现金、成本、收益、净值、盈亏日历 | `/api/portfolios`、`holdings`、`transactions`、`dividends`、`chart` 等 |
 | 行情与数据采集 | Java `crawler`，`script/fetch_*.py` | 实时行情、历史价格、基本面、新闻、汇率、定时采集、管理员控制 | 外部数据源 → MySQL/缓存 → REST/SSE |
-| 量化研究与回测 | StockSage Alpha，`analyze_quant.py`、`backtest_engine.py` 等 | 因子、市场状态、选股、组合风格、相关性、策略、回测、滚动验证、调参 | `/api/quant/*`、`stocksage/*`、`backtest/*` |
+| 量化研究与回测 | `analyze_quant.py`、`optimizer.py`、`backtest_engine.py` 等 | 历史风险统计、组合优化、相关性、策略与回测 | `/api/quant/*`、`backtest/*` |
 | AI 助手 | `AiApiController`、`AiSessionManager`、`script/ai_agent.py` | 模型适配、工具编排、会话历史、产物、记忆、用户确认/回答 | `/api/ai/*`、Python stdin/stdout 协议、模型供应商 API |
 | 身份认证 | `AuthService`、`web`、OAuth 控制器 | 本地认证、Frost ID、应用 Session | 登录/回调 |
 | 桌面宿主 | `desktop/main.js`、`preload.js` | 本地静态页面、窗口 IPC、系统浏览器、深链接、更新 | `127.0.0.1:18256`、`investory://` |
@@ -34,7 +34,6 @@ flowchart TD
     DB[(MySQL)]
     Agent[Python AI agent 子进程]
     Quant[Python 分析与回测子进程]
-    Engine[StockSage 常驻服务 127.0.0.1:8200]
     Data[行情 / 新闻 / 财务数据源]
     Model[配置的模型推理 API]
 
@@ -43,16 +42,13 @@ flowchart TD
     Java --> Auth --> Core --> DB
     Java --> Agent --> Model
     Java --> Quant --> DB
-    Java --> Engine --> Data
     Agent -->|读取数据与执行工具| DB
-    Agent --> Engine
     Quant --> Data
 ```
 
 - 浏览器版由 Java 提供 Vite 构建产物；开发时也可使用独立 Vite 服务。
 - Electron 的静态服务只提供页面，不承载业务 REST API；API 地址由 `frontend/.env.electron` 的 `VITE_API_BASE` 决定。
-- Java 与 Python 同时存在三种边界：短任务子进程、可交互 AI 子进程、StockSage 回环 HTTP。它们的生命周期与故障模式不同。
-- StockSage `server.py` 使用线程 HTTP 服务和引擎锁；Java 桥接优先请求常驻服务，无法使用时回退 CLI。常驻服务启动/运维仍是单独的运行前提，不能把源码存在当成已运行。
+- Java与Python保留短任务子进程、可交互AI子进程两种边界，不再依赖常驻分析引擎的回环HTTP。
 - 示例后端端口为 HTTPS `8443`、context path `/investory`；公网反向代理、开发代理及桌面 API Base 需要与实际配置一致。代码中的 `/api/*` 端点均相对于后端 context path。
 
 ## 3. 客户端结构
@@ -90,7 +86,7 @@ model/                 业务对象和回测请求
 crawler/               调度器、行情服务、长任务与 SSE 会话
 util/                  Python 桥接、子进程运行、JSON、拼音
 web/                   登录拦截、CORS、异常处理
-config/                线程池与 StockSage 桥接装配
+config/                业务线程池与通用配置
 ```
 
 主要业务服务：
@@ -130,19 +126,11 @@ Java 启动 AI 子进程后读取 stdout 上的协议事件，`AiSessionManager`
 
 工具可以读取数据库、调用分析、提出待确认的台账修改，以及生成策略。**生成 Python 策略并执行与“模型只生成文字”有不同的能力边界**；现有代码包含过滤/受限执行逻辑，但不等价于操作系统级隔离沙箱。
 
-### 5.2 StockSage Alpha：分析引擎
+### 5.2 独立分析与回测
 
-位置：`backend/src/main/python/stocksage_alpha/`，由 `bridge.py`/`server.py` 暴露命令能力。
+`script/analyze_quant.py`负责历史风险统计，`optimizer.py`负责组合优化，`portfolio_style_analyzer.py`提供风格分析，`backtest_engine.py`负责规则回测。它们通过共享历史网关获取价格，不依赖已移除的多因子引擎。行情指标与用户规则无需先转换成预设因子评分。
 
-- `fetcher.py`、`cache.py`、`trading_calendar.py`：数据获取、缓存、交易日。
-- `factors/`：基本面、事件、情绪、技术因子与聚合评分。
-- `factors/technical/`：动量、振荡、形态、波动、成交量、市场类因子；`__init__.py` 维持公开导出。
-- `strategies/`：策略评分/选股。
-- `research.py`、`industry.py`、`report/`：研究、行业和报告构造。
-
-原来的 `factors/technical.py` 与同名 package 同时存在，Python 实际导入 package。旧单文件未被运行路径使用，且与拆分实现大面积重复，已删除；保留的是实际生效的 package，实现和导出未被旧代码覆盖。
-
-两套 Python 位置的区别是“应用任务编排”和“分析引擎”，不建议为了目录整齐把它们机械合并。它们目前仍有数据/指标概念重叠；后续统一应以数据口径测试为先。
+投研页保留独立风控统计和回测，自动扫描、每日推荐、因子雷达和市场等级入口已移除。历史聊天和研究报告仍可读取。
 
 ## 6. 身份与存储
 
@@ -150,7 +138,7 @@ Java 启动 AI 子进程后读取 stdout 上的协议事件，`AiSessionManager`
 
 2026-10-22 起，外部访问 Investory 的 MCP 服务、工具注册、OAuth 授权及 Bearer 身份注入已移除。用户通过应用入口登录；内置观澜继续使用应用的业务能力，Frost ID 登录不受影响。旧 MCP 表仅保留迁移历史，不再有读取或认证入口。
 
-MySQL 主要承载：账号/组合、股票/价格/基本面、持仓/交易/分红、日净值、策略/回测结果、分析缓存、AI 设置/会话/产物/记忆、Session、采集历史。StockSage 与 Java/Python 各层也有内存/数据库缓存；因此刷新行为不能仅按前端缓存理解。
+MySQL 主要承载：账号/组合、股票/价格/基本面、持仓/交易/分红、日净值、策略/回测结果、分析缓存、AI 设置/会话/产物/记忆、Session、采集历史。Java/Python各层仍有内存/磁盘缓存。旧引擎缓存表作为历史记录保留，活跃代码不再读写。
 
 显示币种通过 `/api/market/exchange-rates` 读取数据库的外币/CNY 比率，再乘以人民币金额。原汇率表没有更新时间字段，因此接口不声称这些值是实时行情，`updatedAt` 为 null；前端缺值时仍使用原有的备用比率。
 
@@ -191,7 +179,7 @@ Maven 最后一条用于已有依赖缓存的离线验证，并关闭会自动�
 
 1. 大型 `AiApiController`/`ai_agent.py` 仍承担协议、业务、存储多重职责；本次先拆出消息、渲染、存储、配置和回测进程边界，没有进行高风险的整套 agent 重写。
 2. 部分 Controller 仍直接调用 JdbcTemplate，Java/Python 共享数据库 schema；后续应按用例收敛服务层，不能只做机械包移动。
-3. 内存任务状态、定时任务、常驻引擎锁、缓存和固定线程池以单实例为前提；多实例部署需要任务所有权与共享状态。
+3. 内存任务状态、定时任务、缓存和固定线程池以单实例为前提；多实例部署需要任务所有权与共享状态。
 4. 自定义策略执行没有完成系统级隔离；实盘前需要确定性的信号/风控、独立执行网关、订单状态机和对账。
 5. 缺少券商 SDK/QMT/真实订单适配，Electron 不等于完整离线私有化客户端；这些属于未来产品能力。
 6. Web 构建仍提示部分图表/主入口包大于 500 kB；功能构建通过，但首屏性能、真实浏览器交互和安装包全链路尚未在本次验证中覆盖。

@@ -39,12 +39,6 @@ function isDuplicateConfirmCopy(title: string, label: string) {
   return !!a && !!b && (a === b || a.includes(b) || b.includes(a))
 }
 
-function isStockSageTool(name: string) {
-  return name === 'get_stock_report'
-    || name === 'get_portfolio_report'
-    || name === 'get_daily_picks_report'
-}
-
 // ── Tool icon registry ────────────────────────────────────────────────
 // One map for all per-tool icon assignments. Tools not listed here fall
 // back to category defaults: query→Search, analysis→Wrench, mutation→Wrench.
@@ -65,7 +59,6 @@ function getToolIcon(name: string, category: ToolCategory) {
  * colours are determined by category and done/error state. */
 function toolStyle(step: Extract<TimelineStep, { kind: 'tool' }>) {
   const cat: ToolCategory = step.category || 'query'
-  const isStockSage = isStockSageTool(step.name)
   const Icon = getToolIcon(step.name, cat)
   if (step.interrupted) return { label: 'text-amber-600 dark:text-amber-400', dot: 'bg-amber-400', Icon }
   if (step.error) {
@@ -73,9 +66,6 @@ function toolStyle(step: Extract<TimelineStep, { kind: 'tool' }>) {
   }
   if (step.done) {
     return { label: 'text-emerald-600', dot: 'bg-emerald-400', Icon }
-  }
-  if (isStockSage) {
-    return { label: 'text-purple-500', dot: 'bg-purple-400 animate-pulse', Icon }
   }
   if (cat === 'mutation') {
     return { label: 'text-amber-600', dot: 'bg-amber-400 animate-pulse', Icon }
@@ -170,11 +160,8 @@ function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: bo
 function ToolStepDisplay({ step, idx, lang, isLast, noAnimate }: { step: Extract<TimelineStep, { kind: 'tool' }>; idx: number; lang: 'zh' | 'en' | 'hk'; isLast?: boolean; noAnimate?: boolean }) {
   const { label, Icon } = toolStyle(step)
   const running = !step.done && !step.error
-  const stockSage = isStockSageTool(step.name)
   const isWebSearch = step.name === 'web_search'
-  const displayName = stockSage
-    ? (lang === 'en' ? 'StockSage engine' : 'StockSage 量化引擎')
-    : localizeToolName(step.name, lang)
+  const displayName = localizeToolName(step.name, lang)
   const statusText = running
     ? (lang === 'en' ? 'running' : '运行中')
     : (lang === 'en' ? 'completed' : '已完成')
@@ -189,7 +176,7 @@ function ToolStepDisplay({ step, idx, lang, isLast, noAnimate }: { step: Extract
     ? (lang === 'en' ? `referenced ${sourceCount} sources` : `参考了 ${sourceCount} 篇资料`)
     : null
   // Node colour: running → category hue (with halo), done → emerald, error → red.
-  const catColor = stockSage || step.category === 'analysis' ? 'bg-purple-400'
+  const catColor = step.category === 'analysis' ? 'bg-purple-400'
     : step.category === 'mutation' ? 'bg-amber-400'
     : 'bg-slate-400'
   const dotClass = step.interrupted ? 'bg-amber-400' : step.error ? 'bg-red-400' : step.done ? 'bg-emerald-400' : catColor
@@ -212,16 +199,12 @@ function ToolStepDisplay({ step, idx, lang, isLast, noAnimate }: { step: Extract
           </>
         ) : (
           <>
-            {!step.error && !stockSage && <span className="text-[10px] opacity-70">{statusText}</span>}
+            {!step.error && <span className="text-[10px] opacity-70">{statusText}</span>}
             {step.done && !step.error && <Check className="w-3 h-3 opacity-70" />}
-            {step.done && !step.error && step.summary && !stockSage && (
+            {step.done && !step.error && step.summary && (
               <span className="text-[10px] text-slate-400">{step.summary}</span>
             )}
           </>
-        )}
-        {/* StockSage engine: status shown as summary instead of inline */}
-        {!step.error && stockSage && (
-          <span className="text-[10px] text-slate-400">{statusText}</span>
         )}
         {step.error && (
           <>
@@ -1453,13 +1436,12 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
 // ── Shared card components ──
 
 function artifactLabel(type: string) {
-  if (type === 'stock_report') return 'StockSage 个股报告'
-  if (type === 'portfolio_report') return 'StockSage 组合报告'
-  if (type === 'daily_picks_report') return 'StockSage 选股报告'
-  // Backtests come from the quant backtest engine, not StockSage — label them
-  // distinctly so a strategy report isn't mistaken for a stock audit.
+  if (type === 'stock_report') return '个股研究报告'
+  if (type === 'portfolio_report') return '组合研究报告'
+  if (type === 'daily_picks_report') return '选股研究报告'
+  // Persisted reports remain readable after their original producer is retired.
   if (type === 'backtest_result') return '量化回测报告'
-  return 'StockSage 报告'
+  return '研究报告'
 }
 
 function artifactContent(artifact: ReportArtifact): Record<string, unknown> {

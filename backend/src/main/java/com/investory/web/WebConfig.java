@@ -98,8 +98,6 @@ public class WebConfig implements WebMvcConfigurer {
                 .excludePathPatterns("/", "/login", "/register", "/logout", "/error",
                         "/oauth/frost-id/login", "/oauth/frost-id/callback", "/oauth/frost-id/exchange",
                         "/api/session", "/api/session/test-login", "/api/stock/search",
-                        "/api/stocksage/regime", "/api/stocksage/scan-results",
-                        "/api/stocksage/portfolio-analysis",
                         "/assets/**", "/favicon.svg", "/icons.svg", "/*.js", "/*.css", "/*.json",
                         "/slides.html");
     }

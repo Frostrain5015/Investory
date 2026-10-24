@@ -16,9 +16,7 @@ from urllib.parse import parse_qs, urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "script"))
-sys.path.insert(0, str(ROOT / "backend/src/main/python/stocksage_alpha/src"))
 import hithink_finance as hf
-import pandas as pd
 
 
 def stamp(day):
@@ -140,69 +138,6 @@ class TransportTest(unittest.TestCase):
 
 
 class RoutingTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        # Other stock data adapters are not involved in these offline tests.
-        import common
-        previous = sys.modules.get("akshare")
-        sys.modules["akshare"] = types.ModuleType("akshare")
-        try:
-            with patch.object(common, "setup_proxy", return_value=False):
-                cls.fetcher = importlib.import_module("fetcher")
-        finally:
-            if previous is None:
-                del sys.modules["akshare"]
-            else:
-                sys.modules["akshare"] = previous
-
-    def test_factor_history_reads_only_hithink_qfq_and_new_cache(self):
-        import pandas as pd
-        provider = Mock()
-        provider.history.return_value = {"points": [{"date": "2026-10-21", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 100, "amount": 1000}, {"date": "2026-10-22", "open": 10, "high": 12, "low": 9, "close": 11, "volume": 200, "amount": 2100}]}
-        with patch("market_history.history", side_effect=provider.history), patch.object(self.fetcher.cache, "get_df", return_value=None) as cached, patch.object(self.fetcher.cache, "set_df"):
-            result = self.fetcher.get_price_history("600519.SH", 1)
-        self.assertEqual(len(result), 1)
-        self.assertAlmostEqual(result["change_pct"].iloc[0], 10)
-        self.assertEqual(result.attrs["adjust"], "forward")
-        self.assertTrue(cached.call_args.args[0].startswith("price_hithink_forward_v1_"))
-        self.assertNotIn("turnover", result.columns)
-        self.assertEqual(provider.history.call_args.args[-1], "forward")
-        self.assertTrue(pd.api.types.is_datetime64_any_dtype(result["date"]))
-        self.assertFalse(hasattr(self.fetcher, "_get_baostock"))
-
-    def test_failed_history_does_not_fall_back_to_baostock_or_old_cache(self):
-        provider = Mock()
-        provider.history.side_effect = hf.HithinkError("unavailable")
-        with patch("market_history.history", side_effect=provider.history), patch.object(self.fetcher.cache, "get_df", return_value=None) as cached:
-            self.assertIsNone(self.fetcher.get_price_history("600519"))
-        cached.assert_called_once()
-        provider.history.assert_called_once()
-
-    def test_snapshot_cannot_generate_historical_percentiles(self):
-        provider = Mock()
-        provider.valuation.return_value = {"pe_ttm": 12, "pb": 1.2, "ps_ttm": None, "pcf_ttm": -2, "timestamp": None}
-        with patch.object(self.fetcher, "_hithink", return_value=provider), patch.object(self.fetcher.cache, "get", return_value=None), patch.object(self.fetcher.cache, "set"):
-            frame = self.fetcher.get_valuation_snapshot("600519")
-        from factors.scoring import score_value
-        result = score_value(12, 1.2, frame)
-        self.assertEqual(result["details"]["pe_score_source"], "absolute")
-        self.assertIsNone(result["details"].get("pe_percentile"))
-        self.assertIsNone(result["details"].get("pb_percentile"))
-        self.assertEqual(len(frame), 1)
-        self.assertEqual(frame.attrs["scope"], "snapshot")
-        self.assertFalse(frame.attrs["historical_valuation_available"])
-
-    def test_calendar_is_daily_and_unknown_future_is_not_a_holiday(self):
-        provider = Mock()
-        provider.calendar.return_value = ["2026-10-21", "2026-10-22"]
-        with patch.object(self.fetcher, "_hithink", return_value=provider), patch.object(self.fetcher.cache, "get", return_value=None) as cached, patch.object(self.fetcher.cache, "set"):
-            self.assertEqual(self.fetcher.get_trade_calendar(), ["2026-10-21", "2026-10-22"])
-        self.assertTrue(cached.call_args.args[0].startswith("trade_calendar_hithink_v1_"))
-        with self.assertRaises(hf.HithinkError):
-            self.fetcher.is_trading_day(datetime.now(hf.SHANGHAI).date() + timedelta(days=1))
-        with patch.object(self.fetcher, "get_trade_calendar", return_value=[]), self.assertRaises(hf.HithinkError):
-            self.fetcher.is_trading_day()
-
     def test_guanlan_history_bypasses_price_sql_and_keeps_raw_prices(self):
         agent = importlib.import_module("ai_agent")
         connection = Mock()
@@ -217,41 +152,6 @@ class RoutingTest(unittest.TestCase):
         connection.cursor.assert_not_called()
         connection.close.assert_called_once()
 
-    def test_research_uses_snapshot_for_display_and_does_not_claim_history(self):
-        research = importlib.import_module("research")
-        price = pd.DataFrame({"date": pd.date_range("2025-01-01", periods=300),
-                              "open": [10.0] * 300, "high": [11.0] * 300,
-                              "low": [9.0] * 300, "close": [10.0] * 300,
-                              "volume": [1000.0] * 300, "amount": [10000.0] * 300,
-                              "change_pct": [0.0] * 300, "change_amt": [0.0] * 300})
-        snapshot = pd.DataFrame([{"pe_ttm": -2.5, "pb": None, "ps_ttm": 1, "pcf_ttm": 2}])
-        responses = {"get_realtime_quote": {"name": "test", "price": 10, "pe_ttm": 20, "pb": 3},
-                     "get_stock_info": {}, "get_price_history": price,
-                     "get_valuation_snapshot": snapshot, "get_concept_momentum": []}
-        with ExitStack() as stack:
-            for name in research.__dict__:
-                if name.startswith("get_") or name == "_get_spot_df":
-                    stack.enter_context(patch.object(research, name, return_value=responses.get(name)))
-            result = research.research("600519.SH")
-        self.assertNotIn("error", result)
-        self.assertEqual(result["valuation"]["pe_ttm"], -2.5)
-        self.assertIsNone(result["valuation"]["pb"])
-        self.assertEqual(result["valuation"]["scope"], "snapshot")
-        self.assertNotIn("pe_3y_median", result["valuation"])
-        self.assertIsNone(result["valuation"]["pe_percentile"])
-        self.assertTrue(result["data_limitations"])
-
-    def test_report_surfaces_data_limitations(self):
-        import importlib.util
-        path = ROOT / "backend/src/main/python/stocksage_alpha/bridge.py"
-        spec = importlib.util.spec_from_file_location("hithink_test_bridge", path)
-        bridge = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(bridge)
-        research_result = {"code": "600519", "name": "test", "factors": {}, "data_limitations": ["历史估值分位不可用"]}
-        with patch.object(bridge, "_research_cached", return_value=research_result):
-            report = bridge._build_stock_report("600519.SH")
-        self.assertIn("历史估值分位不可用", report["data_quality"]["missing"])
-        self.assertNotIn("valuation_history", report["data_sources"])
 
 
 class LatestQuoteTest(unittest.TestCase):

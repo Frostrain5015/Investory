@@ -7,10 +7,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from tools.cloud_deploy import REMOTE_FILES, runtime_path, deploy_cloud
+from tools.cloud_deploy import REMOTE_FILES, runtime_path, retired_runtime_path, deploy_cloud
 
 
 class CloudReleaseTest(unittest.TestCase):
@@ -33,13 +33,48 @@ class CloudReleaseTest(unittest.TestCase):
 
     def test_runtime_mapping_excludes_secrets_caches_and_evaluations(self):
         self.assertEqual(runtime_path("script/model_transport.py"), "script/model_transport.py")
-        self.assertEqual(runtime_path("backend/src/main/python/stocksage_alpha/src/factors/technical/__init__.py"),
+        self.assertIsNone(runtime_path("backend/src/main/python/stocksage_alpha/src/factors/technical/__init__.py"))
+        self.assertEqual(retired_runtime_path("backend/src/main/python/stocksage_alpha/src/factors/technical/__init__.py"),
                          "stocksage_alpha/src/factors/technical/__init__.py")
         for path in ["script/config.ini", "script/config.json", "script/evals/cases/test.json", "script/tests/test_runtime.py",
                      "backend/src/main/python/stocksage_alpha/.env", "frontend/.env.electron"]:
             self.assertIsNone(runtime_path(path), path)
         with self.assertRaises(ValueError):
             runtime_path("script/../config.ini")
+        with self.assertRaises(ValueError):
+            retired_runtime_path("backend/src/main/python/stocksage_alpha/../config.ini")
+
+    def test_success_retires_service_and_failure_restores_its_previous_state(self):
+        for fail in [False, True]:
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory); (root/'backend/target').mkdir(parents=True)
+                jar=root/'backend/target/investory.jar'; jar.write_bytes(b'release')
+                checksum=hashlib.sha256(jar.read_bytes()).hexdigest()
+                commands=[]
+                def read_remote(client, command):
+                    commands.append(command)
+                    if 'release.json' in command: return json.dumps({'commit':'previous'})
+                    if 'is-active' in command:return 'active'
+                    if 'is-enabled' in command:return 'enabled'
+                    if 'sha256sum' in command:return checksum+'  investory.jar'
+                    return ''
+                client=MagicMock()
+                with patch('tools.cloud_deploy.git', side_effect=lambda root,*args: '' if args[0] in {'status','cat-file'} else 'head'), \
+                     patch('tools.cloud_deploy.remote', side_effect=read_remote), \
+                     patch('tools.cloud_deploy.release_files', return_value=({'investory.jar':jar},['stocksage_alpha/bridge.py'])), \
+                     patch('tools.cloud_deploy.active_jobs', return_value=[]), \
+                     patch('tools.cloud_deploy.remote_files') as files, \
+                     patch('tools.cloud_deploy.wait_health', side_effect=[RuntimeError('not-ready'),None] if fail else None):
+                    if fail:
+                        with self.assertRaisesRegex(RuntimeError,'not-ready'):deploy_cloud(client,root,'test','http://localhost')
+                        self.assertIn('systemctl enable stocksage',commands)
+                        self.assertIn('systemctl start stocksage',commands)
+                        self.assertEqual(files.call_args.args[2],'restore')
+                    else:
+                        deploy_cloud(client,root,'test','http://localhost')
+                        self.assertNotIn('systemctl start stocksage',commands)
+                        self.assertIn('systemctl disable stocksage',commands)
+                    self.assertFalse(any('8200/health' in c for c in commands))
 
     def run_program(self, payload, operation):
         return subprocess.run([sys.executable, "-c", REMOTE_FILES],

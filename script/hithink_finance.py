@@ -1,4 +1,4 @@
-"""Read-only Hithink Financial API transport shared by Guanlan and StockSage.
+"""Read-only Hithink Financial API transport shared by Guanlan and application services.
 
 Configuration is shared with Spring: environment overrides the private
 hithink-data.local.properties file. Credentials never enter URLs or errors.

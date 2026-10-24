@@ -19,7 +19,7 @@ Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-cur
 ## ✨ Highlights
 
 - **🧠 AI assistant "Guanlan" (观澜)** — streaming chat with tool-use and a morph animation system; can analyze your portfolio and generate strategies mid-conversation.
-- **📊 Quantitative engine (StockSage Alpha)** — factor scoring, market-regime detection, portfolio style/risk analysis, and a strategy backtester (SMA/EMA/RSI/MACD/Bollinger/KDJ rules or custom Python), with walk-forward validation and parameter optimization.
+- **📊 Quantitative analysis and backtesting** — independent historical risk statistics, portfolio optimization, and a strategy backtester (SMA/EMA/RSI/MACD/Bollinger/KDJ rules or custom Python), with walk-forward validation and parameter optimization.
 - **🌍 Multi-market, multi-currency** — A-shares, HK, US; CNY / HKD / USD with daily FX refresh and per-currency cash tracking.
 - **💻 Cross-platform** — responsive web (tested from 320px phones to 21:9 ultra-wide) + a native Electron desktop client with auto-update.
 
@@ -79,7 +79,7 @@ Tracks A-shares (Shanghai / Shenzhen), Hong Kong, and US equities with multi-cur
 | **Backend** | Java 17 · Spring Boot 3.3.5 · MySQL (JdbcTemplate, no ORM) · Flyway · Spring Session JDBC · BCrypt · Gson |
 | **Frontend** | React 19 · TypeScript · Vite 8 · React Router 7 · Tailwind CSS 4 · Recharts 3 · ECharts 6 · Framer Motion 12 |
 | **Desktop** | Electron 33 · electron-builder · electron-updater (auto-update via GitHub Releases) |
-| **Quant / Data** | Python 3.10+ · StockSage Alpha engine · Yahoo / Sina / East Money data sources · custom AI agent & backtest engine |
+| **Quant / Data** | Python 3.10+, shared Hithink/history gateways, AI agent, independent analysis and backtest workers |
 
 ---
 
@@ -102,7 +102,6 @@ investory/
 │   │   ├── crawler/     # @Scheduled market-data sync & FX refresh
 │   │   ├── web/         # LoginInterceptor, CORS, GlobalExceptionHandler
 │   │   └── config/
-│   ├── src/main/python/stocksage_alpha/ # analysis engine source
 │   └── src/main/resources/
 │       ├── application.properties
 │       ├── db/migration/             # Flyway V2..V7 (legacy baseline)
@@ -147,8 +146,6 @@ cd frontend && npm install && npm run dev   # http://localhost:5173, proxies /ap
 ```bash
 cd script && pip install -r requirements.txt
 cp config.ini.example config.ini            # set MySQL + proxy
-pip install -r ../backend/src/main/python/stocksage_alpha/requirements.txt
-python fetch_stocks.py -m a                 # crawl market data
 ```
 
 ### 5. Desktop client
@@ -181,7 +178,7 @@ External MCP access was removed on 2026-10-22. Existing MCP tokens no longer aut
 | P&L Calendar | `GET /api/chart?type=pnl_calendar` · `/api/daily-detail` · `/api/monthly-detail` |
 | Watchlist | CRUD `/api/watchlist` · `PUT /api/watchlist/reorder` |
 | Market | `GET /api/market/indices` · `/exchange-rates` · `/news` |
-| Quant / Backtest | `/api/quant/*` · `/api/stocksage/*` · CRUD `/api/backtest/strategies` · `GET /api/backtest/stream` (SSE) |
+| Quant / Backtest | `/api/quant/*`, CRUD `/api/backtest/strategies` · `GET /api/backtest/stream` (SSE) |
 | AI | `POST /api/ai/chat` · `GET /api/ai/stream` (SSE) · `/api/ai/settings` |
 | Admin | `/api/admin/status` · `/users` · `/crawl-history` · `/crawl/{market}` |
 

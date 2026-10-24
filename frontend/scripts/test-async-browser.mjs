@@ -32,6 +32,7 @@ import Dividends from './src/pages/Dividends'
 import Portfolio from './src/pages/Portfolio'
 import PnlCalendar from './src/pages/PnlCalendar'
 import Admin from './src/pages/Admin'
+import Research from './src/pages/Research'
 import PageTransition from './src/components/PageTransition'
 import AsyncState from './src/components/AsyncState'
 import QuoteNumber from './src/components/QuoteNumber'
@@ -39,7 +40,7 @@ import QuoteWarning from './src/components/QuoteWarning'
 import Sparkline from './src/components/Sparkline'
 import './src/index.css'
 const parameters = new URLSearchParams(location.search)
-const pages = {Market,Dashboard,StockDetail,Holdings,Transactions,Dividends,Portfolio,PnlCalendar,Admin,DataMotion}
+const pages = {Market,Dashboard,StockDetail,Holdings,Transactions,Dividends,Portfolio,PnlCalendar,Admin,DataMotion,Research}
 function DataMotion() {
   const [phase,setPhase] = React.useState(0)
   const [warning,setWarning] = React.useState(false)
@@ -85,7 +86,7 @@ try {
   browser = await chromium.launch({ headless: true, ...(process.env.CHAT_TEST_BROWSER ? { executablePath: process.env.CHAT_TEST_BROWSER } : {}) })
   const page = await browser.newPage({ viewport: { width: 1280, height: 850 } })
   page.on('pageerror', error => errors.push(error.message))
-  const state = { name: '', phase: 0, detailRequests: 0, chartRequests: 0, progressRequests: 0, retiredRequests: 0, dashboardRequests: 0, manualRefreshRequests: 0 }
+  const state = { name: '', phase: 0, detailRequests: 0, chartRequests: 0, progressRequests: 0, retiredRequests: 0, dashboardRequests: 0, manualRefreshRequests: 0, retiredEngineRequests: 0 }
   let gate = deferred()
   const point = { date:'2026-10-22',open:100,high:102,low:99,close:101,volume:1000 }
   const prices = [point,{...point,date:'2026-10-23',close:102}]
@@ -95,6 +96,11 @@ try {
     const url = new URL(route.request().url())
     let data = {}, status = 200
     if (url.pathname.includes('/api/admin/crawl/')) state.retiredRequests++
+    if (url.pathname.startsWith('/api/stocksage/')) { state.retiredEngineRequests++; status=410 }
+    if (url.pathname.endsWith('/api/quant/portfolio-scenario')) data={risk:{weighted_beta:1.1,var_95_pct:null,portfolio_maxdd:-12.5},scenarios:[]}
+    if (url.pathname.endsWith('/api/backtest/history')) data=[]
+    if (url.pathname.endsWith('/api/backtest/strategies')) data=[]
+    if (url.pathname.endsWith('/api/backtest/status')) data={active:false}
     if (url.pathname.endsWith('/api/portfolio/refresh')) state.manualRefreshRequests++
     if (url.pathname.endsWith('/api/admin/status')) data={markets:[{market:'A',stock_count:10}],totals:{stock_count:10},tables:[{total_mb:1}]}
     if (url.pathname.endsWith('/api/admin/users')) data=[]
@@ -298,6 +304,20 @@ try {
   assert.equal(state.retiredRequests,0)
   await page.screenshot({path:path.join(output,'admin-retired.png')})
   reports.push('Admin retains past synchronization records while removed collector controls and endpoints are never used')
+
+  await page.goto(`${base}?page=Research`)
+  await page.getByRole('heading',{name:'投研',exact:false}).waitFor()
+  await page.getByText('组合 Beta',{exact:true}).waitFor()
+  await page.getByText('历史最大回撤',{exact:true}).waitFor()
+  await page.getByText('暂无已计算的历史情景',{exact:true}).waitFor()
+  assert.equal(await page.getByRole('tab',{name:'选股',exact:true}).count(),0)
+  assert.equal(await page.getByLabel('—',{exact:true}).count(),1)
+  assert.equal(await page.getByLabel('-12.50%',{exact:true}).count(),1)
+  await page.screenshot({path:path.join(output,'research-without-engine.png')})
+  await page.getByRole('tab',{name:'回测',exact:true}).click()
+  await page.getByRole('button',{name:'新建策略',exact:true}).waitFor()
+  assert.equal(state.retiredEngineRequests,0)
+  reports.push('Research reads independent historical risk statistics, keeps missing values unknown and retains backtests without engine requests')
 
   await page.goto(`${base}?page=Transitions`)
   await page.getByRole('heading',{name:'即时页面'}).waitFor()

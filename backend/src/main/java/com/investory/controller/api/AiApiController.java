@@ -806,8 +806,8 @@ public class AiApiController {
     private long persistArtifact(long userId, long conversationId, Map<String, Object> artifact) {
         if (userId <= 0 || artifact == null || artifact.isEmpty()) return 0;
         try {
-            String type = String.valueOf(artifact.getOrDefault("type", "stocksage_report"));
-            String title = String.valueOf(artifact.getOrDefault("title", "StockSage 分析报告"));
+            String type = String.valueOf(artifact.getOrDefault("type", "research_report"));
+            String title = String.valueOf(artifact.getOrDefault("title", "研究报告"));
             String summary = String.valueOf(artifact.getOrDefault("summary", ""));
             Object contentJson = artifact.get("content_json");
             String contentJsonStr = contentJson == null ? json.writeValueAsString(artifact) : json.writeValueAsString(contentJson);

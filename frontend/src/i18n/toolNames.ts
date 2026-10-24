@@ -2,6 +2,7 @@ import type { Lang } from './translations'
 
 type ToolLabelMap = Record<string, string>
 
+// Retired tool labels remain solely for persisted conversation history.
 const zh: ToolLabelMap = {
   get_portfolio: '读取现有持仓',
   get_stock_report: '请求审计报告',
@@ -12,6 +13,7 @@ const zh: ToolLabelMap = {
   get_strategies: '获取策略',
   search_stocks: '搜索标的',
   get_stock_price: '查询市场行情',
+  get_fundamentals: '读取基本面数据',
   get_pnl_history: '获取盈亏走势',
   get_transactions: '获取交易记录',
   compute_correlation: '分析相关性矩阵',
@@ -44,6 +46,7 @@ const en: ToolLabelMap = {
   get_strategies: 'Getting strategies',
   search_stocks: 'Searching symbols',
   get_stock_price: 'Getting price',
+  get_fundamentals: 'Getting fundamentals',
   get_pnl_history: 'Getting P&L history',
   get_transactions: 'Getting transactions',
   compute_correlation: 'Analyzing correlation',
@@ -76,6 +79,7 @@ const hk: ToolLabelMap = {
   get_strategies: '獲取策略',
   search_stocks: '搜尋標的',
   get_stock_price: '查詢市場行情',
+  get_fundamentals: '讀取基本面數據',
   get_pnl_history: '獲取盈虧走勢',
   get_transactions: '獲取交易記錄',
   compute_correlation: '分析相關性矩陣',

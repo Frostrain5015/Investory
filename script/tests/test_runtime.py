@@ -21,7 +21,7 @@ from model_transport import needs_proxy
 
 class SourceIntegrityTest(unittest.TestCase):
     def test_first_party_python_parses_and_has_no_package_shadowing(self):
-        roots = [ROOT / "script", ROOT / "backend/src/main/python/stocksage_alpha"]
+        roots = [ROOT / "script"]
         checked = 0
         for source_root in roots:
             for source in source_root.rglob("*.py"):

@@ -161,7 +161,6 @@ class NoPriceSqlTest(unittest.TestCase):
         root = Path(__file__).resolve().parents[2]
         files = [p for p in (root/"script").glob("*.py") if p.name != "retire_price_store.py"]
         files += list((root/"backend/src/main/java").rglob("*.java"))
-        files += list((root/"backend/src/main/python/stocksage_alpha").rglob("*.py"))
         import re
         for path in files:
             with self.subTest(file=path.name):

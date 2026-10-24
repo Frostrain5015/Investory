@@ -2,7 +2,6 @@ import { ChatContext } from '@/hooks/use-chat'
 import { NavLink } from 'react-router-dom'
 import PageTransition from '@/components/PageTransition'
 import { useAuth } from '@/hooks/use-auth'
-import { usePortfolioPreload } from '@/hooks/use-portfolio-preload'
 import { useMorningGreeting } from '@/hooks/use-morning-greeting'
 import { useT } from '@/i18n/I18nContext'
 import LangSwitcher from '@/components/LangSwitcher'
@@ -18,7 +17,6 @@ import { displaySymbol } from '@/lib/format'
 export default function Layout() {
   const { t, lang } = useT()
   const { username, portfolioId, isAdmin, setPortfolioName, logout } = useAuth()
-  usePortfolioPreload()  // triggers background analysis on login
   useMorningGreeting()   // once-per-day greeting bubble
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<StockSearchItem[]>([])
