@@ -16,7 +16,7 @@
   },
   {
     "name": "generate_strategy",
-    "description": "【策略铁律】生成量化策略的唯一途径。用户要求写策略/构建策略/设计策略时必须调用，第一轮只调用本工具，不输出正文。description 写策略名称、入场、出场、止损、仓位和风控；code 必须包含 def decide(ctx)，仅用 numpy/math，避免 pandas/聚宽/米筐。",
+    "description": "生成策略草稿卡片，必须用户在卡片保存后才会获得真实 strategy_id。草稿展示后结束本轮，等待用户保存；不能立即回测或编造ID。",
     "category": "analysis"
   },
   {

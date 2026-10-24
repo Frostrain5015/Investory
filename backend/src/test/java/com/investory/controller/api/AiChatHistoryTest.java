@@ -32,6 +32,20 @@ class AiChatHistoryTest {
     }
 
     @Test
+    void toolContextIsIsolatedByUserAndConversation() {
+        controller.saveToolContext(42, 7, "first");
+        controller.saveToolContext(42, 8, "second");
+        controller.saveToolContext(43, 7, "other user");
+        assertEquals("first", controller.loadToolContext(42, 7));
+        assertEquals("second", controller.loadToolContext(42, 8));
+        assertEquals("", controller.loadToolContext(42, 9));
+        controller.saveToolContext(42, 7, "updated");
+        assertEquals("updated", controller.loadToolContext(42, 7));
+        assertEquals("second", controller.loadToolContext(42, 8));
+        assertEquals("other user", controller.loadToolContext(43, 7));
+    }
+
+    @Test
     void toolOnlyFailureAndUserStopSurviveBothHistoryEndpoints() throws Exception {
         for (String kind : List.of("error", "stopped")) {
             var tool = new LinkedHashMap<String, Object>(Map.of("kind", "tool", "name", "get_stock_report", "done", false, "callId", kind));
@@ -43,9 +57,8 @@ class AiChatHistoryTest {
             for (int index : List.of(0, 2)) {
                 var assistant = (Map<?, ?>) messages.get(index);
                 assertEquals("assistant", assistant.get("role"));
-                var steps = new ObjectMapper().readTree((String) assistant.get("thinking"));
-                assertTrue(steps.get(0).get("done").asBoolean());
-                assertEquals("中断提示", steps.get(0).get("error").asText());
+                assertFalse(assistant.containsKey("thinking"));
+                assertEquals("", assistant.get("content"));
             }
             assertEquals("notice", ((Map<?, ?>) messages.get(1)).get("role"));
             assertTrue(((Map<?, ?>) messages.get(3)).get("content").toString().contains("stopped"));
@@ -61,9 +74,10 @@ class AiChatHistoryTest {
         controller.persistTurn(42, 7, text, steps, false, Map.of("kind", "error", "message", "上下文不足"));
         assertTrue(jdbc.queryForObject("SELECT COUNT(*) FROM ai_chat_history WHERE role='thinking'", Integer.class) > 1);
         var restored = (List<?>) controller.getConversation(7, request).get("messages");
-        var timeline = new ObjectMapper().readTree((String) ((Map<?, ?>) restored.get(0)).get("thinking"));
-        assertEquals(text, timeline.get(0).get("text").asText());
-        assertEquals("已获取行情", timeline.get(1).get("summary").asText());
+        var answer = (Map<?, ?>) restored.get(0);
+        assertFalse(answer.containsKey("thinking"));
+        assertEquals(text, answer.get("content"));
+        assertFalse(answer.toString().contains("get_stock_price"));
     }
 
     @Test

@@ -220,6 +220,34 @@ class Client:
             return {symbol: dict(self._snapshots[normalize_symbol(symbol)][1])
                     for symbol in symbols if self._snapshots.get(normalize_symbol(symbol), (0, None))[1] is not None}
 
+    def index_snapshot(self, symbols: list[str]) -> dict[str, dict]:
+        canonical = {symbol: normalize_symbol(symbol) if not symbol.upper().endswith(".TI") else symbol.strip().upper() for symbol in symbols}
+        codes = list(dict.fromkeys(canonical.values()))
+        if not codes or len(codes) > 50 or any(not re.fullmatch(r"000\d{3}\.SH|399\d{3}\.SZ|\d{6}\.TI", code) for code in codes):
+            raise HithinkError("指数快照仅接受最多50个有效的内地指数代码")
+        data = self.get("/api/a-share-index/prices/snapshot", {"thscodes": ",".join(codes)})
+        quotes = {}
+        seen = set()
+        for row in data["item"]:
+            code = row.get("thscode")
+            if code not in codes:
+                continue
+            if code in seen:
+                raise HithinkError("同花顺指数快照包含重复标的")
+            seen.add(code)
+            price, previous = number(row.get("last_price")), number(row.get("prev_price"))
+            if price is None or price <= 0:
+                continue
+            change, pct = number(row.get("price_change")), number(row.get("price_change_ratio_pct"))
+            if change is None and previous is not None and previous > 0:
+                change = price - previous
+            if pct is None and change is not None and previous is not None and previous > 0:
+                pct = change / previous * 100
+            quotes[code] = {"symbol": code, "price": price, "previousClose": previous, "change": change,
+                            "changePct": pct, "source": SOURCE, "timestamp": data.get("timestamp"),
+                            "timestampScope": "BATCH", "live": False, "currency": "CNY"}
+        return {symbol: dict(quotes[code]) for symbol, code in canonical.items() if code in quotes}
+
     def history(self, symbol: str, start: date, end: date, adjust: str = "forward") -> dict:
         symbol = normalize_symbol(symbol)
         if adjust not in {"none", "forward", "backward"} or not 0 <= (end - start).days <= 3650:

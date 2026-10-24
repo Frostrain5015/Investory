@@ -19,7 +19,7 @@ class AiSessionManagerTest {
     void stopBeforeProcessBindIsRememberedAndDoesNotEraseEarlierEvents() throws Exception {
         var manager = new AiSessionManager();
         manager.startSession(42);
-        manager.emitTool(42, "get_stock_report", "analysis", "c1", "");
+        manager.emitActivity(42, "正在分析圣泉集团财报");
         manager.emitToken(42, "已收到的正文");
         assertTrue(manager.cancel(42));
         assertTrue(manager.isActive(42));
@@ -31,7 +31,7 @@ class AiSessionManagerTest {
         manager.finishSession(42);
         var mvc = MockMvcBuilders.standaloneSetup(new StreamController(manager)).build();
         String replay = mvc.perform(get("/events")).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
-        assertTrue(replay.contains("get_stock_report"));
+        assertTrue(replay.contains("正在分析圣泉集团财报"));
         assertTrue(replay.contains("已收到的正文"));
         assertTrue(replay.contains("stopped"));
         manager.stopHeartbeats();
@@ -53,15 +53,32 @@ class AiSessionManagerTest {
         var first=mvc.perform(get("/events")).andExpect(request().asyncStarted()).andReturn();
         assertTrue(first.getResponse().getContentAsString().contains(":connected"));
         assertFalse(manager.hasReplayEvents(42L));
-        manager.emitTool(42L,"get_stock_report","analysis","call1","");
+        manager.emitActivity(42L,"正在查询市场行情");
         // More heartbeats than MAX_BUFFER: the original tool must still replay.
         for(int i=0;i<600;i++) manager.sendHeartbeats();
         assertTrue(first.getResponse().getContentAsString().contains(":keep-alive"));
         var replay=mvc.perform(get("/events")).andExpect(request().asyncStarted()).andReturn();
-        assertTrue(replay.getResponse().getContentAsString().contains("get_stock_report"));
+        assertTrue(replay.getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8).contains("正在查询市场行情"));
         assertFalse(replay.getResponse().getContentAsString().contains(":keep-alive"));
         manager.emitDone(42L);
         assertTrue(replay.getResponse().getContentAsString().contains("event:done"));
+    }
+
+    @Test
+    void reconnectReplaysOnlyCurrentActivityAndNeverAnExpandableTrace() throws Exception {
+        var manager = new AiSessionManager();
+        manager.startSession(42);
+        manager.emitActivity(42, "正在查看市场行情");
+        manager.emitToken(42, "已输出正文");
+        manager.emitActivity(42, "正在分析圣泉集团财报");
+        var mvc = MockMvcBuilders.standaloneSetup(new StreamController(manager)).build();
+        String replay = mvc.perform(get("/events")).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertFalse(replay.contains("正在查看市场行情"));
+        assertTrue(replay.contains("正在分析圣泉集团财报"));
+        assertTrue(replay.contains("已输出正文"));
+        for (String event : new String[]{"reasoning", "tool", "tool_end", "tool_fail", "kb", "memory"})
+            assertFalse(replay.contains("event:" + event));
+        manager.stopHeartbeats();
     }
 
     @Test

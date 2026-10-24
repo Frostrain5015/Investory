@@ -68,40 +68,20 @@ html.electron {
   .streaming-md > *:last-child { animation: none; }
 }
 
-/* ── 观澜 timeline — connected rail + live node ────────────────────────────
-   The agent timeline is a connected vertical rail (one continuous line) with
-   each step's dot sitting on it as a node. The currently-running node emits a
-   soft, slowly-expanding halo ring (currentColor-tinted by category) so the eye
-   tracks "where the work is" as it travels down the rail. Respects reduced-motion. */
-@keyframes node-halo {
-  0%   { transform: scale(1);   opacity: 0.55; }
-  70%  { transform: scale(2.6); opacity: 0; }
-  100% { transform: scale(2.6); opacity: 0; }
+/* Quiet activity feedback, with no disclosure controls or trace nodes. */
+@keyframes chat-activity-light {
+  0%, 100% { opacity: 0.9; }
+  50% { opacity: 1; }
 }
-.node-halo {
-  /* a ring that rides on top of the dot; color comes from the parent's text color */
-  animation: node-halo 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+.chat-activity-text { animation: chat-activity-light 2s ease-in-out infinite; }
+.chat-no-scrollbar {
+  scrollbar-width: none;
+  scrollbar-gutter: auto;
+  overscroll-behavior: contain;
 }
-/* The rail line itself draws in (top→down) the first time it appears. */
-@keyframes rail-draw {
-  from { transform: scaleY(0); }
-  to   { transform: scaleY(1); }
-}
-.timeline-rail {
-  position: absolute;
-  display: block;
-  left: 7px;
-  top: 7px;
-  bottom: -7px;
-  width: 1px;
-  background: #cbd5e1;
-  transform-origin: top center;
-  animation: rail-draw 0.5s ease-out both;
-}
-.dark .timeline-rail { background: #52525e; }
+.chat-no-scrollbar::-webkit-scrollbar { display: none; }
 @media (prefers-reduced-motion: reduce) {
-  .node-halo { animation: none; }
-  .timeline-rail { animation: none; }
+  .chat-activity-text { animation: none; }
 }
 
 /* Prevent text from collapsing into single-char-per-line on narrow mobile containers */
@@ -305,3 +285,6 @@ input:-webkit-autofill:focus {
   .data-enter { animation: none; }
   .market-map svg path { transition: none; }
 }
+
+/* Keep the floating composer a single surface in dark mode. */
+.dark .chat-composer textarea { background: transparent; }

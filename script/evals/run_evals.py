@@ -18,6 +18,7 @@ import importlib
 import importlib.util
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -84,7 +85,7 @@ def build_plan_trace(case: dict) -> dict:
 
 def build_live_trace(case: dict, base: dict) -> dict:
     """Run the real agent and parse its streamed protocol into a trace.
-    Degrades to plan mode (logs a warning) if creds are missing or it errors."""
+    Fails closed when credentials, completion, or provider execution are missing."""
     import subprocess
     import tempfile
 
@@ -93,8 +94,7 @@ def build_live_trace(case: dict, base: dict) -> dict:
     model = os.environ.get("EVAL_MODEL", "deepseek-v4-pro")
     api_base = os.environ.get("EVAL_API_BASE", "https://api.deepseek.com")
     if not api_key:
-        print("  [warn] EVAL_API_KEY/AI_API_KEY not set — live checks will SKIP", file=sys.stderr)
-        return base
+        return {**base, "mode": "live", "runtime_error": "EVAL_API_KEY/AI_API_KEY not set", "output": "", "called_tools": []}
 
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tf:
         json.dump({"messages": [{"role": "user", "content": case["input"]}]}, tf, ensure_ascii=False)
@@ -102,50 +102,71 @@ def build_live_trace(case: dict, base: dict) -> dict:
 
     cmd = [sys.executable, str(SCRIPT_DIR / "ai_agent.py"),
            "--mode", "chat", "--provider", "anthropic" if provider == "anthropic" else "openai",
-           "--model", model, "--api-key", api_key, "--api-base", api_base,
+           "--model", model, "--api-base", api_base,
            "--context-window", os.environ.get("EVAL_CONTEXT_WINDOW", "65536"),
            "--portfolio-id", str(case.get("portfolio_id", 1)),
            "--user-id", str(case.get("user_id", 1)), "--input", input_path]
+    if case.get("web_search"):
+        cmd.append("--web-search")
+    child_env = {**os.environ, "AI_API_KEY": api_key, "PYTHONIOENCODING": "utf-8"}
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", env=child_env, timeout=240)
         out = proc.stdout
     except Exception as e:  # noqa: BLE001
-        print(f"  [warn] live run failed ({e}) — live checks will SKIP", file=sys.stderr)
-        return base
+        return {**base, "mode": "live", "runtime_error": type(e).__name__, "output": "", "called_tools": []}
     finally:
         try:
             os.unlink(input_path)
         except OSError:
             pass
 
-    called, first_round, answer_parts = [], [], []
+    return {**base, **parse_live_trace(out, proc.returncode)}
+
+
+def parse_live_trace(out: str, returncode: int = 0) -> dict:
+    called, first_round, answer_parts, reasoning, errors, artifacts, contexts, failures, activities = [], [], [], [], [], [], [], [], []
     seen_answer = False
+    done = False
     for line in out.splitlines():
         if line.startswith("[TOOL] ") or line.startswith("[KB]"):
-            # "[TOOL] name\tcat\tcid" or "[KB]\ttopic"
-            body = line.split("] ", 1)[-1] if "] " in line else line
-            name = body.split("\t", 1)[0].strip()
-            name = "consult_kb" if line.startswith("[KB]") else name
+            name = "consult_kb" if line.startswith("[KB]") else line[7:].split("\t", 1)[0].strip()
             called.append(name)
             if not seen_answer:
                 first_round.append(name)
-        elif line.startswith("[REASONING]") or line.startswith("[TOOL_END]") \
-                or line.startswith("[TOOL_FAIL]") or line.startswith("[CONTEXT]") \
-                or line.startswith("[STRATEGY]") or line.strip() == "[DONE]":
+        elif line.startswith("[REASONING]"):
+            reasoning.append(line[11:].replace("\\n", "\n"))
+        elif line.startswith("[ACTIVITY]"):
+            try:
+                activities.append(json.loads(line[10:].strip()))
+            except ValueError:
+                errors.append("Invalid public activity frame")
+        elif line.startswith("[ERROR]"):
+            errors.append(line[7:].strip())
+        elif line.startswith("[TOOL_FAIL]"):
+            failures.append(line[11:].split("\t"))
+        elif line.startswith("[STRATEGY]") or line.startswith("[CONFIRM]") or line.startswith("[ARTIFACT]") or line.startswith("[ASK]"):
+            artifacts.append(line)
+        elif line.startswith("[CONTEXT]"):
+            try:
+                contexts.append(json.loads(line[9:].strip()))
+            except ValueError:
+                errors.append("Invalid tool-result context JSON")
+        elif line.strip() == "[DONE]":
+            done = True
+        elif re.match(r"^\[[A-Z_]+\]", line):
             continue
-        else:
-            if line.strip():
-                seen_answer = True
-                answer_parts.append(line)
-
-    live = dict(base)
-    live.update({
-        "mode": "live",
-        "called_tools": called,
-        "first_round_tools_called": first_round,
-        "output": "\n".join(answer_parts),
-    })
-    return live
+        elif line.strip():
+            seen_answer = True
+            answer_parts.append(line)
+    if returncode:
+        errors.append(f"Agent process exited {returncode}")
+    if not done:
+        errors.append("Agent did not emit DONE")
+    if not answer_parts and not artifacts:
+        errors.append("Agent produced no answer or UI handoff")
+    return {"mode": "live", "called_tools": called, "first_round_tools_called": first_round,
+            "output": "\n".join(answer_parts), "reasoning": "".join(reasoning), "tool_failures": failures,
+            "artifacts": artifacts, "contexts": contexts, "activities": activities, "done": done, "runtime_error": "; ".join(errors)}
 
 
 # ── Run ──────────────────────────────────────────────────────────────────────
@@ -167,6 +188,9 @@ def run(profile: str) -> int:
             trace = build_live_trace(case, trace)
 
         results = []
+        if profile == "full":
+            results.append({"check": "live_runtime", "status": "fail" if trace.get("runtime_error") else "pass",
+                            "detail": trace.get("runtime_error") or "completed real model execution"})
         for _name, mod in validators:
             try:
                 results.extend(mod.validate(case, trace) or [])

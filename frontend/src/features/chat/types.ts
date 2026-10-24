@@ -25,33 +25,9 @@ export interface ReportArtifact {
   created_at?: string
 }
 
-export type ToolCategory = 'query' | 'analysis' | 'mutation'
-
-export type TimelineStep =
-  | { kind: 'thinking'; text: string; _ts?: number; _elapsed?: number }
-  | { kind: 'kb'; topic: string }
-  | { kind: 'memory'; count?: string | number }
-  | {
-      kind: 'tool'
-      name: string
-      category?: ToolCategory
-      done: boolean
-      error?: string
-      interrupted?: boolean
-      summary?: string
-      callId?: string
-      detail?: string
-    }
-  // The assistant's user-facing answer, interleaved in true emission order with
-  // thinking/tool steps so a chunk of answer written *before* a later tool call
-  // renders above that tool call — not dumped below the whole timeline.
-  | { kind: 'text'; text: string }
-
 export interface Message {
   role: 'user' | 'assistant' | 'system'
   content: string
-  thinking?: string
-  timeline?: TimelineStep[]
   hasCode?: boolean
   strategyName?: string
   strategyDesc?: string

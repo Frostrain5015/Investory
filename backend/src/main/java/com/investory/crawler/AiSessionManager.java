@@ -147,45 +147,15 @@ public class AiSessionManager {
         emitToAll(get(userId), "token", Map.of("msg", token));
     }
 
-    public void emitReasoning(long userId, String chunk) {
-        emitToAll(get(userId), "reasoning", Map.of("msg", chunk));
-    }
-
-    public void emitKb(long userId, String topic) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("topic", topic);
-        emitToAll(get(userId), "kb", data);
-    }
-
-    public void emitMemory(long userId, String count) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("count", count);
-        emitToAll(get(userId), "memory", data);
-    }
-
-    public void emitTool(long userId, String name, String category, String callId, String detail) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("name", name);
-        data.put("category", category);
-        if (callId != null && !callId.isEmpty()) data.put("callId", callId);
-        if (detail != null && !detail.isEmpty()) data.put("detail", detail);
-        emitToAll(get(userId), "tool", data);
-    }
-
-    public void emitToolEnd(long userId, String callId, String name, String summary) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("name", name);
-        if (callId != null && !callId.isEmpty()) data.put("callId", callId);
-        if (summary != null && !summary.isEmpty()) data.put("summary", summary);
-        emitToAll(get(userId), "tool_end", data);
-    }
-
-    public void emitToolFail(long userId, String callId, String name, String errMsg) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        data.put("name", name);
-        if (callId != null && !callId.isEmpty()) data.put("callId", callId);
-        data.put("error", errMsg);
-        emitToAll(get(userId), "tool_fail", data);
+    public void emitActivity(long userId, String message) {
+        if (message == null || message.isBlank()) return;
+        String safe = message.replaceAll("[\\r\\n\\t]", " ").strip();
+        if (safe.length() > 64) safe = safe.substring(0, 64);
+        UserSession session = get(userId);
+        synchronized (session.eventLog) {
+            session.eventLog.removeIf(event -> "activity".equals(event.get("event")));
+            emitToAll(session, "activity", Map.of("message", safe));
+        }
     }
 
     public void emitStrategy(long userId, Map<String, Object> data) {

@@ -7,6 +7,7 @@
 生成策略：
 - 第一步必须 consult_kb('策略引擎')，查可用指标、条件、离场规则、仓位方法和 advanced ctx 接口。
 - 然后调用 generate_strategy。
+- generate_strategy 仅展示草稿，不会保存，也不会返回 strategy_id。草稿展示后结束本轮，等待用户在卡片保存；不能找一条旧策略替代当前草稿去回测。
 - 生成策略的第一轮只调用工具，不输出正文。
 - code 必须包含 def decide(ctx)，仅使用允许的接口和库。
 

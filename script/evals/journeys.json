@@ -1,0 +1,202 @@
+[
+  {
+    "id": "trend",
+    "prompts": [
+      "帮我分析一下圣泉集团这只股票最近的走势"
+    ],
+    "must_tools": [
+      "get_stock_price"
+    ],
+    "forbid_tools": [
+      "get_fundamentals",
+      "consult_kb",
+      "get_portfolio"
+    ]
+  },
+  {
+    "id": "valuation",
+    "prompts": [
+      "请分析600519.SH的估值和最新已披露财报，注意区分累计EPS与TTM，不用联网。"
+    ],
+    "must_tools": [
+      "get_fundamentals"
+    ],
+    "forbid_tools": [
+      "web_search"
+    ],
+    "valuation_grounding": true
+  },
+  {
+    "id": "fall_cause",
+    "prompts": [
+      "圣泉集团为什么跌，还能持有？请核实公告和业绩，不要把推测写成事实。"
+    ],
+    "must_tools": [
+      "get_stock_price",
+      "get_fundamentals",
+      "web_search"
+    ]
+  },
+  {
+    "id": "compare",
+    "prompts": [
+      "比较600519.SH和600036.SH的基本面，只看估值与盈利，不用联网。"
+    ],
+    "must_tools": [
+      "get_fundamentals"
+    ],
+    "must_symbols": [
+      "600519",
+      "600036"
+    ],
+    "forbid_tools": [
+      "web_search"
+    ]
+  },
+  {
+    "id": "followup",
+    "prompts": [
+      "读取600519.SH的最新已披露财报，告诉我ROE和报告期。不用联网。",
+      "刚才的ROE对应哪个报告期？沿用刚才的财报数据，不要再取数。"
+    ],
+    "must_tools": [
+      "get_fundamentals"
+    ],
+    "forbid_tools": [
+      "web_search"
+    ],
+    "followup_reuse": true
+  },
+  {
+    "id": "portfolio",
+    "fixture": "portfolio",
+    "prompts": [
+      "帮我检查当前组合的集中风险，并计算两只持仓的相关性，不要买卖，也不用联网。"
+    ],
+    "must_tools": [
+      "get_portfolio",
+      "compute_sector_breakdown",
+      "compute_correlation"
+    ],
+    "forbid_tools": [
+      "web_search",
+      "confirm_create_transaction"
+    ]
+  },
+  {
+    "id": "watchlist",
+    "fixture": "watchlist",
+    "prompts": [
+      "把贵州茅台加入自选列表"
+    ],
+    "must_tools": [
+      "search_stocks",
+      "confirm_watchlist"
+    ],
+    "artifact": "CONFIRM"
+  },
+  {
+    "id": "transaction",
+    "fixture": "transaction",
+    "prompts": [
+      "帮我记录2026年10月23日买入比亚迪100股，成交价81.42元，手续费5元"
+    ],
+    "must_tools": [
+      "confirm_create_transaction"
+    ],
+    "artifact": "CONFIRM"
+  },
+  {
+    "id": "strategy",
+    "prompts": [
+      "帮我为600036.SH写一个20日和60日双均线金叉买入、死叉卖出的策略，并回测近一年。先生成策略卡片让我保存。"
+    ],
+    "must_tools": [
+      "consult_kb",
+      "generate_strategy"
+    ],
+    "forbid_tools": [
+      "run_backtest"
+    ],
+    "artifact": "STRATEGY",
+    "cross_strategy": true
+  },
+  {
+    "id": "news_failure",
+    "fixture": "search_failure",
+    "prompts": [
+      "核实圣泉集团最近下跌是否因为有负面公告，区分事实和推测。"
+    ],
+    "must_tools": [
+      "web_search"
+    ],
+    "allowed_failures": [
+      "web_search"
+    ]
+  },
+  {
+    "id": "ambiguity",
+    "fixture": "ambiguity",
+    "prompts": [
+      "把小鹏汽车加入自选"
+    ],
+    "must_tools": [
+      "search_stocks",
+      "ask_user",
+      "confirm_watchlist"
+    ],
+    "artifact": "CONFIRM"
+  },
+  {
+    "id": "world_market",
+    "fixture": "public_news",
+    "prompts": [
+      "今天全球主要市场和财经新闻有什么变化？请注明你实际拿到的数据，不要编造。"
+    ],
+    "must_tools": [
+      "get_world_market",
+      "web_search"
+    ],
+    "available_indices": [
+      "000001.SH",
+      "399001.SZ",
+      "399006.SZ"
+    ]
+  },
+  {
+    "id": "saved_backtest",
+    "fixture": "saved_backtest",
+    "prompts": [
+      "先查我已保存的策略，找到评测双均线策略，用它对600036.SH回测2025-10-23至2026-10-23，初始资金10万元，并解释收益和回撤。"
+    ],
+    "must_tools": [
+      "get_strategies",
+      "run_backtest"
+    ],
+    "artifact": "ARTIFACT"
+  },
+  {
+    "id": "screening_limit",
+    "prompts": [
+      "不用联网，在全部A股中筛选ROE超过15%、PE低于20倍的股票。如果现有工具不能完成全市场筛选，就明确说做不到，不要编造名单。"
+    ],
+    "forbid_tools": [
+      "web_search",
+      "get_daily_picks",
+      "get_factor_scores",
+      "pick_stocks",
+      "get_world_market"
+    ]
+  },
+  {
+    "id": "cashflow_clarification",
+    "fixture": "transaction",
+    "prompts": [
+      "帮我记录买入比亚迪，但数量和成交价我还没确定。"
+    ],
+    "forbid_tools": [
+      "confirm_create_transaction"
+    ],
+    "needs_clarification": true
+  }
+]

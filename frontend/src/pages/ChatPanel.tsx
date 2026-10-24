@@ -1,10 +1,10 @@
-import type { PortfolioCard, PicksCard, ReportArtifact, ToolCategory, TimelineStep, Message, ConfirmData, ConfirmStatus } from '@/features/chat/types'
+import type { PortfolioCard, PicksCard, ReportArtifact, Message, ConfirmData, ConfirmStatus } from '@/features/chat/types'
 import MarkdownBody from '@/features/chat/MarkdownBody'
 import { getChatMessages, useChatMessages } from '@/features/chat/store'
 import type { BrowserSpeechRecognition, SpeechRecognitionWindow } from '@/types/speech-recognition'
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, useId } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { motion, AnimatePresence, useReducedMotion } from 'framer-motion'
-import { Sparkles, X, Send, Trash2, Check, Loader2, Globe, Square, Maximize2, Minimize2, Wrench, Search, BookOpen, MessageSquare, ArrowRight, FileText, HelpCircle, Brain, BarChart2, Mic, ChevronDown } from 'lucide-react'
+import { Sparkles, X, ArrowUp, Trash2, Check, Loader2, Square, Maximize2, Minimize2, MessageSquare, ArrowRight, FileText, BarChart2, Mic } from 'lucide-react'
 import { useToast } from '@/hooks/use-toast'
 import { useConfirm } from '@/hooks/use-confirm'
 import { usePrompt } from '@/hooks/use-prompt'
@@ -12,18 +12,15 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { SseEvent } from '@/types'
 import { useT } from '@/i18n/I18nContext'
-import { localizeToolName, MAPS } from '@/i18n/toolNames'
 import { getCachedSuggestions, getSuggestionsPromise } from '@/services/aiPreload'
 import { BASE } from '@/services/api'
 import { useModels } from '@/hooks/use-models'
 import ModelSelector from '@/features/chat/ModelSelector'
 import { interruptedTurn, restoreMessage } from '@/features/chat/streamFailure'
 import ConversationNotice from '@/features/chat/ConversationNotice'
-import { groupTimeline, toolGroupState, type ToolStep } from '@/features/chat/toolGroups'
+import InfoTip from '@/components/InfoTip'
+import ActivityStatus from '@/features/chat/ActivityStatus'
 import { useTheme } from '@/hooks/use-theme'
-
-/** A single step in the agent's reasoning trace. Either a chunk of native
- * reasoning_content, or a tool call (with its eventual completion status). */
 
 const gradientStyle = { background: 'linear-gradient(135deg, #863bff, #47bfff)' }
 
@@ -37,336 +34,6 @@ function isDuplicateConfirmCopy(title: string, label: string) {
   const a = normalizeConfirmCopy(title)
   const b = normalizeConfirmCopy(label)
   return !!a && !!b && (a === b || a.includes(b) || b.includes(a))
-}
-
-// ── Tool icon registry ────────────────────────────────────────────────
-// One map for all per-tool icon assignments. Tools not listed here fall
-// back to category defaults: query→Search, analysis→Wrench, mutation→Wrench.
-const TOOL_ICONS: Record<string, typeof Search> = {
-  get_stock_report: Sparkles,
-  get_portfolio_report: Sparkles,
-  get_daily_picks_report: Sparkles,
-  ask_user: HelpCircle,
-  consult_kb: BookOpen,
-  web_search: Globe,
-}
-
-function getToolIcon(name: string, category: ToolCategory) {
-  return TOOL_ICONS[name] || (category === 'query' ? Search : Wrench)
-}
-
-/** Per-category visual treatment. Icons come from TOOL_ICONS; label
- * colours are determined by category and done/error state. */
-function toolStyle(step: Extract<TimelineStep, { kind: 'tool' }>) {
-  const cat: ToolCategory = step.category || 'query'
-  const Icon = getToolIcon(step.name, cat)
-  if (step.interrupted) return { label: 'text-amber-600 dark:text-amber-400', dot: 'bg-amber-400', Icon }
-  if (step.error) {
-    return { label: 'text-red-600', dot: 'bg-red-400', Icon }
-  }
-  if (step.done) {
-    return { label: 'text-emerald-600', dot: 'bg-emerald-400', Icon }
-  }
-  if (cat === 'mutation') {
-    return { label: 'text-amber-600', dot: 'bg-amber-400 animate-pulse', Icon }
-  }
-  if (cat === 'query') {
-    return { label: 'text-slate-500', dot: 'bg-slate-400 animate-pulse', Icon }
-  }
-  return { label: 'text-purple-500', dot: 'bg-purple-400 animate-pulse', Icon }
-}
-
-// ── Peer-level step renderers: each step is a standalone block ──────────
-// Like Claude Code's UI: thinking segments and tool calls are peers,
-// not nested inside one container. Tools interrupt thinking, then a new
-// thinking block picks up after the tool completes.
-
-/** A single reasoning segment: collapsible text block with live elapsed timer.
- *  Claude Code style: "已思考 用时8s" when done, live count-up while streaming. */
-function ThinkingSegment({ text, done, _ts, _elapsed }: { text: string; done: boolean; _ts?: number; _elapsed?: number }) {
-  const { lang } = useT()
-  // Replace English tool names in thinking text with styled code-block tags
-  const localizedText = useMemo(() => {
-    if (!text) return ''
-    let t = text
-    // Build regex from tool label keys (longest first to avoid partial matches)
-    const toolNames = Object.keys(MAPS[lang] || {})
-      .sort((a, b) => b.length - a.length)
-    for (const name of toolNames) {
-      const label = MAPS[lang]?.[name]
-      if (label) {
-        // Replace with inline code block using the localized label
-        t = t.replace(new RegExp(`\\b${name}\\b`, 'g'), `\`🛠 ${label}\``)
-      }
-    }
-    return t
-  }, [text, lang])
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    if (done || _ts == null) return
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [done, _ts])
-  const elapsedMs = done ? (_elapsed || 0) : (_ts != null ? now - _ts : 0)
-  const elapsedSec = Math.max(0, Math.round(elapsedMs / 1000))
-  const [userOpen, setUserOpen] = useState<boolean | null>(null)
-  const open = userOpen ?? !done
-  const innerRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!done && innerRef.current) innerRef.current.scrollTop = innerRef.current.scrollHeight
-  })
-  if (!text.trim()) return null
-  return (
-    <div className="mb-1.5">
-      <button onClick={() => { setUserOpen(!open) }}
-        className="flex items-center gap-1.5 text-[11px] text-slate-400 hover:text-slate-500 transition-colors">
-        {done ? `已思考 用时${elapsedSec}s` : `思考中… ${elapsedSec}s`}
-        <span className="text-[9px] ml-0.5 opacity-50">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div ref={innerRef}
-          className="mt-1 p-2.5 bg-slate-50 rounded-lg text-[11px] text-slate-500 leading-relaxed border-l-2 border-purple-200 max-h-48 overflow-y-auto">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}
-            components={{
-              p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
-              code: ({ className, children }) => {
-                const isInline = !className
-                const text = String(children)
-                if (isInline && text.startsWith('🛠 ')) {
-                  // Tool tag: render as a colored chip
-                  const toolName = text.replace('🛠 ', '')
-                  return (
-                    <code className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-medium border border-indigo-200">
-                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-                      {toolName}
-                    </code>
-                  )
-                }
-                return isInline
-                  ? <code className="px-1 py-0.5 bg-slate-200/70 rounded text-[10px] font-mono">{children}</code>
-                  : <pre className="p-2 bg-slate-800 text-slate-100 rounded-lg text-[10px] overflow-x-auto my-1">{children}</pre>
-              },
-            }}>
-            {localizedText}
-          </ReactMarkdown>
-        </div>
-      )}
-    </div>
-  )
-}
-
-/** A single tool invocation: icon + name + dot (colour-coded by category
- *  and running/done/failed state). Always visible, never collapsed. */
-function ToolStepDisplay({ step, idx, lang, isLast, noAnimate }: { step: Extract<TimelineStep, { kind: 'tool' }>; idx: number; lang: 'zh' | 'en' | 'hk'; isLast?: boolean; noAnimate?: boolean }) {
-  const { label, Icon } = toolStyle(step)
-  const running = !step.done && !step.error
-  const isWebSearch = step.name === 'web_search'
-  const displayName = localizeToolName(step.name, lang)
-  const statusText = running
-    ? (lang === 'en' ? 'running' : '运行中')
-    : (lang === 'en' ? 'completed' : '已完成')
-  // web_search: count of referenced sources, parsed from the summary digest
-  // ("N 条" / "N items"). Renders as "参考了 N 篇资料" — like 头部 AI app.
-  const sourceCount = (() => {
-    if (!isWebSearch || !step.summary) return null
-    const m = step.summary.match(/\d+/)
-    return m ? m[0] : null
-  })()
-  const refsText = sourceCount
-    ? (lang === 'en' ? `referenced ${sourceCount} sources` : `参考了 ${sourceCount} 篇资料`)
-    : null
-  // Node colour: running → category hue (with halo), done → emerald, error → red.
-  const catColor = step.category === 'analysis' ? 'bg-purple-400'
-    : step.category === 'mutation' ? 'bg-amber-400'
-    : 'bg-slate-400'
-  const dotClass = step.interrupted ? 'bg-amber-400' : step.error ? 'bg-red-400' : step.done ? 'bg-emerald-400' : catColor
-  return (
-    <StepRow idx={idx} live={running} dotClass={dotClass} ringColor={catColor} isLast={isLast} noAnimate={noAnimate}>
-      <div className={`flex items-center gap-1.5 text-[11px] ${label}`}>
-        <Icon className={`w-3 h-3 ${running ? 'animate-pulse' : ''}`} />
-        <span className="font-medium">{displayName}</span>
-        {/* web_search: show the search keyword while running (like 头部 AI app),
-            and "参考了 N 篇资料" once done — instead of the generic 运行中/已完成. */}
-        {isWebSearch && !step.error ? (
-          <>
-            {running && step.detail && (
-              <span className="text-[10px] text-slate-500 truncate max-w-[180px]" title={step.detail}>
-                “{step.detail}”
-              </span>
-            )}
-            {step.done && <Check className="w-3 h-3 opacity-70" />}
-            {step.done && refsText && <span className="text-[10px] text-slate-400">{refsText}</span>}
-          </>
-        ) : (
-          <>
-            {!step.error && <span className="text-[10px] opacity-70">{statusText}</span>}
-            {step.done && !step.error && <Check className="w-3 h-3 opacity-70" />}
-            {step.done && !step.error && step.summary && (
-              <span className="text-[10px] text-slate-400">{step.summary}</span>
-            )}
-          </>
-        )}
-        {step.error && (
-          <>
-            <span className={`text-[10px] ${step.interrupted ? 'text-amber-600 dark:text-amber-400' : 'text-red-500'}`}>{step.interrupted ? (lang === 'en' ? 'interrupted' : '已中断') : (lang === 'en' ? 'failed' : '失败')}</span>
-            <span className={`text-[10px] break-words ${step.interrupted ? 'text-amber-600 dark:text-amber-400' : 'text-red-400'}`}>{step.error}</span>
-          </>
-        )}
-      </div>
-    </StepRow>
-  )
-}
-
-/** A few providers fold their reasoning into the answer with <think> tags
- * instead of a separate reasoning channel. Strip the bare tags so they never
- * leak into the rendered answer (the content itself is kept). */
-function stripThinkTags(text: string): string {
-  return text.replace(/<\/?think(?:ing)?>/gi, '')
-}
-
-/** Unified Markdown renderer for both streaming and completed answer text.
- * Renders through the full Markdown pipeline (stock-code chips, GFM tables,
- * headers, lists, code — all format correctly even mid-stream).
- *
- * When `streaming` is true the `streaming-md` CSS class is added so the
- * trailing block softly fades in via the token-fade-in animation; when false
- * the class is removed in-place without unmounting — no flash on completion.
- * This avoids the previous StreamingMarkdownBody → MarkdownBody component
- * swap that caused React to unmount/remount the entire subtree. */
-
-/** One node on the connected timeline rail. Owns the fixed-width left gutter where
- * the dot sits, plus the rail SEGMENT that connects this node down to the NEXT one.
- * The segment is omitted on the last node (`isLast`) so the rail terminates exactly
- * at the final data point — it never overshoots past the last emission. Geometry:
- * the dot center is at x=7px / y=7px; the connector starts there and spans the row's
- * full height, landing precisely on the next node's center. `live` shows the
- * breathing halo; `idx` drives the staggered slide-in. */
-function StepRow({ idx, live, dotClass, ringColor, isLast, noAnimate, children }: {
-  idx: number; live?: boolean; dotClass: string; ringColor?: string; isLast?: boolean; noAnimate?: boolean; children: React.ReactNode
-}) {
-  return (
-    <motion.div
-      initial={noAnimate ? false : { opacity: 0, x: -6 }}
-      animate={{ opacity: 1, x: 0 }}
-      transition={noAnimate ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1], delay: Math.min(idx * 0.05, 0.4) }}
-      className="timeline-step relative pl-6 pb-2 last:pb-0"
-    >
-      {/* Rail segment: from this node's center down to the next node's center. Drawn
-          behind the dot (the dot's ring-white masks the overlap) and grows downward
-          as the row enters. Omitted on the last node so the rail ends on a data point. */}
-      {!isLast && (
-        <span aria-hidden="true" className="timeline-rail" />
-      )}
-      {/* Node, centered on the rail (x=7px). ring-white lifts it off the line. */}
-      <span className="absolute left-[3px] top-[3px] flex items-center justify-center">
-        {live && (
-          <span className={`absolute w-2 h-2 rounded-full node-halo ${ringColor || 'bg-slate-400'}`} />
-        )}
-        <span className={`relative w-2 h-2 rounded-full ring-2 ring-white ${dotClass}`} />
-      </span>
-      {children}
-    </motion.div>
-  )
-}
-
-/** A disclosure on the main rail; child calls retain their own connected rail. */
-function ToolGroupDisplay({ tools, idx, lang, isLast, noAnimate }: { tools: ToolStep[]; idx: number; lang: 'zh' | 'en' | 'hk'; isLast: boolean; noAnimate?: boolean }) {
-  const [open, setOpen] = useState(false)
-  const id = useId()
-  const reducedMotion = useReducedMotion()
-  const { running, errors, state } = toolGroupState(tools)
-  const title = running ? (lang === 'en' ? 'Running tools' : '正在运行工具') : (lang === 'en' ? `Ran ${tools.length} tools` : `已运行 ${tools.length} 个工具`)
-  const status = errors ? (lang === 'en' ? `${errors} interrupted or failed` : `${errors} 个工具中断或失败`) : title
-  const dotClass = state === 'warning' ? 'bg-amber-400' : state === 'running' ? 'bg-violet-400' : 'bg-emerald-400'
-  return (
-    <StepRow idx={idx} live={running} dotClass={dotClass} ringColor={dotClass} isLast={isLast} noAnimate={noAnimate}>
-      <button type="button" aria-expanded={open} aria-controls={id} aria-label={`${title}${errors ? `，${status}` : ''}`} title={status}
-        onClick={() => setOpen(value => !value)}
-        className="flex min-h-6 items-center gap-1.5 rounded text-[11px] text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400">
-        <span>{title}</span>
-        <ChevronDown aria-hidden="true" size={12} className={`shrink-0 transition-transform duration-150 motion-reduce:transition-none ${open ? 'rotate-180' : ''}`} />
-      </button>
-      <AnimatePresence initial={false}>
-        {open && <motion.div id={id} key="tools" initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-          transition={{ duration: reducedMotion ? 0 : 0.18, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden">
-          <div className="mt-1.5 max-h-64 overflow-y-auto overscroll-contain pr-2 pb-1">
-            {tools.map((tool, index) => <ToolStepDisplay key={tool.callId || index} step={tool} idx={index} lang={lang} isLast={index === tools.length - 1} noAnimate />)}
-          </div>
-        </motion.div>}
-      </AnimatePresence>
-    </StepRow>
-  )
-}
-
-/** Renders an array of TimelineSteps as a CONNECTED vertical rail: a continuous
- * line threads through EVERY step's node — thinking, memory, kb, tool, AND answer
- * text are all data points in true emission order. The running node breathes; rows
- * slide in staggered. The rail is built from per-node segments and terminates on the
- * LAST data point (no overshoot past the final emission).
- * Behavior/order is unchanged — only the visuals. */
-function TimelineRenderer({ steps, done, lang, noAnimate }: { steps: TimelineStep[]; done: boolean; lang: 'zh' | 'en' | 'hk'; noAnimate?: boolean }) {
-  if (steps.length === 0) return null
-  const entries = groupTimeline(steps)
-  return (
-    <div className="relative mb-2">
-      {entries.map((entry, entryIndex) => {
-        const i = entry.index
-        const isLast = entryIndex === entries.length - 1
-        if (entry.kind === 'tools') return entry.tools.length > 1
-          ? <ToolGroupDisplay key={i} tools={entry.tools} idx={i} isLast={isLast} lang={lang} noAnimate={noAnimate} />
-          : <ToolStepDisplay key={i} step={entry.tools[0]} idx={i} isLast={isLast} lang={lang} noAnimate={noAnimate} />
-        const step = entry.step
-        if (step.kind === 'text') {
-          const body = stripThinkTags(step.text)
-          if (!body.trim()) return null
-          // The answer is a data point too. While streaming, the final text node is
-          // live (breathing) and uses the token-fade renderer.
-          const isLiveText = !done && i === steps.length - 1
-          return (
-            <StepRow key={i} idx={i} isLast={isLast} live={isLiveText} noAnimate={noAnimate}
-              dotClass={isLiveText ? 'bg-violet-400' : 'bg-violet-500'} ringColor="bg-violet-400">
-              <div className="pt-px"><MarkdownBody text={body} streaming={isLiveText} /></div>
-            </StepRow>
-          )
-        }
-        if (step.kind === 'thinking') {
-          // Live until something follows it OR the whole turn finishes.
-          const segDone = i < steps.length - 1 || done
-          return (
-            <StepRow key={i} idx={i} isLast={isLast} live={!segDone} noAnimate={noAnimate}
-              dotClass={segDone ? 'bg-slate-300' : 'bg-amber-400'} ringColor="bg-amber-400">
-              <ThinkingSegment text={step.text} done={segDone} _ts={step._ts} _elapsed={step._elapsed} />
-            </StepRow>
-          )
-        }
-        if (step.kind === 'kb') {
-          return (
-            <StepRow key={i} idx={i} isLast={isLast} noAnimate={noAnimate} dotClass="bg-indigo-400">
-              <div className="flex items-center gap-1.5 text-[11px] text-indigo-600">
-                <BookOpen className="w-3 h-3" />
-                <span className="font-medium">{lang === 'en' ? 'Consulting knowledge base' : '查阅知识库'}</span>
-                <Check className="w-3 h-3 opacity-70" />
-                <span className="text-[10px] text-slate-400">· {step.topic}</span>
-              </div>
-            </StepRow>
-          )
-        }
-        if (step.kind === 'memory') {
-          return (
-            <StepRow key={i} idx={i} isLast={isLast} noAnimate={noAnimate} dotClass="bg-blue-400">
-              <div className="flex items-center gap-1.5 text-[11px] text-blue-600">
-                <Brain className="w-3 h-3" />
-                <span className="font-medium">{lang === 'en' ? 'Recalling memory' : '读取记忆'}</span>
-                <Check className="w-3 h-3 opacity-70" />
-                {step.count ? <span className="text-[10px] text-slate-400">· {step.count} {lang === 'en' ? 'items' : '条'}</span> : null}
-              </div>
-            </StepRow>
-          )
-        }
-        return null  // unknown/legacy step kinds (e.g. old 'skill') — skip gracefully
-      })}
-    </div>
-  )
 }
 
 export type ChatMode = 'idle' | 'dock' | 'expanded'
@@ -386,6 +53,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const confirm = useConfirm()
   const modelStore = useModels()
   const { theme } = useTheme()
+  const reduceMotion = useReducedMotion()
   // 'idle' = collapsed to the floating button; otherwise dock/expanded.
   const [internalMode, setInternalMode] = useState<'dock' | 'expanded'>(defaultMode)
   const mode: ChatMode = open ? internalMode : 'idle'
@@ -395,7 +63,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const [lastInitialMessage, setLastInitialMessage] = useState(initialMessage)
   const [streaming, setStreaming] = useState(false)
   const [streamText, setStreamText] = useState('')
-  const [streamTimeline, setStreamTimeline] = useState<TimelineStep[]>([])
+  const [activity, setActivity] = useState('')
   const [webSearch] = useState(false)
   const [listening, setListening] = useState(false)
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null)
@@ -409,44 +77,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   >(null)
   const pendingArtifacts = useRef<ReportArtifact[]>([])
   const streamAccum = useRef('')
-  // Authoritative timeline ref — frontend builds it from SSE events as the agent runs.
-  // We mutate the ref then mirror into state for re-renders so we don't lose ordering.
-  const timelineRef = useRef<TimelineStep[]>([])
   const [selectedArtifact, setSelectedArtifact] = useState<ReportArtifact | null>(null)
-  /** Stamp _elapsed on every thinking step that isn't the last element (i.e. has
-   *  already been closed by a subsequent tool or newer thinking segment). This
-   *  ensures previous segments never show "用时0s" when a new step arrives. */
-  function stampClosedElapsed(tl: TimelineStep[]) {
-    const now = Date.now()
-    for (let i = 0; i < tl.length - 1; i++) {
-      const s = tl[i]
-      if (s.kind === 'thinking' && s._ts != null && s._elapsed == null) {
-        tl[i] = { ...s, _elapsed: now - s._ts }
-      }
-    }
-    return tl
-  }
-  const pushTimeline = () => setStreamTimeline([...timelineRef.current])
-  /** Mark a running tool step done/failed. Pairs by callId (exact, survives
-   *  parallel same-name calls), falling back to most-recent-by-name. (#3) */
-  function finalizeToolStep(callId: string | undefined, name: string, patch: Partial<Extract<TimelineStep, { kind: 'tool' }>>) {
-    const tl = timelineRef.current
-    let idx = -1
-    if (callId) {
-      for (let i = tl.length - 1; i >= 0; i--) {
-        const s = tl[i]
-        if (s.kind === 'tool' && s.callId === callId) { idx = i; break }
-      }
-    }
-    if (idx < 0) {
-      for (let i = tl.length - 1; i >= 0; i--) {
-        const s = tl[i]
-        if (s.kind === 'tool' && s.name === name && !s.done) { idx = i; break }
-      }
-    }
-    if (idx >= 0) { tl[idx] = { ...(tl[idx] as Extract<TimelineStep, { kind: 'tool' }>), ...patch } }
-    pushTimeline()
-  }
   const [askData, setAskData] = useState<{ question: string; options: (string | { value: string; label: string })[]; multiSelect: boolean } | null>(null)
   const optionDisplay = (o: string | { value: string; label: string }) => typeof o === 'string' ? o : (o.label || o.value || '')
   const optionValue = (o: string | { value: string; label: string }) => typeof o === 'string' ? o : (o.value || o.label || '')
@@ -466,7 +97,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   const esRef = useRef<EventSource | null>(null)
   const requestVersion = useRef(0)
   const historyReady = useRef<Promise<void>>(Promise.resolve())
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const followTail = useRef(true)
   const hairlineRef = useRef<HTMLDivElement>(null)
   const headerRef = useRef<HTMLDivElement>(null)
   const messagesPanelRef = useRef<HTMLDivElement>(null)
@@ -535,19 +166,25 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     if (!streaming) return
     const tick = ++streamTick.current
     requestAnimationFrame(() => {
-      if (tick === streamTick.current) scrollRef.current?.scrollIntoView({ behavior: 'instant' as ScrollBehavior })
+      if (tick === streamTick.current && followTail.current) {
+        const panel = messagesPanelRef.current
+        panel?.scrollTo({ top: panel.scrollHeight, behavior: 'instant' as ScrollBehavior })
+      }
     })
-  }, [streaming, streamText, streamTimeline])
+  }, [streaming, streamText, activity])
 
   // When a new message lands (streaming finished), scroll smoothly for a
   // polished landing. Ignore the initial mount replay.
   const prevLen = useRef(messages.length)
   useEffect(() => {
     if (messages.length > prevLen.current && !streaming) {
-      scrollRef.current?.scrollIntoView({ behavior: 'smooth' })
+      if (followTail.current) {
+        const panel = messagesPanelRef.current
+        panel?.scrollTo({ top: panel.scrollHeight, behavior: reduceMotion ? 'instant' as ScrollBehavior : 'smooth' })
+      }
     }
     prevLen.current = messages.length
-  }, [messages, streaming])
+  }, [messages, streaming, reduceMotion])
 
   // Share handlers for new and resumed turns. Ignore queued events from closed streams.
   function attachStream(es: EventSource) {
@@ -579,96 +216,27 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           }
         } catch { /* Ignore malformed or unavailable optional state. */ }
       })
-      listen('kb', (e) => {
-        const d = JSON.parse(e.data) as { topic?: string }
-        if (!d.topic) return
-        stampClosedElapsed(timelineRef.current)
-        timelineRef.current = [...timelineRef.current, { kind: 'kb', topic: d.topic }]
-        pushTimeline()
-      })
-      listen('memory', (e) => {
-        const d = JSON.parse(e.data) as { count?: string | number }
-        stampClosedElapsed(timelineRef.current)
-        timelineRef.current = [...timelineRef.current, { kind: 'memory', count: d.count }]
-        pushTimeline()
-      })
-      listen('tool', (e) => {
-        const d = JSON.parse(e.data) as { name?: string; category?: ToolCategory; callId?: string; detail?: string }
-        const name = d.name || ''
-        if (!name) return
-        const category: ToolCategory = d.category === 'analysis' || d.category === 'mutation' ? d.category : 'query'
-        // A new tool call closes any open thinking segment and starts a tool step
-        stampClosedElapsed(timelineRef.current)
-        timelineRef.current = [...timelineRef.current, { kind: 'tool', name, category, done: false, ...(d.callId ? { callId: d.callId } : {}), ...(d.detail ? { detail: d.detail } : {}) }]
-        pushTimeline()
-      })
-      listen('tool_end', (e) => {
-        const d = JSON.parse(e.data) as { name?: string; summary?: string; callId?: string }
-        finalizeToolStep(d.callId, d.name || '', { done: true, ...(d.summary ? { summary: d.summary } : {}) })
-      })
-      listen('tool_fail', (e) => {
-        const d = JSON.parse(e.data) as { name?: string; error?: string; callId?: string }
-        finalizeToolStep(d.callId, d.name || '', { done: true, error: d.error || '工具执行失败' })
+      listen('activity', (e) => {
+        const data = JSON.parse(e.data) as { message?: unknown }
+        if (typeof data.message === 'string' && data.message.trim()) setActivity(data.message.slice(0, 64))
       })
       listen('token', (e) => {
         const d: SseEvent = JSON.parse(e.data)
         const chunk = d.msg || ''
         if (!chunk) return
-        // Keep the full-text accumulator (used for copy, strategy/code regex, and
-        // the legacy <think> fallback at done-time)…
-        streamAccum.current += chunk; setStreamText(streamAccum.current)
-        // …and also fold the answer into the timeline at its true position, so it
-        // interleaves correctly with thinking/tool steps instead of dropping below.
-        const last = timelineRef.current[timelineRef.current.length - 1]
-        if (last && last.kind === 'text') {
-          timelineRef.current[timelineRef.current.length - 1] = { ...last, text: last.text + chunk }
-        } else {
-          stampClosedElapsed(timelineRef.current)
-          timelineRef.current = [...timelineRef.current, { kind: 'text', text: chunk }]
-        }
-        pushTimeline()
-      })
-      listen('reasoning', (e) => {
-        const d: SseEvent = JSON.parse(e.data)
-        const chunk = d.msg || ''
-        if (!chunk) return
-        // Append to the last thinking step, or open a new one if the last step is a
-        // tool or answer chunk.
-        const last = timelineRef.current[timelineRef.current.length - 1]
-        if (last && last.kind === 'thinking') {
-          timelineRef.current[timelineRef.current.length - 1] = { ...last, text: last.text + chunk }
-        } else {
-          stampClosedElapsed(timelineRef.current)
-          timelineRef.current = [...timelineRef.current, { kind: 'thinking', text: chunk, _ts: Date.now() }]
-        }
-        pushTimeline()
+        streamAccum.current += chunk
+        setStreamText(streamAccum.current)
       })
       listen('done', () => {
         if (settled) return
         settled = true
         const raw = streamAccum.current
-        // Stamp ALL thinking segments (including the last one — gen is done)
-        timelineRef.current.forEach((s, i) => {
-          if (s.kind === 'thinking' && s._ts != null && s._elapsed == null) {
-            timelineRef.current[i] = { ...s, _elapsed: Date.now() - s._ts }
-          }
-        })
-        const finalTimeline = [...timelineRef.current]
-        streamAccum.current = ''; timelineRef.current = []
-        setStreamText(''); setStreamTimeline([])
-        const hasTimeline = finalTimeline.length > 0
-        if (!raw.trim() && !hasTimeline && pendingArtifacts.current.length === 0) { setStreaming(false); es.close(); esRef.current = null; return }
-        // Native reasoning channel takes precedence; fall back to <think> tag for legacy/custom providers
-        let content = raw
-        let timelineOut: TimelineStep[] | undefined = hasTimeline ? finalTimeline : undefined
-        if (!timelineOut) {
-          const thinkMatch = raw.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/)
-          if (thinkMatch) {
-            timelineOut = [{ kind: 'thinking', text: thinkMatch[1].trim() }]
-            content = raw.replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/g, '').trim()
-          }
+        streamAccum.current = ''
+        setStreamText(''); setActivity('')
+        if (!raw.trim() && !pendingStrategy.current && !pendingCard.current && pendingArtifacts.current.length === 0) {
+          setStreaming(false); es.close(); esRef.current = null; return
         }
-        const msg: Message = { role: 'assistant', content: content.trim() || raw, timeline: timelineOut }
+        const msg: Message = { role: 'assistant', content: raw.trim() }
         const s = pendingStrategy.current
         if (s) { msg.hasCode = true; msg.strategyName = s.name; msg.strategyDesc = s.desc; msg.strategyCode = s.code; pendingStrategy.current = null }
         const card = pendingCard.current
@@ -697,14 +265,15 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
 
   // #8 On mount, if a generation is already running server-side (e.g. the user
   // reloaded mid-answer), resubscribe — the unified event buffer replays the
-  // whole turn so the live timeline/text resume instead of being lost.
+  // answer and latest activity so the response can resume.
   useEffect(() => {
     let cancelled = false
     const version = requestVersion.current
     fetch(`${BASE}/api/ai/status`, { credentials: 'include' }).then(r => r.json()).then(async d => {
       await historyReady.current
       if (cancelled || version !== requestVersion.current || !d?.active || streaming || esRef.current) return
-      setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; pendingArtifacts.current = []
+      followTail.current = true
+      setStreaming(true); setStreamText(''); setActivity(''); streamAccum.current = ''; pendingArtifacts.current = []
       const es = new EventSource(`${BASE}/api/ai/stream`, { withCredentials: true }); esRef.current = es
       attachStream(es)
     }).catch(() => {})
@@ -748,7 +317,8 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
     setInput('')
     const newMessages: Message[] = [...messages, { role: 'user', content: text }]
     setMessages(newMessages)
-    setStreaming(true); setStreamText(''); setStreamTimeline([]); streamAccum.current = ''; timelineRef.current = []; pendingArtifacts.current = []; setAskData(null); setAskChecked(new Set()); setAskOther(''); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
+    followTail.current = true
+    setStreaming(true); setStreamText(''); setActivity(''); streamAccum.current = ''; pendingArtifacts.current = []; setAskData(null); setAskChecked(new Set()); setAskOther(''); setConfirmData(null); setConfirmStatus(null); setConfirmResult('')
     try {
       const resp = await fetch(`${BASE}/api/ai/chat`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ messages: newMessages.filter(message => message.role !== 'system' && message.content.trim()).map(({ role, content }) => ({ role, content })), modelId, webSearch, conversationId: convIdRef.current || undefined }) })
       if (version !== requestVersion.current) {
@@ -803,7 +373,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
 
   function openConv(id: number) {
     fetch(`${BASE}/api/ai/conversations/${id}`, { credentials: 'include' })
-      .then(r => r.json() as Promise<{ messages?: { role: string; content: string; thinking?: string; artifacts?: ReportArtifact[] }[] }>)
+      .then(r => r.json() as Promise<{ messages?: { role: string; content: string; artifacts?: ReportArtifact[] }[] }>)
       .then((d) => {
         const restored = (d.messages || []).map(restoreMessage)
         setMessages(restored); convIdRef.current = id; setShowConvList(false)
@@ -827,10 +397,10 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       ...(card?.type === 'portfolio' ? { portfolioCard: card.data } : {}),
       ...(card?.type === 'picks' ? { picksCard: card.data } : {}),
     }
-    setMessages([...getChatMessages(), ...interruptedTurn(streamAccum.current, timelineRef.current, pendingArtifacts.current, error, Date.now(), kind, extra)])
-    streamAccum.current = ''; timelineRef.current = []
+    setMessages([...getChatMessages(), ...interruptedTurn(streamAccum.current, pendingArtifacts.current, error, kind, extra)])
+    streamAccum.current = '';
     pendingArtifacts.current = []; pendingStrategy.current = null; pendingCard.current = null
-    setStreamText(''); setStreamTimeline([]); setStreaming(false)
+    setStreamText(''); setActivity(''); setStreaming(false)
     setAskData(null); setConfirmData(null); setConfirmStatus(null)
   }
 
@@ -905,7 +475,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
       window.removeEventListener('resize', scheduleMeasure)
       window.visualViewport?.removeEventListener('resize', scheduleMeasure)
     }
-  }, [mode, hasContent, messages, streaming, streamText, streamTimeline, input, suggestions, askData, confirmData, confirmResult, confirmStatus])
+  }, [mode, hasContent, messages, streaming, streamText, activity, input, suggestions, askData, confirmData, confirmResult, confirmStatus])
 
   const headerNode = (
     <div ref={headerRef} className="flex items-center justify-between px-4 py-2.5 shrink-0">
@@ -914,7 +484,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
           <Sparkles className="w-3 h-3 text-white" />
         </div>
         <span className="text-sm font-semibold text-slate-800 tracking-tight">观澜</span>
-        <span className="text-[9px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">AI</span>
+        <InfoTip label={lang === 'en' ? 'About this assistant' : '使用说明'}>{t.chat.aiDisclaimer}</InfoTip>
       </div>
       <div className="flex items-center gap-0.5">
         <button onClick={() => { loadConvList(); setShowConvList(true) }} className="p-1.5 rounded-md text-slate-400 hover:text-slate-500 transition-colors" title={t.chat.clearChat}><MessageSquare className="w-3.5 h-3.5" /></button>
@@ -929,31 +499,37 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   )
 
   const inputBar = (
-    <div className="flex flex-col gap-1">
+    <div className="chat-composer rounded-[22px] border border-slate-200/80 bg-slate-50/70 p-1.5 transition-[border-color,box-shadow] duration-200 focus-within:border-slate-300 focus-within:shadow-[0_0_0_3px_rgba(148,163,184,0.07)] dark:border-slate-700/70 dark:bg-white/[0.035] dark:focus-within:border-slate-500">
       <textarea ref={textareaRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
+        aria-label={lang === 'en' ? 'Message Guanlan' : '向观澜发送消息'}
         placeholder={t.chat.placeholder} rows={1} disabled={streaming}
-        className="w-full resize-none min-h-[40px] max-h-[200px] rounded-xl bg-transparent px-3 py-2.5 text-sm leading-snug focus:outline-none disabled:opacity-60 placeholder:text-slate-400 overflow-y-auto" />
-      <div className="flex items-center justify-end gap-1">
+        className="chat-no-scrollbar w-full resize-none min-h-[52px] max-h-[200px] bg-transparent px-3 py-3 text-[15px] leading-6 text-slate-800 dark:text-slate-100 focus:outline-none disabled:opacity-60 placeholder:text-slate-400 overflow-y-auto" />
+      <div className="flex min-w-0 items-center justify-end gap-1 px-0.5 pb-0.5">
         <ModelSelector />
         <button type="button" onClick={toggleVoiceInput} disabled={streaming}
-          className={`w-11 h-11 flex items-center justify-center rounded-xl transition-colors ${listening ? 'text-purple-500 animate-pulse motion-reduce:animate-none' : 'text-slate-400 hover:text-slate-600'} disabled:opacity-40`}
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full transition-colors ${listening ? 'text-violet-600 bg-violet-50 dark:bg-violet-500/10' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200/60 dark:hover:text-slate-100 dark:hover:bg-white/5'} disabled:opacity-35`}
+          aria-label={listening ? (lang === 'en' ? 'Stop voice input' : '停止语音输入') : (lang === 'en' ? 'Voice input' : '语音输入')}
           title={listening ? (lang === 'en' ? 'Listening…' : '语音输入中…') : (lang === 'en' ? 'Voice input' : '语音输入')}>
-          <Mic className="w-4 h-4" />
+          <Mic className="h-[18px] w-[18px]" />
         </button>
-        {streaming ? <button type="button" onClick={stopGeneration} title={t.chat.stop}
-          className="w-11 h-11 rounded-full flex items-center justify-center shrink-0 bg-slate-700 hover:bg-slate-800">
-          <Square className="w-3.5 h-3.5 text-white fill-white" />
+        {streaming ? <button type="button" onClick={stopGeneration} title={t.chat.stop} aria-label={t.chat.stop}
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white transition-colors hover:bg-slate-700 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white">
+          <Square className="h-3.5 w-3.5 fill-current" />
         </button> : <button type="button" onClick={() => send()} aria-label="发送消息" disabled={!input.trim() || modelStore.busy || modelStore.loading}
-          className="w-11 h-11 rounded-full flex items-center justify-center transition-colors shrink-0 disabled:opacity-30"
-          style={input.trim() ? gradientStyle : { background: '#e2e8f0', color: '#94a3b8' }}>
-          <Send className="w-4 h-4 text-white" />
+          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white transition-[background-color,transform,opacity] duration-150 hover:bg-slate-700 active:scale-95 disabled:bg-slate-200 disabled:text-slate-400 dark:bg-slate-100 dark:text-slate-900 dark:disabled:bg-slate-800 dark:disabled:text-slate-600 motion-reduce:transition-none">
+          <ArrowUp className="h-5 w-5" strokeWidth={2} />
         </button>}
       </div>
     </div>
   )
 
   const messagesArea = (
-    <div ref={messagesPanelRef} className="flex-1 overflow-auto px-4 py-4 space-y-3">
+    <div ref={messagesPanelRef} className="guanlan-thread chat-no-scrollbar flex-1 overflow-y-auto overflow-x-hidden px-5 py-5 space-y-7 sm:px-7"
+      role="log" aria-label={lang === 'en' ? 'Conversation' : '对话内容'} tabIndex={0}
+      onWheel={event => { if (event.deltaY < 0) followTail.current = false }}
+      onTouchMove={() => { followTail.current = false }}
+      onKeyDown={event => { if (['PageUp', 'Home', 'ArrowUp'].includes(event.key)) followTail.current = false }}
+      onScroll={event => { const panel = event.currentTarget; if (panel.scrollHeight - panel.scrollTop - panel.clientHeight < 64) followTail.current = true }}>
         {messages.length === 0 && !streaming && (
           <div className="text-center py-10">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-3" style={{ background: 'linear-gradient(135deg, rgba(134,59,255,0.12), rgba(71,191,255,0.12))' }}>
@@ -972,26 +548,16 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             </div>
           </div>
         )}
-        {Array.isArray(messages) && messages.map((m, i) => (
+        {Array.isArray(messages) && messages.filter(m => m.role !== 'assistant' || m.content.trim() || m.hasCode || m.artifacts?.length || m.portfolioCard || m.picksCard).map((m, i) => (
           m.role === 'system' ? <ConversationNotice key={i} message={m} /> :
-          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-              m.role === 'user'
-                ? 'text-white' : 'bg-slate-50 text-slate-700 border border-slate-100'
-            }`} style={m.role === 'user' ? gradientStyle : undefined}>
-              {m.role === 'assistant' ? (() => {
-                const tl = m.timeline
-                // New turns carry the answer as interleaved text steps → render the
-                // timeline alone (the answer is inside it, in true order). Legacy
-                // turns have no text step → keep the old "timeline then content" layout.
-                const hasTextStep = !!tl && tl.some(s => s.kind === 'text')
-                return <>
-                  {tl && tl.length > 0
-                    ? <TimelineRenderer steps={tl} done={true} lang={lang} noAnimate />
-                    : m.thinking && <TimelineRenderer steps={[{ kind: 'thinking', text: m.thinking }]} done={true} lang={lang} noAnimate />}
-                  {!hasTextStep && m.content && <MarkdownBody text={m.content} />}
-                </>
-              })() : <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>}
+          <div key={i} data-message-role={m.role} role="article" aria-label={m.role === 'user' ? (lang === 'en' ? 'Your message' : '你的消息') : (lang === 'en' ? 'Guanlan response' : '观澜回答')}
+            className={`chat-message flex ${m.role === 'user' ? 'justify-end pt-2' : 'justify-start'}`}>
+            <div className={m.role === 'user'
+              ? 'max-w-[88%] text-right text-[15px] font-medium leading-7 text-slate-600 dark:text-slate-300'
+              : 'min-w-0 w-full text-[15px] leading-7 text-slate-800 dark:text-slate-200'}>
+              {m.role === 'assistant'
+                ? m.content && <MarkdownBody text={m.content} />
+                : <div style={{ whiteSpace: 'pre-wrap' }}>{m.content}</div>}
               {m.hasCode && (
                 <StrategyCard
                   name={m.strategyName || ''}
@@ -1039,21 +605,9 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         ))}
         {streaming && (
           <div className="flex justify-start">
-            <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed bg-slate-50 text-slate-700 border border-slate-100`}>
-              {(() => {
-                // The live answer is already interleaved into streamTimeline as
-                // text steps, so there's no separate "after" block — order is exact.
-                const liveSteps = streamTimeline
-                // Idle pulse only when nothing has streamed yet (no thinking, no
-                // answer chunk, no tool). A running tool renders its own animated row.
-                const showGenericPending = liveSteps.length === 0
-                return (<>
-                  {liveSteps.length > 0 && <TimelineRenderer steps={liveSteps} done={false} lang={lang} />}
-                  {showGenericPending && (
-                    <span className="inline-flex gap-1"><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.1s' }} /><span className="w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: '0.2s' }} /></span>
-                  )}
-                </>)
-              })()}
+            <div className="min-w-0 w-full text-[15px] leading-7 text-slate-800 dark:text-slate-200">
+              {streamText && <MarkdownBody text={streamText} streaming />}
+              <ActivityStatus message={activity || (lang === 'en' ? 'Working on your request' : '正在处理你的问题')} />
             </div>
           </div>
         )}
@@ -1192,7 +746,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             </div>
           </div>
         )}
-        <div ref={scrollRef} />
+
       </div>
   )
 
@@ -1216,10 +770,10 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
   // the show. Open: glide leads (delay 0), bloom waits 220ms so the orb visibly
   // travels to center first. Close: shrink leads (delay 0), glide waits 110ms —
   // already reads well, so it's left untouched.
-  const posDur    = isIdle ? '300ms' : '240ms'
-  const sizeDur   = isIdle ? '260ms' : '380ms'
-  const posDelay  = isIdle ? '110ms' : '0ms'    // close waits for shrink; open leads
-  const sizeDelay = isIdle ? '0ms'   : '220ms'  // open waits for glide;  close leads
+  const posDur    = reduceMotion ? '0ms' : isIdle ? '300ms' : '240ms'
+  const sizeDur   = reduceMotion ? '0ms' : isIdle ? '260ms' : '380ms'
+  const posDelay  = reduceMotion ? '0ms' : isIdle ? '110ms' : '0ms'    // close waits for shrink; open leads
+  const sizeDelay = reduceMotion ? '0ms' : isIdle ? '0ms'   : '220ms'  // open waits for glide;  close leads
 
   const shellW = isIdle ? '60px' : 'min(720px, calc(100vw - 32px))'
   const shellH = isIdle ? '60px'
@@ -1292,30 +846,6 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
             : 'ring-slate-200/70 shadow-purple-500/15'
         }`}>
 
-        {/* Bloom + sheen — the "绽放" flourish. One-shot on open, fades on close.
-            Both pointer-events-none and clipped by the shell's overflow-hidden. */}
-        <AnimatePresence>
-          {!isIdle && (
-            <motion.div key="guanlan-bloom"
-              initial={{ opacity: 0, scale: 0.25 }}
-              animate={{ opacity: [0.5, 0], scale: 1.7 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.85, ease: 'easeOut', delay: 0.30 }}
-              className="pointer-events-none absolute left-1/2 bottom-0 -translate-x-1/2"
-              style={{ width: '120%', aspectRatio: '1', borderRadius: '9999px',
-                       background: 'radial-gradient(circle, rgba(134,59,255,0.40), transparent 62%)' }} />
-          )}
-          {!isIdle && (
-            <motion.div key="guanlan-sheen"
-              initial={{ x: '-130%', opacity: 0 }}
-              animate={{ x: '160%', opacity: [0, 0.55, 0] }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.9, ease: 'easeOut', delay: 0.36 }}
-              className="pointer-events-none absolute inset-y-0 w-1/2"
-              style={{ background: 'linear-gradient(105deg, transparent, rgba(255,255,255,0.6), transparent)' }} />
-          )}
-        </AnimatePresence>
-
         {/* Idle state: a single Sparkles centered in the pill.
             Stays visible throughout the glide, only exits when bloom kicks in.
             On close, it reappears after the shrink lands (positive delay).
@@ -1339,10 +869,10 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
         <AnimatePresence>
           {showInnerContent && (
             <motion.div key="shell-content"
-              initial={{ opacity: 0, y: 12 }}
+              initial={reduceMotion ? false : { opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 10, transition: { duration: 0.13, ease: 'easeIn' } }}
-              transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1], delay: 0.36 }}
+              transition={{ duration: reduceMotion ? 0 : 0.35, ease: [0.22, 1, 0.36, 1], delay: reduceMotion ? 0 : 0.36 }}
               className="flex flex-col h-full w-full">
 
               {/* Gradient hairline */}
@@ -1364,7 +894,7 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
                   <div className="flex items-center gap-1.5">
                     <Sparkles className="w-3 h-3" style={{ color: '#863bff' }} />
                     <span className="text-[11px] font-semibold text-slate-700 tracking-tight">观澜</span>
-                    <span className="text-[9px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded">AI</span>
+                    <InfoTip label={lang === 'en' ? 'About this assistant' : '使用说明'}>{t.chat.aiDisclaimer}</InfoTip>
                   </div>
                   <div className="flex items-center gap-1">
                     <button onClick={() => setMode('expanded')}
@@ -1382,9 +912,8 @@ export default function ChatPanel({ open = true, onOpen, onClose, initialMessage
               )}
 
               {/* Input bar — bottom of every active state */}
-              <div ref={inputWrapRef} className={`shrink-0 px-3 py-2 ${isExpanded || hasContent ? 'border-t border-slate-100 bg-white' : ''}`}>
+              <div ref={inputWrapRef} className="shrink-0 px-4 pb-4 pt-2 sm:px-5">
                 {inputBar}
-                <p className="text-[10px] text-slate-300 text-center">{t.chat.aiDisclaimer}</p>
               </div>
             </motion.div>
           )}

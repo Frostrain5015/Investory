@@ -100,6 +100,8 @@ Credentials are in memory file `server_credentials.md`. Never restart the servic
 ## Key conventions
 
 - 产品版本号只修改 `backend/pom.xml` 中 Investory 的项目版本。前端显示及部署直接读取此处；`node tools/version.mjs` 自动同步前端/桌面端 package 与 lock 文件，开发、构建、安装和发布入口均调用同步。提交前运行 `node tools/version.mjs --check`；不得从提交标题推断版本，也不要手改派生版本号。第三方依赖及历史文档中的版本号不参与同步。
+- 观澜预取按“工具名和参数”复用成功读结果，不得按工具名禁用后续查询；失败允许重试且计入预算。工具摘要须按用户和对话隔离；策略草稿交给用户保存后才能使用真实ID回测。真实模型评测缺密钥、异常退出、无终止帧或无正文/交互产物时必须失败，不得降级为离线通过。评测入口见 `script/evals/README.md`。
+- 观澜客户端仅展示正文、单条当前进度及必要操作卡片，不发送或恢复原始思考链、工具参数/结果及可展开过程节点。进度独立于推理生成：模型可随工具调用提供 `_status`，预取和等待阶段根据实际任务上下文兜底，不增加模型请求。用户/模型消息均无气泡边框，通过对齐、字重和留白区分；隐藏聊天滚动条但保留滚动，用户向上阅读时停止自动追随。
 - No web.xml — Spring Boot auto-configuration
 - DAOs extend `BaseDao` which provides `JdbcTemplate` via `@Autowired`
 - Frontend uses `useSettings()` for currency formatting, color scheme, and unit conversion

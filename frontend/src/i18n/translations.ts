@@ -304,7 +304,7 @@ const zh = {
   // ── Chat / AI ──
   chat: {
     title: "观澜",
-    placeholder: "输入问题，观澜为你分析...",
+    placeholder: "向观澜提问",
     send: "发送",
     deepThink: "深度思考",
     webSearch: "联网搜索",
@@ -325,9 +325,6 @@ const zh = {
     refuse: "拒绝",
     autoConfirmSession: "本次会话内同类操作免确认",
     regenerate: "重新生成",
-    thinking: "思考过程",
-    thinkingInProgress: "正在思考...",
-    deepThinkingPending: "深度思考中…",
     greeting: "你好，我是观澜",
     subtitle: "你的智能投资助理",
     strategyGenerated: "策略已生成",
@@ -336,7 +333,6 @@ const zh = {
     saving: "保存中...",
     strategyPlaceholder: "观澜生成的策略",
     promptStrategyName: "策略名称",
-    toolRunning: "调用工具",
     suggestionsTitle: "试试问",
     suggestions: [
       "我的组合风险怎么样？",
@@ -963,7 +959,7 @@ const en = {
 
   chat: {
     title: "Horizon",
-    placeholder: "Ask Horizon to analyze your portfolio...",
+    placeholder: "Ask Guanlan",
     send: "Send",
     deepThink: "Deep Think",
     webSearch: "Web Search",
@@ -984,9 +980,6 @@ const en = {
     refuse: "Refuse",
     autoConfirmSession: "Auto-confirm same actions this session",
     regenerate: "Regenerate",
-    thinking: "Thinking",
-    thinkingInProgress: "Thinking...",
-    deepThinkingPending: "Deep thinking…",
     greeting: "Hello, I'm Horizon",
     subtitle: "Your intelligent investing companion",
     strategyGenerated: "Strategy Generated",
@@ -995,7 +988,6 @@ const en = {
     saving: "Saving...",
     strategyPlaceholder: "Horizon Strategy",
     promptStrategyName: "Strategy Name",
-    toolRunning: "Running",
     suggestionsTitle: "Try asking",
     suggestions: [
       "How risky is my portfolio?",
@@ -1635,7 +1627,7 @@ const hk = {
   // ── Chat / AI ──
   chat: {
     title: "觀瀾",
-    placeholder: "輸入問題，觀瀾為你分析...",
+    placeholder: "向觀瀾提問",
     send: "發送",
     deepThink: "深度思考",
     webSearch: "聯網搜索",
@@ -1656,9 +1648,6 @@ const hk = {
     refuse: "拒絕",
     autoConfirmSession: "本次會話內同類操作免確認",
     regenerate: "重新生成",
-    thinking: "思考過程",
-    thinkingInProgress: "正在思考...",
-    deepThinkingPending: "深度思考中…",
     greeting: "你好，我是觀瀾",
     subtitle: "你的智能投資助理",
     strategyGenerated: "策略已生成",
@@ -1667,7 +1656,6 @@ const hk = {
     saving: "保存中...",
     strategyPlaceholder: "觀瀾生成的策略",
     promptStrategyName: "策略名稱",
-    toolRunning: "調用工具",
     suggestionsTitle: "試試問",
     suggestions: [
       "我的組合風險怎麼樣？",

@@ -2,6 +2,7 @@ package com.investory.controller.api;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.investory.crawler.AiSessionManager;
+import com.investory.crawler.PublicAnswerFilter;
 import com.investory.crawler.RealtimeQuoteService;
 import com.investory.marketdata.MarketRows;
 import com.investory.util.ProcessRunner;
@@ -151,14 +152,10 @@ public class AiApiController {
         }
         if (userId > 0) {
             try {
-                List<Map<String, Object>> td = jdbc.queryForList(
-                    "SELECT content FROM ai_chat_history WHERE user_id = ? AND role = 'tooldata' ORDER BY id DESC LIMIT 1", userId);
-                if (!td.isEmpty()) {
-                    String tc = String.valueOf(td.get(0).get("content"));
-                    if (tc != null && !tc.isBlank()) {
-                        systemBlocks.add(Map.of("role", "system", "content",
-                            "【上一轮工具已获取的数据（供延续对话参考，已是最新拉取，不必重复查询；如需更新再调用工具）】\n" + tc));
-                    }
+                String tc = loadToolContext(userId, convId);
+                if (!tc.isBlank()) {
+                    systemBlocks.add(Map.of("role", "system", "content",
+                        "【本对话上一轮工具结果，仅供延续参考；行情与新闻可能已经过时，需要最新数据时重新查询】\n" + tc));
                 }
             } catch (Exception ignored) {}
         }
@@ -274,19 +271,29 @@ public class AiApiController {
                     }
                     openText[0].put("text", openText[0].get("text").toString() + chunk);
                 };
+                boolean hadUserHandoff = false;
+                PublicAnswerFilter publicAnswer = new PublicAnswerFilter();
                 try (BufferedReader reader = new BufferedReader(
                         new InputStreamReader(p.getInputStream(), "UTF-8"))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
                         if ("[DONE]".equals(line.trim())) {
                             completed = true;
+                        } else if (line.startsWith("[ACTIVITY]")) {
+                            try {
+                                Map<String, Object> activity = json.readValue(line.substring(10).trim(), Map.class);
+                                Object description = activity.get("message");
+                                if (description instanceof String text) session.emitActivity(uid, text);
+                            } catch (Exception ignored) {}
                         } else if (line.startsWith("[ASK]")) {
+                            hadUserHandoff = true;
                             try {
                                 String jsonStr = line.substring(5).trim();
                                 Map<String, Object> askData = json.readValue(jsonStr, Map.class);
                                 session.emitAsk(uid, askData);
                             } catch (Exception ignored) {}
                         } else if (line.startsWith("[STRATEGY]")) {
+                            hadUserHandoff = true;
                             try {
                                 String jsonStr = line.substring(10).trim();
                                 Map<String, Object> sdata = json.readValue(jsonStr, Map.class);
@@ -300,7 +307,7 @@ public class AiApiController {
                             String name = parts.length > 1 ? parts[1] : "";
                             String summary = parts.length > 2 ? parts[2].trim() : "";
                             markToolDone(timeline, callId, name, true, summary, null);
-                            session.emitToolEnd(uid, callId, name, summary);
+
                         } else if (line.startsWith("[TOOL_FAIL]")) {
                             // Payload: "<callId>\t<name>\t<message>"
                             String[] parts = line.substring(11).trim().split("\t", 3);
@@ -308,7 +315,7 @@ public class AiApiController {
                             String name = parts.length > 1 ? parts[1] : "";
                             String errMsg = parts.length > 2 ? parts[2] : "";
                             markToolDone(timeline, callId, name, true, null, errMsg);
-                            session.emitToolFail(uid, callId, name, errMsg);
+
                         } else if (line.startsWith("[KB]")) {
                             // Payload: "<topic>" — agent consulted the knowledge base.
                             String topic = line.substring(4).trim();
@@ -317,7 +324,7 @@ public class AiApiController {
                             Map<String, Object> kbStep = new LinkedHashMap<>();
                             kbStep.put("kind", "kb"); kbStep.put("topic", topic);
                             timeline.add(kbStep);
-                            session.emitKb(uid, topic);
+
                         } else if (line.startsWith("[MEMORY]")) {
                             // Payload: "<count>" — relevant user memories were recalled.
                             String cnt = line.substring(8).trim();
@@ -326,7 +333,7 @@ public class AiApiController {
                             Map<String, Object> memStep = new LinkedHashMap<>();
                             memStep.put("kind", "memory"); memStep.put("count", cnt);
                             timeline.add(memStep);
-                            session.emitMemory(uid, cnt);
+
                         } else if (line.startsWith("[TOOL]")) {
                             // Payload: "<name>\t<category>\t<callId>\t<detail>" (last three optional).
                             // <detail> is a live label such as the web_search query keywords.
@@ -344,7 +351,7 @@ public class AiApiController {
                             if (!callId.isEmpty()) step.put("callId", callId);
                             if (!detail.isEmpty()) step.put("detail", detail);
                             timeline.add(step);
-                            session.emitTool(uid, name, category, callId, detail);
+
                         } else if (line.startsWith("[ARTIFACT]")) {
                             try {
                                 String jsonStr = line.substring(10).trim();
@@ -358,6 +365,7 @@ public class AiApiController {
                             // Compact tool-result digest for cross-turn continuity (#1)
                             toolContext[0] = line.substring(9).trim();
                         } else if (line.startsWith("[CONFIRM]")) {
+                            hadUserHandoff = true;
                             session.emitConfirm(uid, line.substring(9).trim());
                         } else if (line.startsWith("[ERROR]")) {
                             session.emitError(uid, line.substring(7).trim());
@@ -378,12 +386,13 @@ public class AiApiController {
                             String decoded = sb.toString();
                             closeText.run();
                             appendThinking.accept(decoded);
-                            session.emitReasoning(uid, decoded);
+
                         } else if (isTracebackLine(line)) {
                             // Python traceback leaked to stdout — silently drop it.
                             // Normal errors are emitted via [ERROR] protocol lines.
                         } else {
-                            String tok = line.isEmpty() ? "\n" : line;
+                            String tok = publicAnswer.accept(line.isEmpty() ? "\n" : line);
+                            if (tok.isEmpty()) continue;
                             // Answer text closes any open thinking segment, then folds
                             // into the timeline at its true position.
                             closeThinking.run();
@@ -406,15 +415,14 @@ public class AiApiController {
                 } else if (!completed && session.terminalNotice(uid).isEmpty()) {
                     session.emitError(uid, "回复未完整结束，请稍后重试");
                 }
+                if (completed && accumContent.toString().isBlank() && pendingArtifacts.isEmpty() && !hadUserHandoff && session.terminalNotice(uid).isEmpty()) {
+                    session.emitError(uid, "模型未返回正文，请重试或检查模型配置。");
+                }
                 // Persist this turn's tool-result digest (#1) — keep only the most
                 // recent one so the model gets a single, fresh continuity block.
                 if (uid > 0 && toolContext[0] != null && !toolContext[0].isEmpty()) {
                     try {
-                        jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role = 'tooldata'", uid);
-                        String tc = toolContext[0];
-                        if (tc.length() > 4000) tc = tc.substring(0, 4000);
-                        jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'tooldata', ?)",
-                            uid, convId, tc);
+                        saveToolContext(uid, convId, toolContext[0]);
                     } catch (Exception ignored) {}
                 }
             } catch (Exception e) {
@@ -437,6 +445,21 @@ public class AiApiController {
         // convIdRef in sync — needed so deleting the active conversation clears the
         // chat window even when it was freshly created this turn.
         return Map.of("status", "started", "conversationId", convId);
+    }
+
+    String loadToolContext(long userId, long conversationId) {
+        if (conversationId <= 0) return "";
+        List<String> rows = jdbc.queryForList(
+            "SELECT content FROM ai_chat_history WHERE user_id = ? AND conversation_id = ? AND role = 'tooldata' ORDER BY id DESC LIMIT 1",
+            String.class, userId, conversationId);
+        return rows.isEmpty() ? "" : rows.get(0);
+    }
+
+    void saveToolContext(long userId, long conversationId, String content) {
+        if (conversationId <= 0 || content == null || content.isBlank()) return;
+        jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND conversation_id = ? AND role = 'tooldata'", userId, conversationId);
+        jdbc.update("INSERT INTO ai_chat_history (user_id, conversation_id, role, content) VALUES (?, ?, 'tooldata', ?)",
+            userId, conversationId, content);
     }
 
     @GetMapping("/suggestions")
@@ -471,8 +494,6 @@ public class AiApiController {
         if (uid <= 0) return Map.of("error", "未登录");
         // Archive current conversation — don't delete, just clear session
         session.clearSession(uid);
-        // Clear stale tooldata so it doesn't leak into the new conversation
-        try { jdbc.update("DELETE FROM ai_chat_history WHERE user_id = ? AND role = 'tooldata'", uid); } catch (Exception ignored) {}
         // Insert new conversation row; title is summarised async by the LLM after the first turn.
         jdbc.update("INSERT INTO ai_conversations (user_id, title) VALUES (?, '无标题')", uid);
         long convId = 0;
@@ -519,6 +540,7 @@ public class AiApiController {
             m.put("role", role); m.put("content", content);
             out.add(m);
         }
+        publicHistory(out);
         attachArtifactsToMessages(uid, id, out);
         return Map.of("messages", out);
     }
@@ -604,6 +626,7 @@ public class AiApiController {
                 m.put("role", role); m.put("content", content);
                 out.add(m);
             }
+            publicHistory(out);
             // Attach artifacts so they survive browser restart
             if (convId != null && convId > 0) {
                 attachArtifactsToMessages(uid, convId, out);
@@ -822,6 +845,27 @@ public class AiApiController {
             return id == null ? 0 : id;
         } catch (Exception ignored) {
             return 0;
+        }
+    }
+
+    private void publicHistory(List<Map<String, Object>> messages) {
+        messages.removeIf(message -> "thinking".equals(message.get("role")));
+        for (Map<String, Object> message : messages) {
+            Object stored = message.remove("thinking");
+            if (!"assistant".equals(message.get("role"))) continue;
+            if (stored instanceof String trace) {
+                try {
+                    Object parsed = json.readValue(trace, Object.class);
+                    if (parsed instanceof List<?> steps) {
+                        StringBuilder answer = new StringBuilder();
+                        for (Object value : steps) {
+                            if (value instanceof Map<?, ?> step && "text".equals(step.get("kind")) && step.get("text") instanceof String text) answer.append(text);
+                        }
+                        if (!answer.isEmpty()) message.put("content", answer.toString());
+                    }
+                } catch (Exception ignored) {}
+            }
+            message.put("content", PublicAnswerFilter.sanitize(String.valueOf(message.getOrDefault("content", ""))));
         }
     }
 

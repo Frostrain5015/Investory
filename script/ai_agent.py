@@ -17,6 +17,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from model_transport import get_proxy, needs_proxy as _needs_proxy
 from agent_message import AgentMessage, to_openai_messages, to_anthropic_messages
 from context_budget import ContextBudgetError, active_user, fit_messages, output_budget
+from agent_activity import emit_activity, tool_activity, subject as activity_subject
 
 KB_FILE = SCRIPT_DIR / "ai_knowledge_base.json"
 AGENT_SKILLS_DIR = SCRIPT_DIR / "agent_skills"
@@ -29,6 +30,10 @@ RUNTIME_EFFICIENCY_RULES = """【运行时效率规则（直接注入，不属�
 - 符号免搜索：用户用中文名、常见代码或 DB 格式指定股票时，直接原样传给工具；resolve_symbol 内部完成匹配和格式转换。禁止自己拼 1./0. 前缀，也不要为解析符号先调 search_stocks。
 - 并行不排队：多个互相独立的只读操作必须在同一轮一次性并行调用。引擎并发执行，“每次只能调一个工具”是误解。
 - strategy_id 来源验证：run_backtest 的 strategy_id 必须来自刚保存的策略或 get_strategies 查询结果，禁止凭空编 ID。
+- 估值与预测：估值快照不能证明历史分位或“历史低估”；没有历史估值、行业对比或来源证据时，不得补造这些结论。累计EPS、TTM与年化假设必须区分；不能仅凭一期财报断言全年EPS或季节性。
+- 价格口径：日线的 latestClose 是所示日期的收盘价和相对前一条日线的涨跌；summary.totalReturn 是整个区间收益，不能当成当日涨跌。
+- 策略语义：用户要求金叉/死叉时，必须比较上一根和当前根均线的相对位置变化；仅 fast>slow 或 fast<slow 是状态条件，不能冒充穿越事件。
+- 用户进度：调用工具时在可选 _status 字段中生成一句简短进度，说明正在做什么和对象。只写操作，不写推理、内部工具名、参数、结果或结论。不用正文复述将要调用工具；正文用于回答结论及必要追问。
 - 不预演不空转：发出工具调用后等真实结果再分析；证据齐了就给结论，证据不足就说明缺哪块数据、证据是否冲突、受何约束。"""
 
 
@@ -62,7 +67,13 @@ def _should_use_web_search(messages: list) -> bool:
     last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     if not last_user: return False
     text = str(last_user.get("content", "")).lower()
+    if _forbids_web_search(text):
+        return False
     return any(k.lower() in text for k in _WEB_SEARCH_TRIGGERS)
+
+
+def _forbids_web_search(text: str) -> bool:
+    return any(word in text.lower() for word in ("不要联网", "不用联网", "不联网", "禁止联网", "不要搜索", "不搜索", "不要查新闻", "do not search", "without web", "without internet"))
 
 # Pure smalltalk that genuinely does NOT need a tool. ONLY these are routed to
 # the fast model. Everything else (stock names, watchlist/follow, transactions,
@@ -134,7 +145,7 @@ def _detect_agent_skills(messages: list) -> list:
     stock_diagnosis_intent = any(k in text for k in (
         "为什么跌", "为啥跌", "跌这么狠", "暴跌", "大跌", "杀跌", "为什么涨", "涨这么多", "异动",
         "出什么问题", "利空", "利好", "踩雷", "暴雷", "分析", "怎么看", "怎么样", "基本面",
-        "技术面", "估值", "能买吗", "能不能买", "该不该", "还能持有", "风险", "财报", "业绩"
+        "技术面", "估值", "能买吗", "能不能买", "该不该", "还能持有", "风险", "财报", "业绩", "下跌", "上涨", "核实", "公告"
     ))
     if stock_like and stock_diagnosis_intent:
         skills.append("stock-diagnosis")
@@ -160,7 +171,10 @@ def _detect_agent_skills(messages: list) -> list:
                                 "find stocks", "选几只")):
         skills.append("stock-picking")
 
-    if any(k in text for k in ("大盘", "市场", "行情", "全球", "美股", "港股", "汇率", "商品", "宏观", "新闻", "最新消息", "今天发生")):
+    if "stock-picking" not in skills and "筛选" in text and any(word in text for word in ("股票", "A股", "个股", "全市场")):
+        skills.append("stock-picking")
+
+    if any(k in text for k in ("大盘", "行情", "全球", "美股", "港股", "汇率", "商品", "宏观", "新闻", "最新消息", "今天发生")) or ("市场" in text and "stock-picking" not in skills):
         skills.append("market-news")
 
     return skills
@@ -197,6 +211,15 @@ def _confirmation_was_sent(result_text: str) -> bool:
         data = json.loads(result_text)
         return isinstance(data, dict) and data.get("status") == "confirmation_sent"
     except Exception:
+        return False
+
+
+def _requires_ui_handoff(name: str, result_text: str) -> bool:
+    if _is_confirm_tool(name):
+        return _confirmation_was_sent(result_text)
+    try:
+        return name == "generate_strategy" and json.loads(result_text).get("status") == "strategy_draft"
+    except (ValueError, AttributeError):
         return False
 
 
@@ -351,7 +374,17 @@ def _quote_uses_hithink(symbol: str) -> bool:
     import re
     try:
         code = normalize_symbol(symbol)
-        return bool(re.fullmatch(r"6\d{5}\.SH|[03]\d{5}\.SZ|[489]\d{5}\.BJ", code))
+        return bool(re.fullmatch(r"6\d{5}\.SH|[03]\d{5}\.SZ|[489]\d{5}\.BJ", code)) and not code.startswith("399")
+    except HithinkError:
+        return False
+
+
+def _is_domestic_index(symbol: str) -> bool:
+    from hithink_finance import normalize_symbol, HithinkError
+    import re
+    try:
+        code = symbol.strip().upper() if symbol.upper().endswith(".TI") else normalize_symbol(symbol)
+        return bool(re.fullmatch(r"000\d{3}\.SH|399\d{3}\.SZ|\d{6}\.TI", code))
     except HithinkError:
         return False
 
@@ -374,7 +407,18 @@ def _latest_quotes(symbols: list[str]) -> dict:
                                   "note": error or "同花顺未返回该标的报价"}
             quote = result[symbol]
             quote["date"] = timestamp_day(quote["timestamp"]) if quote.get("timestamp") is not None else None
-    other = [symbol for symbol in symbols if symbol not in a_shares]
+    indices = [symbol for symbol in symbols if _is_domestic_index(symbol)]
+    if indices:
+        index_error = None
+        try:
+            result.update(get_client().index_snapshot(indices))
+        except HithinkError as failure:
+            index_error = str(failure)
+        for symbol in indices:
+            if symbol not in result:
+                result[symbol] = {"price": None, "source": SOURCE, "live": False,
+                                  "note": index_error or "同花顺未返回该指数报价"}
+    other = [symbol for symbol in symbols if symbol not in a_shares and symbol not in indices]
     if other:
         from market_history import latest
         external = latest(other)
@@ -448,6 +492,7 @@ MAX_TOOL_CALLS = 20
 # and is prone to infinite curiosity loops. Cut it off early — 3 searches is enough
 # to cover most fact-finding tasks. Later web_search calls return a synthetic error.
 MAX_WEB_SEARCHES = 3
+MAX_MODEL_ROUNDS = 8
 
 # Tool taxonomy. Each tool belongs to one of:
 #   - 'query'     : read-only DB / in-memory lookup (cheap, instant)
@@ -562,7 +607,15 @@ def tool_get_stock_price_history(symbol: str, days: int = 60) -> dict:
     try:
         result = history(db_sym, today - timedelta(days=min(3650, limit * 2 + 30)), today, "none")
         points = result["points"][-limit:]
-        return {**result, "symbol": symbol, "points": points, "count": len(points),
+        latest_close = {}
+        if points:
+            last = points[-1]
+            previous = points[-2]["close"] if len(points) > 1 else None
+            latest_close = {"date": last["date"], "price": last["close"],
+                            "change": round(last["close"] - previous, 4) if previous else None,
+                            "changePct": round((last["close"] / previous - 1) * 100, 4) if previous else None,
+                            "basis": "daily_close"}
+        return {**result, "symbol": symbol, "latestClose": latest_close, "points": points, "count": len(points),
                 "truncated": len(result["points"]) > limit, "volume_unit": result.get("volumeBasis", "shares")}
     except HistoryError as error:
         return {"error": str(error)}
@@ -800,13 +853,13 @@ def tool_run_backtest(strategy_id: int = None, stocks: list = None,
                       initial_capital: float = 100000, commission_pct: float = 0.008,
                       portfolio_id: int = 0, user_id: int = 0) -> dict:
     """通过 backtest_engine.py 子进程运行一次回测，完整结果入库并通过载体卡片返回。
-    策略必须先经由 generate_strategy 保存到数据库，此处只能用 strategy_id 指定。
+    策略必须先由用户在草稿卡片保存到数据库，此处只能用真实 strategy_id 指定。
     回测标的：显式 stocks 优先，否则默认回测当前组合持仓。"""
     import subprocess, json as _json, tempfile, os, uuid
 
     # 1. Resolve strategy from DB — code param removed; must be saved first.
     if not strategy_id:
-        return {"error": "请先保存策略（通过 generate_strategy 卡片确认保存），然后传入 strategy_id 回测。"}
+        return {"error": "请先在策略草稿卡片确认保存，然后传入 strategy_id 回测。"}
     strategy = None
     strategy_type = "advanced"
     strategy_name = ""
@@ -1487,7 +1540,7 @@ _PARAM_SCHEMAS = {
         "code": {"type": "string", "description": "完整 Python 代码，必须含 def decide(ctx)。硬性规定（详见 consult_kb('策略引擎')）：①ctx 用属性访问 ctx.close（[-1] 为当日），不要访问 ctx 没有的字段；②只能用 numpy(np) 和 math，严禁 pandas/DataFrame/聚宽/米筐/get_all_securities 与 os/sys/subprocess/open/eval/exec；③只能用沙箱白名单内置，禁止 try/except（异常类不在白名单会 NameError）；④辅助函数(ema/rsi 等)放在 decide 之外顶层 def，decide 内调用；⑤开头加 len(ctx.close)<N 长度保护；⑥返回 1/-1/0 或 {'action':'BUY'/'SELL'/'HOLD','quantity':正整数}"}
     }, "required": ["name", "description", "code"]},
     "run_backtest": {"type": "object", "properties": {
-        "strategy_id": {"type": "integer", "description": "已保存策略的ID。必须先用 generate_strategy 保存策略，然后用此ID回测"},
+        "strategy_id": {"type": "integer", "description": "用户已在卡片保存并回传，或 get_strategies 查得的真实策略ID。generate_strategy 只产生草稿，不返回已保存ID"},
         "stocks": {"type": "array", "items": {"type": "string"}, "description": "回测标的代码列表，如['600036.SH','000001.SZ']。省略则默认回测当前组合持仓"},
         "start_date": {"type": "string", "description": "回测起始日期 YYYY-MM-DD，默认一年前"},
         "end_date": {"type": "string", "description": "回测结束日期 YYYY-MM-DD，默认今天"},
@@ -1514,7 +1567,10 @@ def _build_tools():
     for entry in catalog:
         name = entry.get("name", "")
         desc = entry.get("description", "")
-        params = _PARAM_SCHEMAS.get(name, {"type": "object", "properties": {}, "required": []})
+        base_params = _PARAM_SCHEMAS.get(name, {"type": "object", "properties": {}, "required": []})
+        params = {**base_params, "properties": {**base_params.get("properties", {}),
+            "_status": {"type": "string", "maxLength": 48,
+                        "description": "给用户的一句当前进度，如正在核实圣泉集团的公告。以正在开头，只写操作和对象，不含推理、工具名称、参数或结果。"}}}
         tools.append({"type": "function", "function": {
             "name": name, "description": desc, "parameters": params
         }})
@@ -1553,7 +1609,7 @@ def tool_get_global_indices() -> dict:
         price = prices.get(symbol, {})
         results.append({"stockId": identities.get(symbol), "symbol": symbol, "name": name, "country": country,
                         **price, "available": price.get("price") is not None})
-    return {"indices": results, "note": "仅提供收盘历史的标的不是实时行情；stockId 有值时可加入自选。"}
+    return {"indices": results, "note": "指数快照timestamp仅是接口批次时间，不是成交时间；日线date是收盘日期，不同市场不能统一声称同一成交时刻。stockId有值时可加入自选。"}
 
 
 def tool_get_world_news(limit: int = 10) -> dict:
@@ -1722,12 +1778,21 @@ def _run_tool(name: str, args: dict, portfolio_id: int, user_id: int) -> object:
             portfolio_id, user_id,
         )
     elif name == "generate_strategy":
+        import ast
         code = args.get("code", "")
-        if "def decide(ctx)" not in code:
-            code = "# 格式错误\ndef decide(ctx):\n    return {'action': 'HOLD', 'quantity': 0}"
-        if "pandas" in code or "DataFrame" in code or "get_all_securities" in code:
-            code = "# 检测到禁用API\ndef decide(ctx):\n    return {'action': 'HOLD', 'quantity': 0}"
-        result = {"name": args.get("name", ""), "description": args.get("description", ""), "code": code}
+        try:
+            tree = ast.parse(code)
+            compile(tree, "<strategy-draft>", "exec")
+            valid_decide = any(isinstance(node, ast.FunctionDef) and node.name == "decide"
+                               and len(node.args.args) == 1 and node.args.args[0].arg == "ctx"
+                               for node in tree.body)
+        except (SyntaxError, ValueError, TypeError):
+            valid_decide = False
+        if not valid_decide or any(word in code for word in ("pandas", "DataFrame", "get_all_securities")):
+            return {"error": "策略代码无效：必须定义 decide(ctx)，且不能使用 pandas、DataFrame 或聚宽接口。请修正代码后重试。"}
+        result = {"name": args.get("name", ""), "description": args.get("description", ""), "code": code,
+                  "status": "strategy_draft", "saved": False,
+                  "next_step": "草稿已展示。等待用户在卡片保存并回传真实 strategy_id 后才能回测；当前不要查询旧策略或编造ID继续回测。"}
         print(f"[STRATEGY] {json.dumps(result, ensure_ascii=False)}", flush=True)
         return result
     elif name == "search_stocks":
@@ -1816,6 +1881,12 @@ def _confirm_create(args: dict, user_id: int = 0) -> dict:
         t = tx.get("type", "BUY")
         sid = _resolve_stock_id(tx.get("stockId", 0))
         shares = float(tx.get("shares", 0) or 0)
+        if t in ("BUY", "SELL"):
+            import math
+            price = float(tx.get("price", 0) or 0)
+            if sid <= 0 or not math.isfinite(shares) or shares <= 0 or not math.isfinite(price) or price <= 0:
+                return {"error": "买卖记录需要明确的股票、正数数量和正数成交价，请向用户补齐信息后再生成确认卡片。",
+                        "code": "MISSING_TRADE_PARAMETERS"}
 
         # Validate SELL: check holdings exist and have enough shares
         if t == "SELL" and sid > 0 and user_id > 0:
@@ -2135,6 +2206,8 @@ def execute_tool(name: str, args: dict, portfolio_id: int, user_id: int = 0, cal
     # cross-wire. <detail> is an optional live label (e.g. the web_search query).
     import time as _time, uuid as _uuid
     cid = call_id or _uuid.uuid4().hex[:8]
+    args = dict(args)
+    emit_activity(tool_activity(name, args, args.pop("_status", None)))
     # consult_kb emits its own [KB] line — don't double-show as a regular tool
     skip_tool_line = name == "consult_kb"
     if not skip_tool_line:
@@ -2247,7 +2320,7 @@ def _select_tools(messages: list, expose_web: bool) -> list:
             keep |= _WRITE_CONFIRM_TOOLS
         if any(k.lower() in text for k in _STRATEGY_INTENT):
             keep |= _STRATEGY_WRITE_TOOLS
-    if not expose_web:
+    if not expose_web or _forbids_web_search(text):
         keep.discard("web_search")
     return [t for t in TOOLS if t["function"]["name"] in keep]
 
@@ -2270,10 +2343,10 @@ def _extract_stock_symbol_for_dag(text: str) -> str:
     m = re.search(r"(?<!\d)\d{6}(?:\.(?:SH|SZ|BJ))?(?!\d)", t, re.I)
     if m:
         return m.group(0)
-    cleaned = re.sub(r"^[\s，。！？,.!?]*(请|麻烦)?(帮我)?(分析一下|分析|看看|看一下|研究一下|诊断一下)?", "", t)
+    cleaned = re.sub(r"^[\s，。！？,.!?]*(请|麻烦)?(帮我)?(分析一下|分析|看看|看一下|研究一下|诊断一下|核实)?", "", t)
     # Capture the first plausible CJK stock name before a stock-diagnosis cue.
     m = re.match(
-        r"([\u4e00-\u9fff]{2,8}?)(?:这只|这支|股票|为什么|为啥|怎么|基本面|技术面|估值|跌|涨|暴跌|大跌|出什么|能买吗|能不能|风险|财报|业绩|$)",
+        r"([\u4e00-\u9fff]{2,8}?)(?:这只|这支|股票|最近|近期|为什么|为啥|怎么|基本面|技术面|估值|跌|涨|暴跌|大跌|出什么|能买吗|能不能|风险|财报|业绩|$)",
         cleaned,
     )
     if m:
@@ -2287,7 +2360,7 @@ def _stock_dag_needs_fundamentals(text: str) -> bool:
     return any(k in text for k in (
         "深入", "深度", "完整", "专业", "证据链", "风险拆解", "买不买", "能买吗", "能不能买",
         "还能持有", "基本面", "技术面", "为什么跌", "跌这么狠", "大跌", "暴跌", "异动", "出什么问题",
-        "分析", "怎么看", "怎么样", "财报", "业绩",
+        "分析", "怎么看", "怎么样", "财报", "业绩", "估值", "市盈率", "市净率", "营收", "利润",
     ))
 
 
@@ -2480,7 +2553,7 @@ def _plan_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_w
 
     tasks, synth_template = _build_dag_tasks(dag, ctx)
     # web_search only fires when the toggle/heuristic allows fresh facts.
-    if not (expose_web or _should_use_web_search(messages)):
+    if _forbids_web_search(text) or not (expose_web or _should_use_web_search(messages)):
         tasks = [(n, a) for (n, a) in tasks if n != "web_search"]
     if not tasks:
         return empty
@@ -2503,6 +2576,7 @@ def _run_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_we
 
     results = {}
     successful_tools = set()
+    completed_calls = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as executor:
         futs = {}
         for i, (name, args) in enumerate(tasks, 1):
@@ -2516,13 +2590,14 @@ def _run_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_we
                 result_json = json.dumps({"error": "工作流DAG预取超时"}, ensure_ascii=False)
             compact = _compact_dag_result(name, result_json)
             results[name] = {"args": args, "result": compact}
+            completed_calls.append({"name": name, "args": args, "result": result_json})
             if not (isinstance(compact, dict) and compact.get("error")):
                 successful_tools.add(name)
 
     context = {
         "workflow": plan["workflow"],
         "synthesize": synth_template,
-        "instruction": "以下是工作流DAG已确定性预取的第一轮证据。回答时优先使用这些结果；除非结果报错或问题需要额外证据，不要重复调用已成功完成的同名工具。按 synthesize 指定的输出模板组织回答。",
+        "instruction": "第一轮取证已执行：直接使用成功项；报错项仍缺证据，应补查或说明无法核实。工具仍然可用；成功项相同参数无需重查，不同关键词、标的、时间范围及失败重试可以继续调用。需要补充证据时直接调用工具，不要反复讨论工具列表或重做取证计划。按 synthesize 指定的输出模板组织回答，缺失证据如实说明。",
         "results": results,
     }
     if plan.get("symbol"):
@@ -2530,6 +2605,7 @@ def _run_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_we
     return {
         "system_message": "【工作流DAG预取结果】\n" + json.dumps(context, ensure_ascii=False),
         "successful_tools": successful_tools,
+        "completed_calls": completed_calls,
     }
 
 
@@ -2540,22 +2616,124 @@ def _run_workflow_dag(messages: list, portfolio_id: int, user_id: int, expose_we
 # the assistant can reference "the portfolio you just pulled" without re-querying.
 _CONTEXT_SKIP_TOOLS = _WRITE_CONFIRM_TOOLS | {"ask_user", "manage_memory"}
 
+
+class _TurnToolRunner:
+    """Reuse successful reads by exact arguments, never revoke a tool by name."""
+    def __init__(self, tools, completed_calls, portfolio_id, user_id):
+        import threading
+        self.tools = {tool["function"]["name"]: tool["function"] for tool in tools}
+        self.portfolio_id, self.user_id = portfolio_id, user_id
+        self.lock = threading.Lock()
+        self.results = {}
+        self.last_operation = None
+        self.completed_calls = completed_calls if isinstance(completed_calls, list) else []
+        for call in self.completed_calls:
+            if call.get("name") in self.tools and isinstance(call.get("args"), dict):
+                parsed = json.loads(call["result"])
+                if isinstance(parsed, dict) and parsed.get("error"):
+                    continue
+                future = concurrent.futures.Future()
+                future.set_result(call["result"])
+                self.results[self.key(call["name"], call["args"])] = future
+
+    @staticmethod
+    def key(name, args):
+        return name, json.dumps(args, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+    def run(self, name, args, call_id):
+        schema = self.tools.get(name)
+        if schema is None or not isinstance(args, dict) or any(key not in args for key in schema.get("parameters", {}).get("required", [])):
+            error = "工具不可用或参数格式不完整，请使用当前工具定义中的名称和参数"
+            print(f"[TOOL] {name}\t{_tool_category(name)}\t{call_id}", flush=True)
+            print(f"[TOOL_FAIL] {call_id}\t{name}\t{error}", flush=True)
+            return json.dumps({"error": error}, ensure_ascii=False)
+        args = dict(args)
+        generated_status = args.pop("_status", None)
+        self.last_operation = {"name": name, "args": args}
+        execution_args = {**args, "_status": generated_status} if generated_status else args
+        if name in _CONTEXT_SKIP_TOOLS | _STRATEGY_WRITE_TOOLS:
+            return execute_tool(name, execution_args, self.portfolio_id, self.user_id, call_id)
+        key = self.key(name, args)
+        with self.lock:
+            future = self.results.get(key)
+            owner = future is None
+            if owner:
+                future = concurrent.futures.Future()
+                self.results[key] = future
+        if not owner:
+            emit_activity(tool_activity(name, args, generated_status))
+            result = future.result()
+            print(f"[TOOL] {name}\t{_tool_category(name)}\t{call_id}", flush=True)
+            summary = _tool_summary(name, json.loads(result)).replace("\n", " ").replace("\t", " ")
+            print(f"[TOOL_END] {call_id}\t{name}\t{summary}", flush=True)
+            return result
+        try:
+            result = execute_tool(name, execution_args, self.portfolio_id, self.user_id, call_id)
+            parsed = json.loads(result)
+            if isinstance(parsed, dict) and parsed.get("error"):
+                with self.lock:
+                    self.results.pop(key, None)
+            future.set_result(result)
+            return result
+        except BaseException as error:
+            with self.lock:
+                self.results.pop(key, None)
+            future.set_exception(error)
+            raise
+
+def _emit_analysis_activity(messages, runner):
+    operation = runner.last_operation or next((call for call in reversed(runner.completed_calls) if call.get("name") in {"get_fundamentals", "get_stock_price", "web_search"}), {})
+    name = operation.get("name")
+    target = activity_subject(operation.get("args", {}))
+    if name == "get_fundamentals":
+        message = f"正在分析{target or '相关公司'}的财务表现"
+    elif name == "get_stock_price":
+        message = f"正在分析{target or '相关标的'}的走势"
+    elif name == "web_search":
+        message = f"正在核对{target or '相关'}的公开信息"
+    else:
+        text = _latest_user_text(messages)
+        target = _extract_stock_symbol_for_dag(text)
+        message = f"正在分析{target}" if target else "正在整理本次回答"
+    emit_activity({"message": message, "origin": "runtime"})
+
+
 def _emit_context(gathered: dict) -> None:
     if not gathered:
         return
     try:
         compact = {}
         for k, v in list(gathered.items())[-8:]:
-            compact[k] = v[:600] if isinstance(v, str) else v
+            if isinstance(v, str):
+                try:
+                    v = json.loads(v)
+                except ValueError:
+                    pass
+            if isinstance(v, dict):
+                if k == "get_fundamentals":
+                    v = {field: v[field] for field in ("symbol", "valuation", "financials", "limitations", "error") if field in v}
+                    if isinstance(v.get("financials"), dict):
+                        v["financials"] = {field: value for field, value in v["financials"].items()
+                                           if field not in {"scope", "operating_income", "net_profit", "parent_holder_net_profit"}}
+                    if isinstance(v.get("valuation"), dict):
+                        v["valuation"] = {field: value for field, value in v["valuation"].items() if field not in {"source", "scope"}}
+                elif k == "get_stock_price" and isinstance(v.get("points"), list):
+                    v = {**{field: value for field, value in v.items() if field != "points"}, "recentPoints": v["points"][-3:]}
+                elif k == "web_search" and isinstance(v.get("results"), list):
+                    v = {"results": [{field: str(value)[:160] for field, value in row.items() if field in {"title", "url", "snippet", "summary"}}
+                                     for row in v["results"][:2]], "truncated": True}
+            encoded = json.dumps(v, ensure_ascii=False)
+            compact[k] = v if len(encoded) <= 700 else {"truncated": True, "preview": encoded[:600]}
         blob = json.dumps(compact, ensure_ascii=False)
-        if len(blob) > 2500:
-            blob = blob[:2500]
+        while len(blob) > 2500 and len(compact) > 1:
+            del compact[next(iter(compact))]
+            blob = json.dumps(compact, ensure_ascii=False)
         print(f"[CONTEXT] {blob}", flush=True)
     except Exception:
         pass
 
 
-def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0, web_search: bool = False, prefetched_tools: set = None, *, context_window: int):
+def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: str, portfolio_id: int, deep_think: bool = False, user_id: int = 0, web_search: bool = False, prefetched_tools: list | None = None, *, context_window: int):
     from openai import OpenAI
     import httpx
     kwargs = {"api_key": api_key or "local-no-auth"}
@@ -2579,12 +2757,13 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
     effective_tools = _select_tools(messages, expose_web)
-    if prefetched_tools:
-        effective_tools = [t for t in effective_tools if t["function"]["name"] not in prefetched_tools]
+    runner = _TurnToolRunner(effective_tools, prefetched_tools, portfolio_id, user_id)
 
-    def _stream(msgs):
-        bounded = fit_messages(msgs, effective_tools, context_window, max_tokens, protected_message=protected_user)
-        kwargs = dict(model=effective_model, messages=bounded, tools=effective_tools,
+    def _stream(msgs, allow_tools=True):
+        _emit_analysis_activity(messages, runner)
+        request_tools = effective_tools if allow_tools else []
+        bounded = fit_messages(msgs, request_tools, context_window, max_tokens, protected_message=protected_user)
+        kwargs = dict(model=effective_model, messages=bounded, tools=request_tools,
                       stream=True, max_tokens=max_tokens)
         if is_deepseek and want_thinking:
             # DeepSeek thinking mode ignores temperature/top_p; control depth via
@@ -2688,10 +2867,16 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
     # Always stream first. If tool calls appear mid-stream, collect and handle.
     tool_calls, has_tools, got_text, reasoning_text, content_text = _consume(_stream(formatted))
 
-    total_tool_calls = 0
-    web_search_count = 0
-    gathered = {}  # tool name -> latest result JSON, replayed next turn via [CONTEXT] (#1)
+    total_tool_calls = len(runner.completed_calls)
+    web_search_count = sum(call["name"] == "web_search" for call in runner.completed_calls)
+    gathered = {call["name"]: call["result"] for call in runner.completed_calls}
+    model_rounds = 1
     while has_tools:
+        if model_rounds >= MAX_MODEL_ROUNDS:
+            formatted.append({"role": "user", "content": "本轮取证轮数已到上限。请使用已有结果给出结论，说明仍缺的证据，不要继续调用工具。"})
+            _, _, got_text, _, _ = _consume(_stream(formatted, allow_tools=False))
+            break
+        model_rounds += 1
         sorted_tools = [tool_calls[i] for i in sorted(tool_calls)]
         tool_call_blocks = [
             {"id": t["id"], "type": "function", "function": {"name": t["name"], "arguments": t["args"]}}
@@ -2717,8 +2902,8 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         ask_tool = next((t for t in sorted_tools if t["name"] == "ask_user"), None)
         if ask_tool:
             try: ask_args = json.loads(ask_tool["args"])
-            except: ask_args = {}
-            result_json = execute_tool(ask_tool["name"], ask_args, portfolio_id, user_id, ask_tool["id"])
+            except (ValueError, TypeError): ask_args = None
+            result_json = runner.run(ask_tool["name"], ask_args, ask_tool["id"])
             formatted.append({"role": "tool", "tool_call_id": ask_tool["id"],
                                "content": result_json})
             # Remove ask_user from this round so remaining tools can run in the next
@@ -2761,9 +2946,9 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                 futs = {}
                 for t in runnable:
                     try: args = json.loads(t["args"])
-                    except: args = {}
+                    except (ValueError, TypeError): args = None
                     # Pass the model's tool-call id as the timeline call_id (#3)
-                    futs[executor.submit(execute_tool, t["name"], args, portfolio_id, user_id, t["id"])] = (t["id"], t["name"])
+                    futs[executor.submit(runner.run, t["name"], args, t["id"])] = (t["id"], t["name"])
                 for fut, (tid, tname) in futs.items():
                     try:
                         results_map[tid] = fut.result(timeout=tool_timeouts_map[tid])
@@ -2776,7 +2961,7 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
                 if t["name"] not in _CONTEXT_SKIP_TOOLS:
                     gathered[t["name"]] = results_map[t["id"]]
             total_tool_calls += len(runnable)
-            if any(_is_confirm_tool(t["name"]) and _confirmation_was_sent(results_map.get(t["id"], "")) for t in runnable):
+            if any(_requires_ui_handoff(t["name"], results_map.get(t["id"], "")) for t in runnable):
                 _emit_context(gathered)
                 print("\n[DONE]", flush=True)
                 return
@@ -2792,17 +2977,20 @@ def call_openai_with_tools(api_key: str, model: str, messages: list, api_base: s
         formatted.append({"role": "user",
                           "content": "请基于以上工具已返回的数据，直接用中文给出简洁的分析结论，不要再调用工具。"})
         try:
-            _, _, got_text, _, _ = _consume(_stream(formatted))
+            _, _, got_text, _, _ = _consume(_stream(formatted, allow_tools=False))
         except Exception:
             got_text = False
         if not got_text:
-            print("已取得所需数据，但本轮未能生成结论。可点击重试，或换一种问法。\n", flush=True)
+            print("[ERROR] 已取得所需数据，但本轮未能生成结论。可点击重试，或换一种问法。", flush=True)
+
+    if not got_text and total_tool_calls == 0:
+        print("[ERROR] 模型未返回正文，请重试或检查模型配置。", flush=True)
 
     _emit_context(gathered)
     print("\n[DONE]", flush=True)
 
 
-def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id: int = 0, user_id: int = 0, deep_think: bool = False, web_search: bool = False, prefetched_tools: set = None, *, api_base: str, context_window: int):
+def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id: int = 0, user_id: int = 0, deep_think: bool = False, web_search: bool = False, prefetched_tools: list | None = None, *, api_base: str, context_window: int):
     import anthropic, httpx
     client_kwargs = {"api_key": api_key or "local-no-auth", "base_url": api_base.removesuffix("/").removesuffix("/v1")}
     proxy_url = os.getenv("PROXY_URL", get_proxy())
@@ -2823,8 +3011,7 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
     # Filter web_search by toggle/heuristic, then subset by intent (#4)
     expose_web = web_search or _should_use_web_search(messages)
     src_tools = _select_tools(messages, expose_web)
-    if prefetched_tools:
-        src_tools = [t for t in src_tools if t["function"]["name"] not in prefetched_tools]
+    runner = _TurnToolRunner(src_tools, prefetched_tools, portfolio_id, user_id)
 
     # Convert OpenAI tool format → Anthropic format
     anthropic_tools = [
@@ -2837,21 +3024,28 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
     system_block = ([{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
                     if system_prompt else None)
 
-    total_tool_calls = 0
-    web_search_count = 0
-    gathered = {}  # tool name -> latest result JSON, replayed next turn via [CONTEXT] (#1)
+    total_tool_calls = len(runner.completed_calls)
+    web_search_count = sum(call["name"] == "web_search" for call in runner.completed_calls)
+    gathered = {call["name"]: call["result"] for call in runner.completed_calls}
 
+    model_rounds = 0
     while True:
+        force_answer = model_rounds >= MAX_MODEL_ROUNDS
+        model_rounds += 1
+        if force_answer:
+            formatted.append({"role": "user", "content": "本轮取证轮数已到上限。请使用已有结果给出结论，说明仍缺的证据，不要继续调用工具。"})
+        request_tools = [] if force_answer else anthropic_tools
         got_text = False  # any answer text this turn — detect silent empty completion
         max_tokens = output_budget(context_window)
-        bounded = fit_messages(formatted, anthropic_tools, context_window, max_tokens, system=system_block, protected_message=protected_user)
-        stream_kwargs = {"model": model, "messages": bounded, "max_tokens": max_tokens, "tools": anthropic_tools}
+        bounded = fit_messages(formatted, request_tools, context_window, max_tokens, system=system_block, protected_message=protected_user)
+        stream_kwargs = {"model": model, "messages": bounded, "max_tokens": max_tokens, "tools": request_tools}
         if system_block:
             stream_kwargs["system"] = system_block
         if deep_think and max_tokens > 2048:
             stream_kwargs["thinking"] = {"type": "enabled", "budget_tokens": 2048}
             stream_kwargs["temperature"] = 1
 
+        _emit_analysis_activity(messages, runner)
         with client.messages.stream(**stream_kwargs) as stream:
             # Use raw event stream to capture both thinking_delta and text_delta
             for event in stream:
@@ -2872,11 +3066,11 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
                             sys.stdout.write(text + "\n"); sys.stdout.flush()
             msg = stream.get_final_message()
 
-        if msg.stop_reason != "tool_use":
+        if force_answer or msg.stop_reason != "tool_use":
             # Empty-completion guard: ended a tool-using turn without any answer
             # text — surface a message so the chat never appears frozen.
-            if not got_text and total_tool_calls > 0:
-                print("已取得所需数据，但本轮未能生成结论。可点击重试，或换一种问法。\n", flush=True)
+            if not got_text:
+                print("[ERROR] 模型未返回正文，请重试或检查模型配置。", flush=True)
             break
 
         tool_uses = [c for c in msg.content if c.type == "tool_use"]
@@ -2901,7 +3095,7 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
         # After it returns, the answer is injected as tool_result and the loop continues.
         ask_tool = next((tu for tu in tool_uses if tu.name == "ask_user"), None)
         if ask_tool:
-            result_json = execute_tool(ask_tool.name, ask_tool.input, portfolio_id, user_id, ask_tool.id)
+            result_json = runner.run(ask_tool.name, ask_tool.input, ask_tool.id)
             formatted.append({"role": "user", "content": [{
                 "type": "tool_result", "tool_use_id": ask_tool.id,
                 "content": result_json,
@@ -2930,7 +3124,7 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
         if runnable:
             with concurrent.futures.ThreadPoolExecutor(max_workers=len(runnable)) as executor:
                 # Pass the model's tool_use id as the timeline call_id (#3)
-                futs = {executor.submit(execute_tool, tu.name, tu.input, portfolio_id, user_id, tu.id): (tu.id, tu.name)
+                futs = {executor.submit(runner.run, tu.name, tu.input, tu.id): (tu.id, tu.name)
                         for tu in runnable}
                 for fut, (tid, tname) in futs.items():
                     timeout_s = _tool_timeout(tname)
@@ -2949,7 +3143,7 @@ def call_anthropic_stream(api_key: str, model: str, messages: list, portfolio_id
             {"type": "tool_result", "tool_use_id": tu.id, "content": results_map[tu.id]}
             for tu in tool_uses
         ]})
-        if any(_is_confirm_tool(tu.name) and _confirmation_was_sent(results_map.get(tu.id, "")) for tu in runnable):
+        if any(_requires_ui_handoff(tu.name, results_map.get(tu.id, "")) for tu in runnable):
             _emit_context(gathered)
             print("\n[DONE]", flush=True)
             return
@@ -3037,11 +3231,12 @@ def main():
     workflow_hint = _build_workflow_hint(messages)
     if workflow_hint:
         full_messages.append({"role": "system", "content": workflow_hint})
+    emit_activity({"message": "正在理解你的问题", "origin": "runtime"})
     dag_prefetch = _run_workflow_dag(messages, args.portfolio_id, args.user_id, args.web_search)
-    prefetched_tools = set()
+    prefetched_tools = []
     if dag_prefetch.get("system_message"):
         full_messages.append({"role": "system", "content": dag_prefetch["system_message"]})
-        prefetched_tools = set(dag_prefetch.get("successful_tools") or [])
+        prefetched_tools = dag_prefetch.get("completed_calls", [])
     full_messages += messages
 
     try:
